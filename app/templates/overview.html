@@ -1,15 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Overview · Unified Monitoring{% endblock %}
+{% block page_title %}Overview{% endblock %}
+{% block page_sub %}Aggregated health across Zabbix, Dynatrace &amp; NNMi · auto-refreshes every 60s{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1>Overview</h1>
-    <div class="sub">Aggregated health across Zabbix, Dynatrace &amp; NNMi</div>
-  </div>
-  <div class="count-tag">Auto-refreshes every 60s</div>
-</div>
-
 <div
   id="overview-region"
   data-refreshable

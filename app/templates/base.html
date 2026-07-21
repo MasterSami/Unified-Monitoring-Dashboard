@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Unified Monitoring Dashboard{% endblock %}</title>
 
-    <!-- No flash of wrong theme: resolve theme before CSS loads. -->
+    <!-- No flash of wrong theme: resolve before CSS loads. -->
     <script>
       (function () {
         var t =
@@ -27,51 +27,66 @@
     <script src="/static/theme.js" defer></script>
   </head>
   <body>
-    <nav class="navbar">
-      <div class="brand">
-        <span class="logo">📊</span>
-        <span>Unified Monitoring</span>
-      </div>
-      <div class="nav-links">
-        <a href="/" class="{{ 'active' if active_page == 'overview' else '' }}"
-          >Overview</a
-        >
-        <a href="/hosts" class="{{ 'active' if active_page == 'hosts' else '' }}"
-          >Hosts</a
-        >
-        <a
-          href="/alerts"
-          class="{{ 'active' if active_page == 'alerts' else '' }}"
-          >Alerts</a
-        >
-      </div>
-      <div class="nav-actions">
-        <button
-          class="btn"
-          hx-post="/api/v1/collectors/zabbix/run"
-          hx-swap="none"
-          title="Run all collectors now"
-          onclick="refreshAll(event)"
-        >
-          <span class="htmx-indicator">⏳</span> Refresh now
-        </button>
-        <button id="theme-toggle" class="icon-btn" type="button">☾</button>
-      </div>
-    </nav>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo">📊</span>
+          <span>
+            Unified Monitor
+            <span class="brand-sub">Ops Dashboard</span>
+          </span>
+        </div>
 
-    <main>{% block content %}{% endblock %}</main>
+        <nav class="nav">
+          <div class="nav-section">Monitoring</div>
+          <a href="/" class="{{ 'active' if active_page == 'overview' else '' }}">
+            <span class="ico">▦</span> Overview
+          </a>
+          <a href="/hosts" class="{{ 'active' if active_page == 'hosts' else '' }}">
+            <span class="ico">▤</span> Hosts
+          </a>
+          <a href="/alerts" class="{{ 'active' if active_page == 'alerts' else '' }}">
+            <span class="ico">◈</span> Alerts
+          </a>
+        </nav>
 
-    <footer
-      id="health-strip"
-      hx-get="/partials/health"
-      hx-trigger="every 60s, refresh"
-      hx-swap="innerHTML"
-    >
-      {% include "partials/health_strip.html" %}
-    </footer>
+        <div class="sidebar-foot">
+          <div
+            id="health-strip"
+            hx-get="/partials/health"
+            hx-trigger="every 60s, refresh"
+            hx-swap="innerHTML"
+          >
+            {% include "partials/health_strip.html" %}
+          </div>
+        </div>
+      </aside>
+
+      <div class="content">
+        <header class="topbar">
+          <div>
+            <h1>{% block page_title %}Overview{% endblock %}</h1>
+            <div class="sub">{% block page_sub %}{% endblock %}</div>
+          </div>
+          <div class="spacer"></div>
+          <button
+            class="btn btn-accent"
+            type="button"
+            title="Run all collectors now"
+            onclick="refreshAll(event)"
+          >
+            <span class="htmx-indicator">⏳</span>
+            <span class="rf-label">↻ Refresh now</span>
+          </button>
+          <button id="theme-toggle" class="icon-btn" type="button">☾</button>
+        </header>
+
+        <main class="page">{% block content %}{% endblock %}</main>
+      </div>
+    </div>
 
     <script>
-      // "Refresh now" triggers every enabled collector, then refreshes fragments.
+      // "Refresh now" triggers every collector, then reloads HTMX regions.
       function refreshAll(event) {
         event.preventDefault();
         var btn = event.currentTarget;
@@ -85,15 +100,14 @@
           })
         ).then(function () {
           btn.classList.remove("htmx-request");
-          // Ask HTMX-managed regions to reload.
-          document.body.dispatchEvent(new Event("data-refreshed"));
           if (window.htmx) {
             document
               .querySelectorAll("[data-refreshable]")
               .forEach(function (el) {
                 window.htmx.trigger(el, "refresh");
               });
-            window.htmx.trigger(document.getElementById("health-strip"), "refresh");
+            var hs = document.getElementById("health-strip");
+            if (hs) window.htmx.trigger(hs, "refresh");
           }
         });
       }

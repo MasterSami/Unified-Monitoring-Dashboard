@@ -1,15 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Alerts · Unified Monitoring{% endblock %}
+{% block page_title %}Active Alerts{% endblock %}
+{% block page_sub %}Unresolved across all platforms, most severe first · auto-refreshes every 60s{% endblock %}
 
 {% block content %}
-<div class="page-header">
-  <div>
-    <h1>Active Alerts</h1>
-    <div class="sub">Unresolved across all platforms, most severe first</div>
-  </div>
-  <div class="count-tag">Auto-refreshes every 60s</div>
-</div>
-
 <div
   id="alerts-region"
   data-refreshable

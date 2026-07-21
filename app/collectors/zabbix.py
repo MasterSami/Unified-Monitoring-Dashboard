@@ -60,18 +60,26 @@ class ZabbixCollector(BaseCollector):
             "host.get",
             {
                 "output": ["hostid", "host", "name", "status", "available"],
-                "selectInterfaces": ["ip", "main", "type"],
+                "selectInterfaces": ["ip", "main", "type", "available"],
                 "selectGroups": ["name"],
             },
         )
         hosts: list[dict] = []
         for h in result:  # type: ignore[union-attr]
             ip = None
+            iface_available: str | None = None
             for iface in h.get("interfaces", []):
-                if iface.get("main") == "1" or ip is None:
+                is_main = iface.get("main") == "1"
+                if is_main or ip is None:
                     ip = iface.get("ip") or ip
-            # available: 0 unknown, 1 available/up, 2 unavailable/down
-            available = h.get("available", "0")
+                # Zabbix 6.0+: availability lives on the interface.
+                if is_main or iface_available is None:
+                    iface_available = iface.get("available", iface_available)
+            # available codes: 0 unknown, 1 available/up, 2 unavailable/down.
+            # Prefer interface availability (6.0+), fall back to host-level.
+            available = iface_available
+            if available in (None, "0"):
+                available = h.get("available", available or "0")
             status = {
                 "1": HostStatus.up,
                 "2": HostStatus.down,

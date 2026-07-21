@@ -1,66 +1,146 @@
 {% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
 
-<div class="grid grid-kpi">
-  <div class="card kpi">
-    <span class="label">Total Hosts</span>
-    <span class="value">{{ total_hosts }}</span>
-    <span class="meta">across all platforms</span>
-  </div>
-  <div class="card kpi">
-    <span class="label">Hosts Down</span>
-    <span class="value" style="color: var(--down)">{{ hosts_down }}</span>
-    <span class="meta">status = down</span>
-  </div>
-  <div class="card kpi">
-    <span class="label">Active Alerts</span>
-    <span class="value" style="color: var(--sev4)">{{ active_alerts }}</span>
-    <span class="meta">unresolved</span>
-  </div>
-</div>
-
-<div class="section-title">Hosts by platform</div>
-<div class="grid grid-kpi">
-  {% for p in per_platform %}
-  <div class="card platform-card">
-    <div class="head">
-      <span class="badge badge-{{ p.platform }}"><span class="dot"></span>{{ p.platform }}</span>
+<!-- KPI stat tiles -->
+<div class="grid cols-4">
+  <div class="card stat accent">
+    <div class="stat-top">
+      <span class="label">Total Hosts</span>
+      <span class="stat-ico">🖥</span>
     </div>
-    <span class="total">{{ p.total }}</span>
-    <span class="down {{ 'has-down' if p.down else '' }}">
-      {{ p.down }} down
-    </span>
+    <span class="value">{{ total_hosts }}</span>
+    <span class="meta">{{ hosts_up }} up · {{ total_hosts - hosts_up - hosts_down }} unknown</span>
   </div>
-  {% endfor %}
+  <div class="card stat danger">
+    <div class="stat-top">
+      <span class="label">Hosts Down</span>
+      <span class="stat-ico">▼</span>
+    </div>
+    <span class="value">{{ hosts_down }}</span>
+    <span class="meta">requires attention</span>
+  </div>
+  <div class="card stat warn">
+    <div class="stat-top">
+      <span class="label">Active Alerts</span>
+      <span class="stat-ico">◈</span>
+    </div>
+    <span class="value">{{ active_alerts }}</span>
+    <span class="meta">unresolved across platforms</span>
+  </div>
+  <div class="card stat">
+    <div class="stat-top">
+      <span class="label">Collectors OK</span>
+      <span class="stat-ico">✓</span>
+    </div>
+    <span class="value">{{ collectors | selectattr('status', 'equalto', 'success') | list | length }}<span style="font-size:16px;color:var(--text-faint)">/{{ collectors | rejectattr('status', 'equalto', 'disabled') | list | length }}</span></span>
+    <span class="meta">healthy feeds</span>
+  </div>
 </div>
 
-<div class="section-title">Active alerts by severity</div>
-<div class="sev-row">
-  {% for b in severity_buckets %}
-  <div class="sev-counter" style="--dot: var(--sev{{ b.severity_int }})">
-    <span class="count">{{ b.count }}</span>
-    <span class="name">{{ sev_names[b.severity_int] }}</span>
+<!-- Charts row -->
+<div class="grid cols-2" style="margin-top: 16px;">
+  <div class="card">
+    <div class="card-head">
+      <h3>Active Alerts by Severity</h3>
+      <span class="hint">{{ active_alerts }} total</span>
+    </div>
+    <div class="donut-wrap">
+      <div class="donut" style="background: conic-gradient({{ donut_gradient }});">
+        <div class="donut-center">
+          <div class="big">{{ active_alerts }}</div>
+          <div class="cap">alerts</div>
+        </div>
+      </div>
+      <div class="legend">
+        {% for b in severity_buckets %}
+        <div class="legend-row">
+          <span class="swatch" style="background: var(--sev{{ b.severity_int }})"></span>
+          <span class="lg-label">{{ sev_names[b.severity_int] }}</span>
+          <span class="lg-val">{{ b.count }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
-  {% endfor %}
+
+  <div class="card">
+    <div class="card-head">
+      <h3>Hosts by Platform</h3>
+      <span class="hint">up / down</span>
+    </div>
+    <div class="bars">
+      {% for p in per_platform %}
+      <div class="bar-row">
+        <div class="bar-top">
+          <span class="badge badge-{{ p.platform }}"><span class="dot"></span>{{ p.platform }}</span>
+          <span class="bt-count">{{ p.total }}{% if p.down %}<span class="dn">{{ p.down }} down</span>{% endif %}</span>
+        </div>
+        <div class="bar-track">
+          {% set up = p.total - p.down %}
+          <div class="bar-fill up" style="width: {{ (up / platform_max * 100) if platform_max else 0 }}%"></div>
+          {% if p.down %}<div class="bar-fill down" style="width: {{ (p.down / platform_max * 100) }}%"></div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 
-<div class="section-title">Last successful run</div>
-<div class="grid grid-kpi">
+<!-- Recent critical alerts -->
+<div class="card" style="margin-top: 16px;">
+  <div class="card-head">
+    <h3>Top Active Alerts</h3>
+    <a class="hint" href="/alerts">View all →</a>
+  </div>
+  <div class="table-wrap" style="border: none; border-radius: 0;">
+    <table>
+      <tbody>
+        {% for a in recent_critical %}
+        <tr>
+          <td style="width: 1%; white-space: nowrap;">
+            <span class="sev-dot" style="background: var(--sev{{ a.severity_int }})"></span>
+            <span style="font-weight:600;font-size:11px;color:var(--text-muted);text-transform:uppercase;">{{ sev_names[a.severity_int] }}</span>
+          </td>
+          <td>{{ a.title }}</td>
+          <td style="width: 1%;"><span class="badge badge-{{ a.source_platform.value }}"><span class="dot"></span>{{ a.source_platform.value }}</span></td>
+          <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.host_hostname or '—' }}</td>
+          <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.started_at | relative_time }}</td>
+        </tr>
+        {% else %}
+        <tr><td><div class="empty"><span class="big">🎉</span>No active alerts.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Collector runs -->
+<div class="section-title">Collector Status</div>
+<div class="grid cols-3">
   {% for c in collectors %}
-  <div class="card kpi">
-    <span class="label">
+  <div class="card coll-card">
+    <div class="cc-top">
       <span class="badge badge-{{ c.platform }}"><span class="dot"></span>{{ c.platform }}</span>
-    </span>
+      {% if c.status == 'disabled' %}
+        <span class="pill status-unknown"><span class="dot"></span>disabled</span>
+      {% elif c.status == 'failed' %}
+        <span class="pill status-down"><span class="dot"></span>failed</span>
+      {% elif c.status == 'success' %}
+        <span class="pill status-up"><span class="dot"></span>healthy</span>
+      {% else %}
+        <span class="pill status-unknown"><span class="dot"></span>idle</span>
+      {% endif %}
+    </div>
     {% if c.status == 'disabled' %}
-      <span class="value" style="font-size: 18px; color: var(--text-muted)">Disabled</span>
-      <span class="meta">not in ENABLED_COLLECTORS</span>
+      <span class="cc-status" style="color: var(--text-muted); font-size: 14px;">Not enabled</span>
+      <span class="cc-meta">add to ENABLED_COLLECTORS</span>
     {% elif c.status == 'failed' %}
-      <span class="value" style="font-size: 18px; color: var(--down)">Failed</span>
-      <span class="meta">last success {{ c.last_success_at | relative_time }}</span>
+      <span class="cc-status" style="color: var(--down); font-size: 14px;">Last run failed</span>
+      <span class="cc-meta">last ok {{ c.last_success_at | relative_time }}</span>
     {% else %}
-      <span class="value" style="font-size: 18px">{{ c.last_success_at | relative_time }}</span>
-      <span class="meta">{{ c.items_collected }} items collected</span>
+      <span class="cc-status">{{ c.last_success_at | relative_time }}</span>
+      <span class="cc-meta">{{ c.items_collected }} items collected</span>
     {% endif %}
-    {% if c.notes %}<span class="notice">{{ c.notes }}</span>{% endif %}
+    {% if c.notes %}<div class="notice">⚠ {{ c.notes }}</div>{% endif %}
   </div>
   {% endfor %}
 </div>

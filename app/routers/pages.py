@@ -96,6 +96,39 @@ def _per_platform(db: Session) -> list[PlatformHostCount]:
     ]
 
 
+def _donut_gradient(buckets: list[SeverityBucket]) -> str:
+    """Build a CSS conic-gradient stop list for the severity donut."""
+    total = sum(b.count for b in buckets)
+    if total == 0:
+        return "var(--surface-3) 0 100%"
+    stops: list[str] = []
+    acc = 0.0
+    for b in buckets:
+        if b.count == 0:
+            continue
+        start = acc / total * 100
+        acc += b.count
+        end = acc / total * 100
+        stops.append(f"var(--sev{b.severity_int}) {start:.3f}% {end:.3f}%")
+    return ", ".join(stops)
+
+
+def _hosts_up(db: Session) -> int:
+    return (
+        db.scalar(select(func.count(Host.id)).where(Host.status == HostStatus.up)) or 0
+    )
+
+
+def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
+    stmt = (
+        select(Alert)
+        .where(Alert.resolved.is_(False))
+        .order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+        .limit(limit)
+    )
+    return list(db.scalars(stmt).all())
+
+
 def _overview_context(db: Session, settings: Settings) -> dict:
     total_hosts = db.scalar(select(func.count(Host.id))) or 0
     hosts_down = (
@@ -105,12 +138,19 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     active_alerts = (
         db.scalar(select(func.count(Alert.id)).where(Alert.resolved.is_(False))) or 0
     )
+    buckets = _severity_buckets(db)
+    per_platform = _per_platform(db)
+    max_total = max((p.total for p in per_platform), default=0) or 1
     return {
         "total_hosts": total_hosts,
+        "hosts_up": _hosts_up(db),
         "hosts_down": hosts_down,
         "active_alerts": active_alerts,
-        "per_platform": _per_platform(db),
-        "severity_buckets": _severity_buckets(db),
+        "per_platform": per_platform,
+        "platform_max": max_total,
+        "severity_buckets": buckets,
+        "donut_gradient": _donut_gradient(buckets),
+        "recent_critical": _recent_critical(db),
         "collectors": get_collector_statuses(db, settings),
     }
 

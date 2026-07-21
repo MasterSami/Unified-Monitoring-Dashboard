@@ -1,23 +1,19 @@
-<div class="health-strip">
-  <span class="label">Collectors</span>
+<div class="health">
+  <div class="h-title">Collectors</div>
   {% for c in collectors %}
     {% if c.status == 'disabled' %}
-      {% set cls = 'disabled' %}
-      {% set tip = c.platform ~ ' — disabled in config' %}
+      {% set cls = 'disabled' %}{% set tip = c.platform ~ ' — disabled in config' %}{% set meta = 'off' %}
     {% elif c.status == 'success' %}
-      {% set cls = 'ok' %}
-      {% set tip = c.platform ~ ' — ' ~ c.items_collected ~ ' items, last success ' ~ (c.last_success_at | relative_time) %}
+      {% set cls = 'ok' %}{% set tip = c.platform ~ ' — ' ~ c.items_collected ~ ' items · last ok ' ~ (c.last_success_at | relative_time) %}{% set meta = c.last_success_at | relative_time %}
     {% elif c.status == 'failed' %}
-      {% set cls = 'fail' %}
-      {% set tip = c.platform ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
+      {% set cls = 'fail' %}{% set tip = c.platform ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}{% set meta = 'failed' %}
     {% else %}
-      {% set cls = '' %}
-      {% set tip = c.platform ~ ' — no runs yet' %}
+      {% set cls = '' %}{% set tip = c.platform ~ ' — no runs yet' %}{% set meta = '—' %}
     {% endif %}
-    <span class="health-item {{ cls }}" data-tip="{{ tip }}">
+    <div class="h-item {{ cls }}" data-tip="{{ tip }}">
       <span class="dot"></span>
-      <span class="platform-name">{{ c.platform }}</span>
-      {% if c.notes %}<span class="count-tag">⚠</span>{% endif %}
-    </span>
+      <span class="h-name">{{ c.platform }}{% if c.notes %} ⚠{% endif %}</span>
+      <span class="h-meta">{{ meta }}</span>
+    </div>
   {% endfor %}
 </div>
