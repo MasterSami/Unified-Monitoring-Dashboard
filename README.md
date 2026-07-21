@@ -1,5 +1,7 @@
 # Unified Monitoring Dashboard
 
+> 📐 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technology & design writeup.
+
 A single web UI that aggregates hosts and alerts from **Zabbix**, **Dynatrace**,
 and **NNMi** into one normalized view. Built as a local proof-of-concept for the
 DC Admin Team, but structured to move onto an internal server with PostgreSQL
@@ -144,8 +146,9 @@ nnmi:
 - **check_proxies**: for Zabbix instances, the collector also queries
   `proxy.get` and surfaces "N/M online" (with any offline proxies named) on the
   instance's card and health tooltip.
-- **test_mail**: exposes a button that calls Zabbix `mediatype.test` to send a
-  test email to `TEST_MAIL_TO` (or `?to=` on the API), verifying email alerting.
+- **test_mail**: exposes a button that reads the instance's Email media-type
+  SMTP settings and sends a test email to `TEST_MAIL_TO` (or `?to=` on the API)
+  through that relay via `smtplib`, verifying email alerting.
 - **verify_tls**: optional per-server override of the global `TLS_VERIFY`.
 
 > **Note on Dynatrace scopes.** The dashboard uses the Entities v2 API for
