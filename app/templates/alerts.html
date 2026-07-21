@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Alerts · Unified Monitoring{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Active Alerts</h1>
+    <div class="sub">Unresolved across all platforms, most severe first</div>
+  </div>
+  <div class="count-tag">Auto-refreshes every 60s</div>
+</div>
+
+<div
+  id="alerts-region"
+  data-refreshable
+  hx-get="/partials/alerts"
+  hx-trigger="every 60s, refresh"
+  hx-swap="innerHTML"
+>
+  {% include "partials/alerts_table.html" %}
+</div>
+{% endblock %}

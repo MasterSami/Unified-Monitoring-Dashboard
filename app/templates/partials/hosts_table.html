@@ -1,0 +1,58 @@
+{% macro sort_link(label, key, current) %}
+  {% set is_active = current.sort == key %}
+  {% set next_order = 'desc' if (is_active and current.order == 'asc') else 'asc' %}
+  <a
+    href="#"
+    hx-get="/partials/hosts"
+    hx-target="#hosts-region"
+    hx-swap="innerHTML"
+    hx-include="[name='q']"
+    hx-vals='{"platform": "{{ current.platform }}", "status": "{{ current.status }}", "sort": "{{ key }}", "order": "{{ next_order }}"}'
+  >
+    {{ label }}
+    {% if is_active %}<span>{{ '▲' if current.order == 'asc' else '▼' }}</span>{% endif %}
+  </a>
+{% endmacro %}
+
+<div class="count-tag" style="margin-bottom: 8px">
+  {{ hosts | length }} host{{ '' if hosts | length == 1 else 's' }}
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>{{ sort_link('Hostname', 'hostname', current) }}</th>
+        <th>{{ sort_link('IP', 'ip', current) }}</th>
+        <th>{{ sort_link('Platform', 'platform', current) }}</th>
+        <th>{{ sort_link('Status', 'status', current) }}</th>
+        <th>{{ sort_link('Group', 'group', current) }}</th>
+        <th>{{ sort_link('Last seen', 'last_seen', current) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in hosts %}
+      <tr>
+        <td><strong>{{ h.hostname }}</strong></td>
+        <td class="mono">{{ h.ip or '—' }}</td>
+        <td>
+          <span class="badge badge-{{ h.source_platform.value }}">
+            <span class="dot"></span>{{ h.source_platform.value }}
+          </span>
+        </td>
+        <td>
+          <span class="pill status-{{ h.status.value }}">
+            <span class="dot"></span>{{ h.status.value }}
+          </span>
+        </td>
+        <td>{{ h.group_name or '—' }}</td>
+        <td class="mono">{{ h.last_seen | relative_time }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6"><div class="empty">No hosts match your filters.</div></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

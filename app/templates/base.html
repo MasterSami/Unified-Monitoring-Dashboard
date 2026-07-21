@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Unified Monitoring Dashboard{% endblock %}</title>
+
+    <!-- No flash of wrong theme: resolve theme before CSS loads. -->
+    <script>
+      (function () {
+        var t =
+          localStorage.getItem("theme") ||
+          (window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light");
+        document.documentElement.setAttribute("data-theme", t);
+      })();
+    </script>
+
+    <link rel="stylesheet" href="/static/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>"
+    />
+    <script src="/static/htmx.min.js" defer></script>
+    <script src="/static/theme.js" defer></script>
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="brand">
+        <span class="logo">📊</span>
+        <span>Unified Monitoring</span>
+      </div>
+      <div class="nav-links">
+        <a href="/" class="{{ 'active' if active_page == 'overview' else '' }}"
+          >Overview</a
+        >
+        <a href="/hosts" class="{{ 'active' if active_page == 'hosts' else '' }}"
+          >Hosts</a
+        >
+        <a
+          href="/alerts"
+          class="{{ 'active' if active_page == 'alerts' else '' }}"
+          >Alerts</a
+        >
+      </div>
+      <div class="nav-actions">
+        <button
+          class="btn"
+          hx-post="/api/v1/collectors/zabbix/run"
+          hx-swap="none"
+          title="Run all collectors now"
+          onclick="refreshAll(event)"
+        >
+          <span class="htmx-indicator">⏳</span> Refresh now
+        </button>
+        <button id="theme-toggle" class="icon-btn" type="button">☾</button>
+      </div>
+    </nav>
+
+    <main>{% block content %}{% endblock %}</main>
+
+    <footer
+      id="health-strip"
+      hx-get="/partials/health"
+      hx-trigger="every 60s, refresh"
+      hx-swap="innerHTML"
+    >
+      {% include "partials/health_strip.html" %}
+    </footer>
+
+    <script>
+      // "Refresh now" triggers every enabled collector, then refreshes fragments.
+      function refreshAll(event) {
+        event.preventDefault();
+        var btn = event.currentTarget;
+        btn.classList.add("htmx-request");
+        var collectors = ["zabbix", "dynatrace", "nnmi"];
+        Promise.all(
+          collectors.map(function (c) {
+            return fetch("/api/v1/collectors/" + c + "/run", {
+              method: "POST",
+            }).catch(function () {});
+          })
+        ).then(function () {
+          btn.classList.remove("htmx-request");
+          // Ask HTMX-managed regions to reload.
+          document.body.dispatchEvent(new Event("data-refreshed"));
+          if (window.htmx) {
+            document
+              .querySelectorAll("[data-refreshable]")
+              .forEach(function (el) {
+                window.htmx.trigger(el, "refresh");
+              });
+            window.htmx.trigger(document.getElementById("health-strip"), "refresh");
+          }
+        });
+      }
+    </script>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

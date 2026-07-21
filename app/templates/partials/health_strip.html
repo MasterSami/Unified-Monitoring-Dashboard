@@ -1,0 +1,23 @@
+<div class="health-strip">
+  <span class="label">Collectors</span>
+  {% for c in collectors %}
+    {% if c.status == 'disabled' %}
+      {% set cls = 'disabled' %}
+      {% set tip = c.platform ~ ' — disabled in config' %}
+    {% elif c.status == 'success' %}
+      {% set cls = 'ok' %}
+      {% set tip = c.platform ~ ' — ' ~ c.items_collected ~ ' items, last success ' ~ (c.last_success_at | relative_time) %}
+    {% elif c.status == 'failed' %}
+      {% set cls = 'fail' %}
+      {% set tip = c.platform ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
+    {% else %}
+      {% set cls = '' %}
+      {% set tip = c.platform ~ ' — no runs yet' %}
+    {% endif %}
+    <span class="health-item {{ cls }}" data-tip="{{ tip }}">
+      <span class="dot"></span>
+      <span class="platform-name">{{ c.platform }}</span>
+      {% if c.notes %}<span class="count-tag">⚠</span>{% endif %}
+    </span>
+  {% endfor %}
+</div>

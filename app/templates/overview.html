@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Overview · Unified Monitoring{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Overview</h1>
+    <div class="sub">Aggregated health across Zabbix, Dynatrace &amp; NNMi</div>
+  </div>
+  <div class="count-tag">Auto-refreshes every 60s</div>
+</div>
+
+<div
+  id="overview-region"
+  data-refreshable
+  hx-get="/partials/overview"
+  hx-trigger="every 60s, refresh"
+  hx-swap="innerHTML"
+>
+  {% include "partials/overview_cards.html" %}
+</div>
+{% endblock %}

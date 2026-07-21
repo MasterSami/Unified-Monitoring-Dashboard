@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Hosts · Unified Monitoring{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Hosts</h1>
+    <div class="sub">Unified inventory across all platforms</div>
+  </div>
+</div>
+
+<div class="toolbar">
+  <div class="search">
+    <span class="search-icon">⌕</span>
+    <input
+      type="search"
+      name="q"
+      placeholder="Search hostname, IP, or group…"
+      hx-get="/partials/hosts"
+      hx-trigger="input changed delay:250ms, search"
+      hx-target="#hosts-region"
+      hx-swap="innerHTML"
+      hx-include="#host-filters"
+      autocomplete="off"
+    />
+  </div>
+  <div id="host-filters" class="tabs" role="tablist">
+    <input type="hidden" name="sort" value="hostname" />
+    <input type="hidden" name="order" value="asc" />
+    <input type="hidden" name="status" value="all" />
+    {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi'] %}
+    <button
+      type="button"
+      class="{{ 'active' if p == 'all' else '' }}"
+      data-platform="{{ p }}"
+      hx-get="/partials/hosts"
+      hx-target="#hosts-region"
+      hx-swap="innerHTML"
+      hx-include="#host-filters, [name='q']"
+      hx-vals='{"platform": "{{ p }}"}'
+      onclick="selectTab(this)"
+    >
+      {{ 'All' if p == 'all' else p | capitalize }}
+    </button>
+    {% endfor %}
+  </div>
+</div>
+
+<div
+  id="hosts-region"
+  data-refreshable
+  hx-get="/partials/hosts"
+  hx-trigger="refresh"
+  hx-target="#hosts-region"
+  hx-swap="innerHTML"
+  hx-include="#host-filters, [name='q']"
+>
+  {% include "partials/hosts_table.html" %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectTab(btn) {
+    btn.parentElement
+      .querySelectorAll("button")
+      .forEach(function (b) {
+        b.classList.remove("active");
+      });
+    btn.classList.add("active");
+    // Keep the hidden platform filter in sync for subsequent search requests.
+    var container = document.getElementById("host-filters");
+    var pf = container.querySelector("[name='platform']");
+    if (!pf) {
+      pf = document.createElement("input");
+      pf.type = "hidden";
+      pf.name = "platform";
+      container.appendChild(pf);
+    }
+    pf.value = btn.dataset.platform;
+  }
+</script>
+{% endblock %}

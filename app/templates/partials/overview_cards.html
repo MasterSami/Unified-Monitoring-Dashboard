@@ -1,0 +1,66 @@
+{% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
+
+<div class="grid grid-kpi">
+  <div class="card kpi">
+    <span class="label">Total Hosts</span>
+    <span class="value">{{ total_hosts }}</span>
+    <span class="meta">across all platforms</span>
+  </div>
+  <div class="card kpi">
+    <span class="label">Hosts Down</span>
+    <span class="value" style="color: var(--down)">{{ hosts_down }}</span>
+    <span class="meta">status = down</span>
+  </div>
+  <div class="card kpi">
+    <span class="label">Active Alerts</span>
+    <span class="value" style="color: var(--sev4)">{{ active_alerts }}</span>
+    <span class="meta">unresolved</span>
+  </div>
+</div>
+
+<div class="section-title">Hosts by platform</div>
+<div class="grid grid-kpi">
+  {% for p in per_platform %}
+  <div class="card platform-card">
+    <div class="head">
+      <span class="badge badge-{{ p.platform }}"><span class="dot"></span>{{ p.platform }}</span>
+    </div>
+    <span class="total">{{ p.total }}</span>
+    <span class="down {{ 'has-down' if p.down else '' }}">
+      {{ p.down }} down
+    </span>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="section-title">Active alerts by severity</div>
+<div class="sev-row">
+  {% for b in severity_buckets %}
+  <div class="sev-counter" style="--dot: var(--sev{{ b.severity_int }})">
+    <span class="count">{{ b.count }}</span>
+    <span class="name">{{ sev_names[b.severity_int] }}</span>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="section-title">Last successful run</div>
+<div class="grid grid-kpi">
+  {% for c in collectors %}
+  <div class="card kpi">
+    <span class="label">
+      <span class="badge badge-{{ c.platform }}"><span class="dot"></span>{{ c.platform }}</span>
+    </span>
+    {% if c.status == 'disabled' %}
+      <span class="value" style="font-size: 18px; color: var(--text-muted)">Disabled</span>
+      <span class="meta">not in ENABLED_COLLECTORS</span>
+    {% elif c.status == 'failed' %}
+      <span class="value" style="font-size: 18px; color: var(--down)">Failed</span>
+      <span class="meta">last success {{ c.last_success_at | relative_time }}</span>
+    {% else %}
+      <span class="value" style="font-size: 18px">{{ c.last_success_at | relative_time }}</span>
+      <span class="meta">{{ c.items_collected }} items collected</span>
+    {% endif %}
+    {% if c.notes %}<span class="notice">{{ c.notes }}</span>{% endif %}
+  </div>
+  {% endfor %}
+</div>

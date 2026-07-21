@@ -1,0 +1,156 @@
+"""JSON API under ``/api/v1``.
+
+These endpoints back the UI and are the integration surface for later reports
+and automation.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.config import Settings, get_settings
+from app.db import get_db
+from app.models import Alert, Host, HostStatus
+from app.normalizer import severity_label
+from app.scheduler import get_collector_statuses, get_service
+from app.schemas import (
+    AlertOut,
+    CollectorStatus,
+    HostOut,
+    PlatformHostCount,
+    SeverityBucket,
+    SummaryOut,
+)
+
+router = APIRouter(prefix="/api/v1", tags=["api"])
+
+
+@router.get("/hosts", response_model=list[HostOut])
+def list_hosts(
+    platform: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[Host]:
+    """Return hosts, optionally filtered by platform, status, or search text."""
+    stmt = select(Host)
+    if platform:
+        stmt = stmt.where(Host.source_platform == platform)
+    if status:
+        stmt = stmt.where(Host.status == status)
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Host.hostname).like(like) | func.lower(Host.ip).like(like)
+        )
+    stmt = stmt.order_by(Host.hostname.asc())
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/alerts", response_model=list[AlertOut])
+def list_alerts(
+    active: bool = Query(default=True),
+    db: Session = Depends(get_db),
+) -> list[Alert]:
+    """Return alerts. ``active=true`` (default) excludes resolved alerts."""
+    stmt = select(Alert)
+    if active:
+        stmt = stmt.where(Alert.resolved.is_(False))
+    stmt = stmt.order_by(
+        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
+    )
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/summary", response_model=SummaryOut)
+def summary(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> SummaryOut:
+    """Return aggregate KPIs for the overview page."""
+    total_hosts = db.scalar(select(func.count(Host.id))) or 0
+    hosts_down = (
+        db.scalar(
+            select(func.count(Host.id)).where(Host.status == HostStatus.down)
+        )
+        or 0
+    )
+    active_alerts = (
+        db.scalar(select(func.count(Alert.id)).where(Alert.resolved.is_(False)))
+        or 0
+    )
+
+    # Per-platform host totals and down counts (two small grouped queries).
+    def _by_platform(rows: list[tuple]) -> dict[str, int]:
+        return {getattr(p, "value", str(p)): int(c) for p, c in rows}
+
+    total_by_platform = _by_platform(
+        db.execute(
+            select(Host.source_platform, func.count(Host.id)).group_by(
+                Host.source_platform
+            )
+        ).all()
+    )
+    down_by_platform = _by_platform(
+        db.execute(
+            select(Host.source_platform, func.count(Host.id))
+            .where(Host.status == HostStatus.down)
+            .group_by(Host.source_platform)
+        ).all()
+    )
+    per_platform = [
+        PlatformHostCount(
+            platform=plat,
+            total=total_by_platform.get(plat, 0),
+            down=down_by_platform.get(plat, 0),
+        )
+        for plat in ("zabbix", "dynatrace", "nnmi")
+    ]
+
+    # Active alerts by severity.
+    sev_rows = db.execute(
+        select(Alert.severity_int, func.count(Alert.id))
+        .where(Alert.resolved.is_(False))
+        .group_by(Alert.severity_int)
+    ).all()
+    sev_counts = {int(s): int(c) for s, c in sev_rows}
+    severity_buckets = [
+        SeverityBucket(
+            severity_int=level,
+            label=severity_label(level),
+            count=sev_counts.get(level, 0),
+        )
+        for level in (5, 4, 3, 2, 1)
+    ]
+
+    collectors = get_collector_statuses(db, settings)
+
+    return SummaryOut(
+        total_hosts=total_hosts,
+        hosts_down=hosts_down,
+        active_alerts=active_alerts,
+        per_platform=per_platform,
+        severity_buckets=severity_buckets,
+        collectors=collectors,
+    )
+
+
+@router.get("/collectors/status", response_model=list[CollectorStatus])
+def collectors_status(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[CollectorStatus]:
+    """Return current health for every collector."""
+    return get_collector_statuses(db, settings)
+
+
+@router.post("/collectors/{name}/run")
+def run_collector(name: str) -> dict[str, str]:
+    """Manually trigger a single collector run (synchronous)."""
+    service = get_service()
+    ran = service.run_one(name)
+    if not ran:
+        raise HTTPException(status_code=404, detail=f"unknown collector: {name}")
+    return {"status": "ok", "collector": name}
