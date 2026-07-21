@@ -4,13 +4,17 @@ Authentication supports either a static API token or username/password login
 (``user.login``). Hosts come from ``host.get`` (availability read from the
 interface, per Zabbix 6.0+); alerts from ``trigger.get`` (currently-firing
 triggers). For instances flagged ``check_proxies`` the proxy fleet health is
-summarized into the run note. A ``send_test_mail`` action triggers Zabbix to
-send a test email via ``mediatype.test``.
+summarized into the run note. ``send_test_mail`` reads the instance's Email
+media-type SMTP settings and sends a test email through that same relay via
+``smtplib`` (the JSON-RPC API exposes no media-type test method).
 """
 
 from __future__ import annotations
 
+import smtplib
+import ssl
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 
 import httpx
 
@@ -230,9 +234,12 @@ class ZabbixCollector(BaseCollector):
     # --- Test mail ----------------------------------------------------------
 
     def send_test_mail(self, sendto: str) -> dict:
-        """Ask Zabbix to send a test email to ``sendto`` via its email media.
+        """Send a test email to ``sendto`` via this instance's SMTP relay.
 
-        Returns ``{"ok": bool, "message": str}``. Never raises.
+        Reads the Email media type's SMTP settings from Zabbix and sends through
+        that relay with ``smtplib`` (the JSON-RPC API has no media-type test
+        method on any version). Returns ``{"ok": bool, "message": str}`` and
+        never raises.
         """
         if self.settings.mock_mode:
             return {
@@ -240,60 +247,67 @@ class ZabbixCollector(BaseCollector):
                 "message": f"(mock) test mail simulated to {sendto} via {self.instance}",
             }
 
-        version = self._api_version()
+        # Read the Email media type's SMTP settings from Zabbix, then send the
+        # test through that same relay via smtplib.
         try:
             media_types = self._rpc(
                 "mediatype.get",
-                {"output": ["mediatypeid", "name", "type"], "filter": {"type": 0}},
+                {"output": "extend", "filter": {"type": "0"}},  # 0 = email
             )
-            if not media_types:  # type: ignore[truthy-bool]
-                return {
-                    "ok": False,
-                    "message": f"No email media type configured on {self.instance}",
-                }
-            mt = media_types[0]  # type: ignore[index]
-            result = self._rpc(
-                "mediatype.test",
-                {
-                    "mediatypeid": mt["mediatypeid"],
-                    "sendto": sendto,
-                    "subject": "Unified Monitoring — test mail",
-                    "message": (
-                        f"Test email from the Unified Monitoring Dashboard via "
-                        f"{self.instance}. If you received this, email alerting works."
-                    ),
-                },
-            )
+        except CollectorError as exc:
+            return {"ok": False, "message": str(exc)}
+        if not media_types:  # type: ignore[truthy-bool]
+            return {
+                "ok": False,
+                "message": f"No email media type configured on {self.instance}",
+            }
+        # Prefer an enabled media type (status == "0").
+        mt = next(
+            (m for m in media_types if str(m.get("status")) == "0"),  # type: ignore[union-attr]
+            media_types[0],  # type: ignore[index]
+        )
+        server = mt.get("smtp_server")
+        if not server:
+            return {
+                "ok": False,
+                "message": f"Email media type '{mt.get('name')}' has no SMTP server",
+            }
+        port = int(mt.get("smtp_port") or 25)
+        sender = mt.get("smtp_email") or "zabbix@localhost"
+        security = str(mt.get("smtp_security", "0"))  # 0 none, 1 STARTTLS, 2 SSL
+        auth = str(mt.get("smtp_authentication", "0"))  # 0 none, 1 user/pass
+        username = mt.get("username", "")
+        password = mt.get("passwd", "")  # usually not returned by the API
+
+        msg = MIMEText(
+            f"Test email from the Unified Monitoring Dashboard via {self.instance}.\n"
+            f"If you received this, email alerting through this relay works.",
+            "plain",
+            "utf-8",
+        )
+        msg["Subject"] = f"[{self.instance}] Unified Monitoring test mail"
+        msg["From"] = sender
+        msg["To"] = sendto
+
+        try:
+            ctx = ssl._create_unverified_context()
+            if security == "2":  # SSL/TLS on connect
+                smtp = smtplib.SMTP_SSL(server, port, timeout=30, context=ctx)
+            else:
+                smtp = smtplib.SMTP(server, port, timeout=30)
+                if security == "1":  # STARTTLS
+                    smtp.starttls(context=ctx)
+            if auth == "1" and username:
+                smtp.login(username, password)
+            smtp.sendmail(sender, [sendto], msg.as_string())
+            smtp.quit()
             return {
                 "ok": True,
-                "message": f"Test mail sent to {sendto} via '{mt.get('name')}'",
-                "detail": result,
+                "message": f"Test mail sent to {sendto} via {server}:{port}",
             }
-        except CollectorError as exc:
-            msg = str(exc)
-            # The JSON-RPC API doesn't expose a media-type test on any version
-            # (the UI "Test" button uses an internal controller, not the API).
-            if "-32601" in msg or "not found" in msg.lower():
-                return {
-                    "ok": False,
-                    "message": (
-                        f"Zabbix {version or '?'} JSON-RPC API has no test-mail "
-                        f"method (the UI Test button uses an internal endpoint, "
-                        f"not the API). Send a test from the Zabbix UI: "
-                        f"Alerts → Media types → (email) → Test."
-                    ),
-                }
-            return {"ok": False, "message": msg}
         except Exception as exc:  # noqa: BLE001 — reported to the UI
-            self.logger.warning("test mail failed: %s", exc)
-            return {"ok": False, "message": str(exc)}
-
-    def _api_version(self) -> str:
-        """Best-effort Zabbix API version (empty string if it can't be read)."""
-        try:
-            data = self._post(
-                {"jsonrpc": "2.0", "method": "apiinfo.version", "params": {}, "id": 1}
-            )
-            return str(data.get("result", ""))
-        except Exception:  # noqa: BLE001 — informational only
-            return ""
+            self.logger.warning("test mail send failed: %s", exc)
+            return {
+                "ok": False,
+                "message": f"SMTP send failed via {server}:{port} — {exc}",
+            }

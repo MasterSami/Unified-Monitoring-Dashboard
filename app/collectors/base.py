@@ -54,11 +54,11 @@ class BaseCollector(abc.ABC):
 
     # --- HTTP helper --------------------------------------------------------
 
-    def _client(self, **kwargs: object) -> httpx.Client:
+    def _client(self, *, timeout: float = 30.0, **kwargs: object) -> httpx.Client:
         """Build a configured httpx client (TLS + timeout honoring settings)."""
         return httpx.Client(
             verify=self.verify_tls,
-            timeout=30.0,
+            timeout=timeout,
             **kwargs,  # type: ignore[arg-type]
         )
 
