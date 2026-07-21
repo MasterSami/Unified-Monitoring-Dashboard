@@ -8,6 +8,7 @@ run one or all of them, and derives health from persisted
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
@@ -142,6 +143,8 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         max_instances=1,
         coalesce=True,
         replace_existing=True,
+        # Fire once right away (in the background), then every interval.
+        next_run_time=datetime.now(),
     )
     scheduler.start()
     _scheduler = scheduler

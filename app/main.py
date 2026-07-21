@@ -38,13 +38,12 @@ async def lifespan(app: FastAPI):
     )
     init_db()
 
-    service = get_service()
-    # On first startup with an empty DB, run one collection immediately so the
-    # UI has data to show before the first scheduled interval elapses.
-    if not service.has_data():
-        logger.info("empty database detected; running initial collection")
-        service.run_all()
-
+    # Build collectors and start the scheduler. The scheduler fires an initial
+    # run immediately (in the background) on every startup — so fresh data is
+    # collected whether or not the DB already has rows — then repeats on the
+    # configured interval. Running in the scheduler thread keeps startup fast
+    # even when some instances are slow or unreachable.
+    get_service()
     start_scheduler(settings)
     try:
         yield
