@@ -17,6 +17,7 @@ from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_nnmi_severity
+from app.servers import ServerConfig
 
 # NNMi status string -> normalized host status.
 _NNMI_STATUS = {
@@ -38,9 +39,9 @@ class NnmiCollector(BaseCollector):
     name = "nnmi"
     platform = SourcePlatform.nnmi
 
-    def __init__(self, settings: Settings) -> None:
-        super().__init__(settings)
-        base = settings.nnmi_url.rstrip("/")
+    def __init__(self, config: ServerConfig, settings: Settings) -> None:
+        super().__init__(config, settings)
+        base = config.url.rstrip("/")
         self._node_url = f"{base}/NodeBeanService/NodeBean"
         self._incident_url = f"{base}/IncidentBeanService/IncidentBean"
 
@@ -58,7 +59,7 @@ class NnmiCollector(BaseCollector):
             "Content-Type": "text/xml; charset=utf-8",
             "SOAPAction": soap_action,
         }
-        auth = (self.settings.nnmi_user, self.settings.nnmi_pass)
+        auth = (self.config.user, self.config.password)
         with self._client(headers=headers, auth=auth) as client:
             resp = self._request_with_retries(
                 client, "POST", url, content=envelope.encode("utf-8")
@@ -83,7 +84,7 @@ class NnmiCollector(BaseCollector):
 
     def collect_hosts(self) -> list[dict]:
         if self.settings.mock_mode:
-            return mock_data.mock_nnmi_hosts()
+            return mock_data.mock_nnmi_hosts(self.instance)
 
         body = self._soap_call(
             self._node_url,
@@ -110,7 +111,7 @@ class NnmiCollector(BaseCollector):
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
-            return mock_data.mock_nnmi_alerts()
+            return mock_data.mock_nnmi_alerts(self.instance)
 
         body = self._soap_call(
             self._incident_url,

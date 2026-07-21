@@ -142,15 +142,47 @@ def collectors_status(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> list[CollectorStatus]:
-    """Return current health for every collector."""
+    """Return current health for every configured instance."""
     return get_collector_statuses(db, settings)
 
 
-@router.post("/collectors/{name}/run")
-def run_collector(name: str) -> dict[str, str]:
-    """Manually trigger a single collector run (synchronous)."""
+@router.post("/collectors/{instance}/run")
+def run_collector(instance: str) -> dict[str, str]:
+    """Manually trigger a single instance's collection run (synchronous)."""
     service = get_service()
-    ran = service.run_one(name)
+    ran = service.run_one(instance)
     if not ran:
-        raise HTTPException(status_code=404, detail=f"unknown collector: {name}")
-    return {"status": "ok", "collector": name}
+        raise HTTPException(status_code=404, detail=f"unknown instance: {instance}")
+    return {"status": "ok", "instance": instance}
+
+
+@router.post("/collectors/run")
+def run_all_collectors() -> dict[str, object]:
+    """Trigger a run of every configured instance (synchronous)."""
+    service = get_service()
+    service.run_all()
+    return {"status": "ok", "instances": list(service.collectors)}
+
+
+@router.post("/collectors/{instance}/test-mail")
+def test_mail(
+    instance: str,
+    to: str | None = Query(default=None),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    """Ask a Zabbix instance to send a test email (verifies email alerting)."""
+    service = get_service()
+    collector = service.get(instance)
+    if collector is None or not hasattr(collector, "send_test_mail"):
+        raise HTTPException(
+            status_code=404,
+            detail=f"instance '{instance}' not found or does not support test mail",
+        )
+    recipient = to or settings.test_mail_to
+    if not recipient:
+        raise HTTPException(
+            status_code=400,
+            detail="no recipient: pass ?to=... or set TEST_MAIL_TO in .env",
+        )
+    result = collector.send_test_mail(recipient)  # type: ignore[attr-defined]
+    return {"instance": instance, "to": recipient, **result}

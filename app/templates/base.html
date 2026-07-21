@@ -85,31 +85,45 @@
       </div>
     </div>
 
+    <div id="toast-host" class="toast-host"></div>
+    <script>
+      window.toast = function (message, ok) {
+        var host = document.getElementById("toast-host");
+        if (!host) return;
+        var el = document.createElement("div");
+        el.className = "toast " + (ok ? "toast-ok" : "toast-err");
+        el.textContent = message;
+        host.appendChild(el);
+        setTimeout(function () {
+          el.style.opacity = "0";
+          setTimeout(function () {
+            el.remove();
+          }, 300);
+        }, 5000);
+      };
+    </script>
+
     <script>
       // "Refresh now" triggers every collector, then reloads HTMX regions.
       function refreshAll(event) {
         event.preventDefault();
         var btn = event.currentTarget;
         btn.classList.add("htmx-request");
-        var collectors = ["zabbix", "dynatrace", "nnmi"];
-        Promise.all(
-          collectors.map(function (c) {
-            return fetch("/api/v1/collectors/" + c + "/run", {
-              method: "POST",
-            }).catch(function () {});
-          })
-        ).then(function () {
-          btn.classList.remove("htmx-request");
-          if (window.htmx) {
-            document
-              .querySelectorAll("[data-refreshable]")
-              .forEach(function (el) {
-                window.htmx.trigger(el, "refresh");
-              });
-            var hs = document.getElementById("health-strip");
-            if (hs) window.htmx.trigger(hs, "refresh");
-          }
-        });
+        fetch("/api/v1/collectors/run", { method: "POST" })
+          .catch(function () {})
+          .then(function () {
+            btn.classList.remove("htmx-request");
+            if (window.htmx) {
+              document
+                .querySelectorAll("[data-refreshable]")
+                .forEach(function (el) {
+                  window.htmx.trigger(el, "refresh");
+                });
+              var hs = document.getElementById("health-strip");
+              if (hs) window.htmx.trigger(hs, "refresh");
+            }
+            if (window.toast) window.toast("↻ Collectors refreshed", true);
+          });
       }
     </script>
     {% block scripts %}{% endblock %}

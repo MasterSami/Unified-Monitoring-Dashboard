@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Server inventory — copy to servers.yaml and fill in. NEVER commit servers.yaml
+# (it holds credentials; it is gitignored). Set MOCK_MODE=false in .env to use it.
+#
+# Multiple servers per platform are supported. Each entry needs a unique `name`.
+# ---------------------------------------------------------------------------
+
+zabbix:
+  - name: Zabbix-A
+    url: "https://zabbix-a.example.local:8443"
+    user: "your.user"
+    password: "your-password"
+    check_proxies: false   # collect proxy health for this instance
+    test_mail: true        # show a "send test mail" button for this instance
+
+  - name: Zabbix-B
+    url: "https://zabbix-b.example.local:8443"
+    user: "your.user"
+    password: "your-password"
+    check_proxies: true
+    test_mail: true
+
+dynatrace:
+  - name: Dynatrace-Prod
+    # Include the environment path (.../e/ENV_ID/).
+    url: "https://xxxxx.dynatrace-managed.com/e/ENV_ID/"
+    token: "dt0c01...."
+
+nnmi:
+  - name: NNMi-A
+    url: "https://nnmi-a.example.local/nnm/"
+    user: "your.user"
+    password: "your-password"
+
+  - name: NNMi-B
+    url: "https://nnmi-b.example.local/nnm/"
+    user: "your.user"
+    password: "your-password"

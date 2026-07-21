@@ -59,7 +59,10 @@ class Host(Base):
     __tablename__ = "hosts"
     __table_args__ = (
         UniqueConstraint(
-            "source_platform", "external_id", name="uq_host_platform_external"
+            "source_platform",
+            "source_instance",
+            "external_id",
+            name="uq_host_platform_instance_external",
         ),
     )
 
@@ -69,6 +72,8 @@ class Host(Base):
     source_platform: Mapped[SourcePlatform] = mapped_column(
         Enum(SourcePlatform, native_enum=False, length=16), index=True
     )
+    #: Name of the specific instance this came from (e.g. "Zabbix-34").
+    source_instance: Mapped[str] = mapped_column(String(64), default="", index=True)
     external_id: Mapped[str] = mapped_column(String(128), index=True)
     status: Mapped[HostStatus] = mapped_column(
         Enum(HostStatus, native_enum=False, length=16),
@@ -94,7 +99,10 @@ class Alert(Base):
     __tablename__ = "alerts"
     __table_args__ = (
         UniqueConstraint(
-            "source_platform", "external_id", name="uq_alert_platform_external"
+            "source_platform",
+            "source_instance",
+            "external_id",
+            name="uq_alert_platform_instance_external",
         ),
     )
 
@@ -103,6 +111,8 @@ class Alert(Base):
     source_platform: Mapped[SourcePlatform] = mapped_column(
         Enum(SourcePlatform, native_enum=False, length=16), index=True
     )
+    #: Name of the specific instance this came from (e.g. "Zabbix-34").
+    source_instance: Mapped[str] = mapped_column(String(64), default="", index=True)
     host_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
     severity_int: Mapped[int] = mapped_column(Integer, default=1, index=True)
     severity_label: Mapped[str] = mapped_column(String(32), default="info")
@@ -127,6 +137,8 @@ class CollectorRun(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     platform: Mapped[str] = mapped_column(String(32), index=True)
+    #: Name of the specific instance this run polled (e.g. "Zabbix-34").
+    instance: Mapped[str] = mapped_column(String(64), default="", index=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow
     )

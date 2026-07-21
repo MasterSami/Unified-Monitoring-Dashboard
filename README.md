@@ -19,8 +19,14 @@ without code changes.
 - **Dark mode** — navbar toggle, persisted in `localStorage`, follows
   `prefers-color-scheme` by default, no flash of the wrong theme.
 - **JSON API** under `/api/v1` for reports and automation.
-- **MOCK_MODE** — realistic fake data (30 hosts, 12 alerts) so the UI can be
-  developed and demoed without VPN access to the real systems.
+- **Multiple servers per platform** — declare as many Zabbix / Dynatrace / NNMi
+  instances as you have in `servers.yaml`; each is polled and tracked
+  independently and tagged by instance throughout the UI and API.
+- **Zabbix extras** — username/password *or* API-token auth; optional proxy
+  fleet health per instance; a "Send test mail" button that asks Zabbix to send
+  a test email (verifies email alerting end-to-end).
+- **MOCK_MODE** — realistic fake data across several fake instances so the UI
+  can be developed and demoed without VPN access to the real systems.
 
 ## Architecture
 
@@ -77,12 +83,18 @@ pip install -r requirements.txt
 
 # 4. Create your .env from the template
 cp .env.example .env
-#    Leave MOCK_MODE=true to demo without VPN, or fill in the real
-#    URLs/tokens and set MOCK_MODE=false.
+#    Leave MOCK_MODE=true to demo without VPN.
 
-# 5. Run it
+# 5. (For live data) declare your servers
+cp servers.example.yaml servers.yaml
+#    Fill in URLs/credentials, then set MOCK_MODE=false in .env.
+#    servers.yaml is gitignored — it holds credentials.
+
+# 6. Run it
 uvicorn app.main:app --reload
 ```
+
+On Windows (PowerShell) use `copy` instead of `cp`.
 
 Then open <http://127.0.0.1:8000>.
 
@@ -95,12 +107,46 @@ immediately so the UI has data, then continues polling on the schedule.
 | ----------------------- | -------------------------------------------------------- |
 | `DATABASE_URL`          | SQLAlchemy URL. Default `sqlite:///./dashboard.db`.      |
 | `POLL_INTERVAL_MINUTES` | Background polling cadence.                              |
-| `ENABLED_COLLECTORS`    | Comma list; disable a platform without touching code.    |
+| `ENABLED_COLLECTORS`    | Comma list; disable a platform without touching config.  |
 | `MOCK_MODE`             | `true` loads fake data; `false` calls the real systems.  |
 | `TLS_VERIFY`            | `false` to allow internal self-signed certs.             |
-| `ZABBIX_URL/TOKEN`      | Zabbix base URL and API token.                           |
-| `DYNATRACE_URL/TOKEN`   | Dynatrace env URL (`.../e/ENV_ID`) and API token.        |
-| `NNMI_URL/USER/PASS`    | NNMi base URL and SOAP credentials.                      |
+| `SERVERS_CONFIG`        | Path to the server inventory YAML (default `servers.yaml`). |
+| `TEST_MAIL_TO`          | Default recipient for the Zabbix "Send test mail" button. |
+
+### Server inventory (`servers.yaml`)
+
+Connection details live here (kept out of git). Add as many instances per
+platform as you have; each needs a unique `name`:
+
+```yaml
+zabbix:
+  - name: Zabbix-A
+    url: "https://zabbix-a.example.local:8443"
+    user: "your.user"          # or use `token:` for a static API token
+    password: "your-password"
+    check_proxies: true        # show proxy fleet health for this instance
+    test_mail: true            # show a "Send test mail" button
+
+dynatrace:
+  - name: Dynatrace-Prod
+    url: "https://xxxxx.dynatrace-managed.com/e/ENV_ID/"
+    token: "dt0c01...."
+
+nnmi:
+  - name: NNMi-A
+    url: "https://nnmi-a.example.local/nnm/"
+    user: "your.user"
+    password: "your-password"
+```
+
+- **Zabbix auth**: provide either `user`+`password` (the collector calls
+  `user.login`) or a static `token`.
+- **check_proxies**: for Zabbix instances, the collector also queries
+  `proxy.get` and surfaces "N/M online" (with any offline proxies named) on the
+  instance's card and health tooltip.
+- **test_mail**: exposes a button that calls Zabbix `mediatype.test` to send a
+  test email to `TEST_MAIL_TO` (or `?to=` on the API), verifying email alerting.
+- **verify_tls**: optional per-server override of the global `TLS_VERIFY`.
 
 > **Note on Dynatrace scopes.** The dashboard uses the Entities v2 API for
 > hosts (needs `entities.read`). If the token lacks `problems.read`, the
@@ -115,8 +161,10 @@ immediately so the UI has data, then continues polling on the schedule.
 | `GET  /api/v1/hosts`                  | All hosts (filters: `platform`, `status`, `q`).  |
 | `GET  /api/v1/alerts?active=true`     | Alerts; `active=true` hides resolved.            |
 | `GET  /api/v1/summary`                | Aggregate KPIs for the overview.                 |
-| `GET  /api/v1/collectors/status`      | Per-collector health.                            |
-| `POST /api/v1/collectors/{name}/run`  | Trigger one collector now (the UI "Refresh now").|
+| `GET  /api/v1/collectors/status`      | Per-instance health.                             |
+| `POST /api/v1/collectors/run`         | Trigger every instance now (the UI "Refresh now").|
+| `POST /api/v1/collectors/{instance}/run` | Trigger one instance now.                     |
+| `POST /api/v1/collectors/{instance}/test-mail?to=` | Zabbix: send a test email.        |
 
 Interactive docs at `/docs`.
 

@@ -25,6 +25,7 @@
         <th>{{ sort_link('Hostname', 'hostname', current) }}</th>
         <th>{{ sort_link('IP', 'ip', current) }}</th>
         <th>{{ sort_link('Platform', 'platform', current) }}</th>
+        <th>{{ sort_link('Instance', 'instance', current) }}</th>
         <th>{{ sort_link('Status', 'status', current) }}</th>
         <th>{{ sort_link('Group', 'group', current) }}</th>
         <th>{{ sort_link('Last seen', 'last_seen', current) }}</th>
@@ -40,6 +41,7 @@
             <span class="dot"></span>{{ h.source_platform.value }}
           </span>
         </td>
+        <td style="color: var(--text-muted); font-size: 12px;">{{ h.source_instance or '—' }}</td>
         <td>
           <span class="pill status-{{ h.status.value }}">
             <span class="dot"></span>{{ h.status.value }}
@@ -50,7 +52,7 @@
       </tr>
       {% else %}
       <tr>
-        <td colspan="6"><div class="empty">No hosts match your filters.</div></td>
+        <td colspan="7"><div class="empty">No hosts match your filters.</div></td>
       </tr>
       {% endfor %}
     </tbody>

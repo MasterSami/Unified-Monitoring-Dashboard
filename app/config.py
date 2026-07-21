@@ -28,18 +28,12 @@ class Settings(BaseSettings):
     mock_mode: bool = True
     tls_verify: bool = False
 
-    # --- Zabbix -------------------------------------------------------------
-    zabbix_url: str = ""
-    zabbix_token: str = ""
+    # Path to the YAML file listing all monitored servers (one entry per
+    # instance, grouped by platform). See servers.example.yaml.
+    servers_config: str = "servers.yaml"
 
-    # --- Dynatrace ----------------------------------------------------------
-    dynatrace_url: str = ""
-    dynatrace_token: str = ""
-
-    # --- NNMi ---------------------------------------------------------------
-    nnmi_url: str = ""
-    nnmi_user: str = ""
-    nnmi_pass: str = ""
+    # Default recipient for the Zabbix "send test mail" action.
+    test_mail_to: str = ""
 
     @property
     def enabled_collectors_list(self) -> list[str]:

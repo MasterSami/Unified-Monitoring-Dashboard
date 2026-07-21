@@ -1,25 +1,24 @@
-"""APScheduler wiring and per-collector run orchestration.
+"""APScheduler wiring and per-instance run orchestration.
 
-Exposes a small :class:`CollectorService` that owns the collector instances and
-knows how to run one or all of them, plus helpers to start/stop the background
-scheduler. Status is derived from persisted :class:`CollectorRun` rows so it
-survives restarts.
+Owns one collector per configured server (across all platforms), knows how to
+run one or all of them, and derives health from persisted
+:class:`~app.models.CollectorRun` rows so status survives restarts.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.collectors import build_collector, build_collectors
+from app.collectors import BaseCollector, build_collectors
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.models import CollectorRun, RunStatus
 from app.schemas import CollectorStatus
+from app.servers import load_servers
 
 logger = logging.getLogger("scheduler")
 
@@ -31,19 +30,18 @@ class CollectorService:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.collectors = build_collectors(settings)
+        #: instance name -> collector
+        self.collectors: dict[str, BaseCollector] = build_collectors(settings)
 
-    def run_one(self, name: str) -> bool:
-        """Run a single collector by name. Returns True if it ran.
+    def get(self, instance: str) -> BaseCollector | None:
+        """Return the collector for an instance name, if configured."""
+        return self.collectors.get(instance)
 
-        Uses the enabled instance when present, otherwise builds an ad-hoc one
-        so a manual trigger works even for a disabled platform.
-        """
-        collector = self.collectors.get(name) or build_collector(
-            name, self.settings
-        )
+    def run_one(self, instance: str) -> bool:
+        """Run a single instance's collector. Returns True if it ran."""
+        collector = self.collectors.get(instance)
         if collector is None:
-            logger.warning("unknown collector requested: %s", name)
+            logger.warning("unknown instance requested: %s", instance)
             return False
         db: Session = SessionLocal()
         try:
@@ -53,10 +51,10 @@ class CollectorService:
         return True
 
     def run_all(self) -> None:
-        """Run every enabled collector once. Failures are contained per run."""
-        logger.info("polling all collectors: %s", list(self.collectors))
-        for name in self.collectors:
-            self.run_one(name)
+        """Run every configured collector once. Failures are contained."""
+        logger.info("polling %d instance(s): %s", len(self.collectors), list(self.collectors))
+        for instance in list(self.collectors):
+            self.run_one(instance)
 
     def has_data(self) -> bool:
         """Return True if any collector run has ever been recorded."""
@@ -71,43 +69,33 @@ class CollectorService:
 
 
 def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorStatus]:
-    """Derive current health for every known collector from run history."""
-    from app.collectors import COLLECTOR_CLASSES
-
-    enabled = set(settings.enabled_collectors_list)
+    """Derive current health for every configured instance from run history."""
     statuses: list[CollectorStatus] = []
 
-    for name in COLLECTOR_CLASSES:
+    for cfg in load_servers(settings):
         last_run = db.scalar(
             select(CollectorRun)
-            .where(CollectorRun.platform == name)
+            .where(CollectorRun.instance == cfg.name)
             .order_by(CollectorRun.started_at.desc())
             .limit(1)
         )
         last_success = db.scalar(
             select(CollectorRun)
             .where(
-                CollectorRun.platform == name,
+                CollectorRun.instance == cfg.name,
                 CollectorRun.status == RunStatus.success,
             )
             .order_by(CollectorRun.started_at.desc())
             .limit(1)
         )
 
-        is_enabled = name in enabled
-        if not is_enabled:
-            status = "disabled"
-        elif last_run is None:
-            status = "never"
-        else:
-            status = last_run.status.value
-
-        last_run_at: datetime | None = last_run.started_at if last_run else None
+        status = "never" if last_run is None else last_run.status.value
         statuses.append(
             CollectorStatus(
-                platform=name,
-                enabled=is_enabled,
-                last_run_at=last_run_at,
+                platform=cfg.platform,
+                instance=cfg.name,
+                enabled=True,
+                last_run_at=last_run.started_at if last_run else None,
                 last_success_at=last_success.finished_at if last_success else None,
                 status=status,
                 items_collected=last_run.items_collected if last_run else 0,
@@ -117,6 +105,8 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 notes=last_success.error_message
                 if last_success and last_success.error_message
                 else None,
+                test_mail=cfg.test_mail,
+                check_proxies=cfg.check_proxies,
             )
         )
     return statuses

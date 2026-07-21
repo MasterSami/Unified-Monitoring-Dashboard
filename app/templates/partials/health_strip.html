@@ -1,18 +1,24 @@
 <div class="health">
-  <div class="h-title">Collectors</div>
+  <div class="h-title">Collectors · {{ collectors | length }}</div>
   {% for c in collectors %}
-    {% if c.status == 'disabled' %}
-      {% set cls = 'disabled' %}{% set tip = c.platform ~ ' — disabled in config' %}{% set meta = 'off' %}
-    {% elif c.status == 'success' %}
-      {% set cls = 'ok' %}{% set tip = c.platform ~ ' — ' ~ c.items_collected ~ ' items · last ok ' ~ (c.last_success_at | relative_time) %}{% set meta = c.last_success_at | relative_time %}
+    {% if c.status == 'success' %}
+      {% set cls = 'ok' %}
+      {% set tip = c.instance ~ ' — ' ~ c.items_collected ~ ' items · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
+      {% set meta = c.last_success_at | relative_time %}
     {% elif c.status == 'failed' %}
-      {% set cls = 'fail' %}{% set tip = c.platform ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}{% set meta = 'failed' %}
+      {% set cls = 'fail' %}
+      {% set tip = c.instance ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
+      {% set meta = 'failed' %}
     {% else %}
-      {% set cls = '' %}{% set tip = c.platform ~ ' — no runs yet' %}{% set meta = '—' %}
+      {% set cls = '' %}
+      {% set tip = c.instance ~ ' — no runs yet' %}
+      {% set meta = '—' %}
     {% endif %}
     <div class="h-item {{ cls }}" data-tip="{{ tip }}">
       <span class="dot"></span>
-      <span class="h-name">{{ c.platform }}{% if c.notes %} ⚠{% endif %}</span>
+      <span class="h-name">
+        {{ c.instance }}{% if c.notes and 'OFFLINE' in c.notes %} ⚠{% endif %}
+      </span>
       <span class="h-meta">{{ meta }}</span>
     </div>
   {% endfor %}

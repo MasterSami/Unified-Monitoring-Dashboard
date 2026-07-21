@@ -16,6 +16,7 @@ class HostOut(BaseModel):
     hostname: str
     ip: str | None
     source_platform: str
+    source_instance: str
     external_id: str
     status: str
     group_name: str | None
@@ -31,6 +32,7 @@ class AlertOut(BaseModel):
     id: int
     external_id: str
     source_platform: str
+    source_instance: str
     host_hostname: str | None
     severity_int: int
     severity_label: str
@@ -41,9 +43,10 @@ class AlertOut(BaseModel):
 
 
 class CollectorStatus(BaseModel):
-    """Health snapshot for a single collector."""
+    """Health snapshot for a single collector instance."""
 
     platform: str
+    instance: str
     enabled: bool
     last_run_at: datetime | None
     last_success_at: datetime | None
@@ -51,6 +54,8 @@ class CollectorStatus(BaseModel):
     items_collected: int
     error_message: str | None
     notes: str | None = None
+    test_mail: bool = False
+    check_proxies: bool = False
 
 
 class SeverityBucket(BaseModel):

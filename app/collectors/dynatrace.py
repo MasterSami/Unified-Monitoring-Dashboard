@@ -15,6 +15,7 @@ from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_dynatrace_severity
+from app.servers import ServerConfig
 
 _PROBLEMS_UNAVAILABLE = "unavailable — token lacks problems.read scope"
 
@@ -25,13 +26,13 @@ class DynatraceCollector(BaseCollector):
     name = "dynatrace"
     platform = SourcePlatform.dynatrace
 
-    def __init__(self, settings: Settings) -> None:
-        super().__init__(settings)
-        self._base = settings.dynatrace_url.rstrip("/")
+    def __init__(self, config: ServerConfig, settings: Settings) -> None:
+        super().__init__(config, settings)
+        self._base = config.url.rstrip("/")
 
     def _headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Api-Token {self.settings.dynatrace_token}",
+            "Authorization": f"Api-Token {self.config.token}",
             "Accept": "application/json",
         }
 
@@ -39,7 +40,7 @@ class DynatraceCollector(BaseCollector):
 
     def collect_hosts(self) -> list[dict]:
         if self.settings.mock_mode:
-            return mock_data.mock_dynatrace_hosts()
+            return mock_data.mock_dynatrace_hosts(self.instance)
 
         url = f"{self._base}/api/v2/entities"
         params = {
@@ -85,7 +86,7 @@ class DynatraceCollector(BaseCollector):
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
-            return mock_data.mock_dynatrace_alerts()
+            return mock_data.mock_dynatrace_alerts(self.instance)
 
         url = f"{self._base}/api/v2/problems"
         params = {"problemSelector": 'status("OPEN")', "pageSize": "500"}

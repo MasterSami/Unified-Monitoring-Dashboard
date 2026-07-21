@@ -10,9 +10,10 @@
       <tr>
         <th style="width: 110px">Severity</th>
         <th>Title</th>
-        <th style="width: 120px">Platform</th>
-        <th style="width: 160px">Host</th>
-        <th style="width: 110px">Started</th>
+        <th style="width: 110px">Platform</th>
+        <th style="width: 130px">Instance</th>
+        <th style="width: 150px">Host</th>
+        <th style="width: 100px">Started</th>
       </tr>
     </thead>
     <tbody>
@@ -29,12 +30,13 @@
             <span class="dot"></span>{{ a.source_platform.value }}
           </span>
         </td>
+        <td style="color: var(--text-muted); font-size: 12px;">{{ a.source_instance or '—' }}</td>
         <td class="mono">{{ a.host_hostname or '—' }}</td>
         <td class="mono">{{ a.started_at | relative_time }}</td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="5"><div class="empty">🎉 No active alerts.</div></td>
+        <td colspan="6"><div class="empty"><span class="big">🎉</span>No active alerts.</div></td>
       </tr>
       {% endfor %}
     </tbody>

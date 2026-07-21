@@ -21,3 +21,7 @@ env/
 .DS_Store
 .idea/
 .vscode/
+
+# Server inventory with credentials
+servers.yaml
+servers.local.yaml

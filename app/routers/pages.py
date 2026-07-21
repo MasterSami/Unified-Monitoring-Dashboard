@@ -179,6 +179,7 @@ def _hosts_query(
         "hostname": Host.hostname,
         "ip": Host.ip,
         "platform": Host.source_platform,
+        "instance": Host.source_instance,
         "status": Host.status,
         "group": Host.group_name,
         "last_seen": Host.last_seen,

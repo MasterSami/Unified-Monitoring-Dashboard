@@ -113,16 +113,14 @@
   </div>
 </div>
 
-<!-- Collector runs -->
-<div class="section-title">Collector Status</div>
+<!-- Collector instances -->
+<div class="section-title">Collector Instances · {{ collectors | length }}</div>
 <div class="grid cols-3">
   {% for c in collectors %}
   <div class="card coll-card">
     <div class="cc-top">
-      <span class="badge badge-{{ c.platform }}"><span class="dot"></span>{{ c.platform }}</span>
-      {% if c.status == 'disabled' %}
-        <span class="pill status-unknown"><span class="dot"></span>disabled</span>
-      {% elif c.status == 'failed' %}
+      <span class="badge badge-{{ c.platform }}"><span class="dot"></span>{{ c.instance }}</span>
+      {% if c.status == 'failed' %}
         <span class="pill status-down"><span class="dot"></span>failed</span>
       {% elif c.status == 'success' %}
         <span class="pill status-up"><span class="dot"></span>healthy</span>
@@ -130,17 +128,42 @@
         <span class="pill status-unknown"><span class="dot"></span>idle</span>
       {% endif %}
     </div>
-    {% if c.status == 'disabled' %}
-      <span class="cc-status" style="color: var(--text-muted); font-size: 14px;">Not enabled</span>
-      <span class="cc-meta">add to ENABLED_COLLECTORS</span>
-    {% elif c.status == 'failed' %}
+    {% if c.status == 'failed' %}
       <span class="cc-status" style="color: var(--down); font-size: 14px;">Last run failed</span>
-      <span class="cc-meta">last ok {{ c.last_success_at | relative_time }}</span>
+      <span class="cc-meta" title="{{ c.error_message }}">{{ (c.error_message or '')[:70] }}{% if c.error_message and c.error_message|length > 70 %}…{% endif %}</span>
     {% else %}
       <span class="cc-status">{{ c.last_success_at | relative_time }}</span>
       <span class="cc-meta">{{ c.items_collected }} items collected</span>
     {% endif %}
-    {% if c.notes %}<div class="notice">⚠ {{ c.notes }}</div>{% endif %}
+    {% if c.check_proxies and c.notes %}
+      <div class="notice" style="{{ '' if 'OFFLINE' in c.notes else 'background: color-mix(in srgb, var(--up) 11%, transparent); color: var(--up); border-color: color-mix(in srgb, var(--up) 28%, transparent);' }}">
+        {{ '⚠' if 'OFFLINE' in c.notes else '🛰' }} {{ c.notes }}
+      </div>
+    {% endif %}
+    {% if c.test_mail %}
+      <button
+        class="btn"
+        style="margin-top: 10px; align-self: flex-start;"
+        hx-post="/api/v1/collectors/{{ c.instance }}/test-mail"
+        hx-swap="none"
+        hx-on::after-request="notifyTestMail(event, '{{ c.instance }}')"
+      >
+        <span class="htmx-indicator">⏳</span> ✉ Send test mail
+      </button>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
+
+<script>
+  function notifyTestMail(evt, instance) {
+    var ok = evt.detail && evt.detail.successful;
+    var msg = "Test mail requested";
+    try {
+      var r = JSON.parse(evt.detail.xhr.responseText);
+      msg = r.message || msg;
+      if (r.ok === false) ok = false;
+    } catch (e) {}
+    if (window.toast) window.toast((ok ? "✓ " : "✕ ") + instance + ": " + msg, ok);
+  }
+</script>

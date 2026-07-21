@@ -92,13 +92,15 @@ def upsert_hosts(
     db: Session,
     platform: SourcePlatform,
     hosts: list[dict],
+    instance: str = "",
 ) -> int:
     """Insert/update host records and reconcile stale ones.
 
     ``hosts`` is a list of normalized dicts with keys: ``external_id``,
     ``hostname``, ``ip``, ``status`` (a :class:`HostStatus`), ``group_name``,
-    ``raw_payload``. Hosts previously known for this platform but absent from
-    this run are marked ``unknown`` (never deleted).
+    ``raw_payload``. Records are scoped to ``(platform, instance)``: hosts
+    previously known for this instance but absent from this run are marked
+    ``unknown`` (never deleted).
 
     Returns the number of hosts present in this run.
     """
@@ -108,7 +110,10 @@ def upsert_hosts(
     existing = {
         h.external_id: h
         for h in db.scalars(
-            select(Host).where(Host.source_platform == platform)
+            select(Host).where(
+                Host.source_platform == platform,
+                Host.source_instance == instance,
+            )
         ).all()
     }
 
@@ -117,7 +122,11 @@ def upsert_hosts(
         seen_external_ids.add(external_id)
         row = existing.get(external_id)
         if row is None:
-            row = Host(source_platform=platform, external_id=external_id)
+            row = Host(
+                source_platform=platform,
+                source_instance=instance,
+                external_id=external_id,
+            )
             db.add(row)
         row.hostname = item.get("hostname") or external_id
         row.ip = item.get("ip")
@@ -141,13 +150,15 @@ def upsert_alerts(
     db: Session,
     platform: SourcePlatform,
     alerts: list[dict],
+    instance: str = "",
 ) -> int:
     """Insert/update alert records and reconcile resolved ones.
 
     ``alerts`` is a list of normalized dicts with keys: ``external_id``,
     ``host_hostname``, ``severity_int``, ``title``, ``started_at``,
-    ``raw_payload``. Active alerts previously known for this platform but absent
-    from this run are marked ``resolved=True``.
+    ``raw_payload``. Records are scoped to ``(platform, instance)``: active
+    alerts previously known for this instance but absent from this run are
+    marked ``resolved=True``.
 
     Returns the number of alerts present in this run.
     """
@@ -157,7 +168,10 @@ def upsert_alerts(
     existing = {
         a.external_id: a
         for a in db.scalars(
-            select(Alert).where(Alert.source_platform == platform)
+            select(Alert).where(
+                Alert.source_platform == platform,
+                Alert.source_instance == instance,
+            )
         ).all()
     }
 
@@ -166,7 +180,11 @@ def upsert_alerts(
         seen_external_ids.add(external_id)
         row = existing.get(external_id)
         if row is None:
-            row = Alert(source_platform=platform, external_id=external_id)
+            row = Alert(
+                source_platform=platform,
+                source_instance=instance,
+                external_id=external_id,
+            )
             db.add(row)
         sev = int(item.get("severity_int", 1))
         row.severity_int = sev
