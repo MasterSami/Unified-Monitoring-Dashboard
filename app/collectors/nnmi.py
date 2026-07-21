@@ -3,7 +3,12 @@
 Nodes come from the NodeBean service, open incidents from the IncidentBean
 service. We use raw SOAP envelopes over httpx + lxml rather than zeep: NNMi's
 WSDLs are large and often fight zeep's schema parsing, and hand-built envelopes
-keep the dependency surface small and the behavior predictable.
+keep the dependency surface small and predictable.
+
+The envelope shape (a ``filt:expression`` ``arg0`` carrying ``offset`` /
+``maxObjects`` / a condition) and the ``*.sdk.nms.ov.hp.com`` namespaces match
+the NNMi SDK web-service contract; the services live at the server root (not the
+``/nnm`` console path), with an empty ``SOAPAction`` header.
 """
 
 from __future__ import annotations
@@ -12,8 +17,8 @@ from datetime import datetime, timezone
 
 from lxml import etree
 
-from app.collectors.base import BaseCollector, CollectorError
 from app.collectors import mock_data
+from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_nnmi_severity
@@ -26,15 +31,45 @@ _NNMI_STATUS = {
     "MINOR": HostStatus.up,
     "MAJOR": HostStatus.down,
     "CRITICAL": HostStatus.down,
+    "DISABLED": HostStatus.unknown,
     "UNKNOWN": HostStatus.unknown,
     "NO_STATUS": HostStatus.unknown,
 }
 
-_SOAP_ENV = "http://schemas.xmlsoap.org/soap/envelope/"
+_NODE_NS = "http://node.sdk.nms.ov.hp.com/"
+_INCIDENT_NS = "http://incident.sdk.nms.ov.hp.com/"
+
+_PAGE_SIZE = 500
+_MAX_PAGES = 40  # safety cap (up to 20k objects/entity)
+_TIMEOUT = 120.0
+
+# SOAP request envelope: an AND expression carrying paging constraints and one
+# condition (NNMi SDK filter grammar).
+_SOAP_TEMPLATE = (
+    '<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"'
+    ' xmlns:svc="{ns}">'
+    "<soapenv:Header/>"
+    "<soapenv:Body>"
+    "<svc:{operation}>"
+    '<arg0 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+    ' xmlns:filt="http://filter.sdk.nms.ov.hp.com/" xsi:type="filt:expression">'
+    "<operator>AND</operator>"
+    '<subFilters xsi:type="filt:constraint">'
+    "<name>offset</name><value>{offset}</value></subFilters>"
+    '<subFilters xsi:type="filt:constraint">'
+    "<name>maxObjects</name><value>{max_objects}</value></subFilters>"
+    '<subFilters xsi:type="filt:condition">'
+    "<name>{cond_field}</name><operator>{cond_op}</operator>"
+    "<value>{cond_value}</value></subFilters>"
+    "</arg0>"
+    "</svc:{operation}>"
+    "</soapenv:Body>"
+    "</soapenv:Envelope>"
+)
 
 
 class NnmiCollector(BaseCollector):
-    """Collects nodes and open incidents from NNMi via SOAP."""
+    """Collects nodes and open incidents from one NNMi instance via SOAP."""
 
     name = "nnmi"
     platform = SourcePlatform.nnmi
@@ -42,60 +77,117 @@ class NnmiCollector(BaseCollector):
     def __init__(self, config: ServerConfig, settings: Settings) -> None:
         super().__init__(config, settings)
         base = config.url.rstrip("/")
-        # The NNMi SOAP web services live at the server root, NOT under the
-        # "/nnm" console webapp path. Configuring the console URL (…/nnm/) and
-        # appending the service path yields a 403; strip the console suffix so
-        # we hit e.g. https://host/NodeBeanService/NodeBean.
+        # SOAP web services live at the server root, NOT under the "/nnm"
+        # console webapp path; strip it so we don't get a 403.
         for suffix in ("/nnm", "/nnmi"):
             if base.lower().endswith(suffix):
                 base = base[: -len(suffix)]
                 break
         self._base = base
-        self._node_url = f"{base}/NodeBeanService/NodeBean"
-        self._incident_url = f"{base}/IncidentBeanService/IncidentBean"
 
-    # --- SOAP helper --------------------------------------------------------
+    # --- SOAP plumbing ------------------------------------------------------
 
-    def _soap_call(self, url: str, body_xml: str, soap_action: str) -> etree._Element:
-        """POST a SOAP envelope and return the parsed response body element."""
-        envelope = (
-            f'<soapenv:Envelope xmlns:soapenv="{_SOAP_ENV}">'
-            "<soapenv:Header/>"
-            f"<soapenv:Body>{body_xml}</soapenv:Body>"
-            "</soapenv:Envelope>"
-        )
+    def _soap_post(self, path: str, envelope: str) -> bytes:
+        """POST a SOAP envelope to ``base+path`` and return the raw response."""
+        url = self._base + path
         headers = {
-            "Content-Type": "text/xml; charset=utf-8",
-            "SOAPAction": soap_action,
+            "Content-Type": "text/xml;charset=UTF-8",
+            "SOAPAction": "",
         }
         auth = (self.config.user, self.config.password)
-        with self._client(headers=headers, auth=auth) as client:
+        with self._client(timeout=_TIMEOUT, headers=headers, auth=auth) as client:
             resp = self._request_with_retries(
                 client, "POST", url, content=envelope.encode("utf-8")
             )
         if resp.status_code == 403:
             raise CollectorError(
-                f"403 Forbidden from {url}. Check that the NNMi account "
-                f"'{self.config.user}' has the 'Web Service Clients' role, and "
-                f"that the URL points at the server root (not the /nnm console)."
+                f"403 Forbidden from {url}. Ensure the NNMi account "
+                f"'{self.config.user}' has the 'Web Service Clients' role."
             )
         if resp.status_code == 401:
             raise CollectorError(f"401 Unauthorized from {url} — check credentials.")
         resp.raise_for_status()
-        try:
-            root = etree.fromstring(resp.content)
-        except etree.XMLSyntaxError as exc:  # pragma: no cover - defensive
-            raise CollectorError(f"invalid SOAP response: {exc}") from exc
-        body = root.find(f"{{{_SOAP_ENV}}}Body")
-        if body is None:
-            raise CollectorError("SOAP response missing Body")
-        return body
+        return resp.content
 
     @staticmethod
-    def _text(el: etree._Element, tag: str) -> str | None:
-        """Return the text of the first descendant whose local-name matches."""
-        found = el.find(f".//*[local-name()='{tag}']")
-        return found.text if found is not None else None
+    def _parse_items(xml_bytes: bytes) -> list[dict]:
+        """Parse ``<item>`` elements into dicts of their simple children.
+
+        Nested structures (children that themselves have element children, e.g.
+        capabilities) are skipped, matching the NNMi SDK export convention.
+        """
+        try:
+            root = etree.fromstring(xml_bytes)
+        except etree.XMLSyntaxError as exc:  # pragma: no cover - defensive
+            raise CollectorError(f"invalid SOAP response: {exc}") from exc
+
+        # Surface SOAP faults as clear errors instead of silent empties.
+        faults = root.xpath("//*[local-name()='Fault']")
+        if faults:
+            strings = faults[0].xpath(".//*[local-name()='faultstring']/text()")
+            msg = strings[0] if strings else "SOAP fault"
+            raise CollectorError(f"NNMi SOAP fault: {msg}")
+
+        items: list[dict] = []
+        for el in root.iter():
+            if etree.QName(el).localname != "item":
+                continue
+            # Skip <item> elements nested inside another <item> (e.g. the
+            # per-node capabilities / customAttributes lists).
+            ancestor = el.getparent()
+            nested = False
+            while ancestor is not None:
+                if etree.QName(ancestor).localname == "item":
+                    nested = True
+                    break
+                ancestor = ancestor.getparent()
+            if nested:
+                continue
+            record: dict[str, str] = {}
+            for child in el:
+                if len(child):  # nested element -> skip
+                    continue
+                record[etree.QName(child).localname] = (child.text or "").strip()
+            if record:
+                items.append(record)
+        return items
+
+    def _fetch(
+        self,
+        path: str,
+        ns: str,
+        operation: str,
+        cond: tuple[str, str, str],
+    ) -> list[dict]:
+        """Fetch all pages for one entity/condition."""
+        rows: list[dict] = []
+        offset = 0
+        for _ in range(_MAX_PAGES):
+            envelope = _SOAP_TEMPLATE.format(
+                ns=ns,
+                operation=operation,
+                offset=offset,
+                max_objects=_PAGE_SIZE,
+                cond_field=cond[0],
+                cond_op=cond[1],
+                cond_value=cond[2],
+            )
+            page = self._parse_items(self._soap_post(path, envelope))
+            rows.extend(page)
+            if len(page) < _PAGE_SIZE:
+                break
+            offset += _PAGE_SIZE
+        return rows
+
+    def _fetch_with_fallback(
+        self, path: str, ns: str, operation: str
+    ) -> list[dict]:
+        """Fetch with the usual name-LIKE-% filter, falling back to id GE 0."""
+        for cond in (("name", "LIKE", "%"), ("id", "GE", "0")):
+            rows = self._fetch(path, ns, operation, cond)
+            if rows:
+                return rows
+        return []
 
     # --- Contract -----------------------------------------------------------
 
@@ -103,25 +195,23 @@ class NnmiCollector(BaseCollector):
         if self.settings.mock_mode:
             return mock_data.mock_nnmi_hosts(self.instance)
 
-        body = self._soap_call(
-            self._node_url,
-            '<getNodes xmlns="http://nnm.hp.com/2008/04/NodeBean"/>',
-            "getNodes",
+        records = self._fetch_with_fallback(
+            "/NodeBeanService/NodeBean", _NODE_NS, "getNodes"
         )
         hosts: list[dict] = []
-        for item in body.findall(".//*[local-name()='item']"):
-            status_str = (self._text(item, "status") or "UNKNOWN").upper()
+        for r in records:
+            status_str = (r.get("status") or "UNKNOWN").upper()
             hosts.append(
                 {
-                    "external_id": self._text(item, "id")
-                    or self._text(item, "uuid")
-                    or self._text(item, "name"),
-                    "hostname": self._text(item, "name"),
-                    "ip": self._text(item, "managementAddress"),
+                    "external_id": r.get("id") or r.get("uuid") or r.get("name"),
+                    "hostname": r.get("name") or r.get("longName") or r.get("id"),
+                    "ip": r.get("managementAddress") or None,
                     "status": _NNMI_STATUS.get(status_str, HostStatus.unknown),
-                    "group_name": self._text(item, "systemLocation"),
+                    "group_name": r.get("deviceCategory")
+                    or r.get("deviceFamily")
+                    or r.get("systemLocation"),
                     "last_seen": datetime.now(timezone.utc),
-                    "raw_payload": {"status": status_str},
+                    "raw_payload": r,
                 }
             )
         return hosts
@@ -130,41 +220,47 @@ class NnmiCollector(BaseCollector):
         if self.settings.mock_mode:
             return mock_data.mock_nnmi_alerts(self.instance)
 
-        body = self._soap_call(
-            self._incident_url,
-            '<getIncidents xmlns="http://nnm.hp.com/2008/04/IncidentBean">'
-            "<filter><condition><name>lifecycleState</name>"
-            "<operator>EQ</operator><value>REGISTERED</value></condition></filter>"
-            "</getIncidents>",
-            "getIncidents",
-        )
-        alerts: list[dict] = []
-        for item in body.findall(".//*[local-name()='item']"):
-            started = None
-            ts = self._text(item, "firstOccurrenceTime") or self._text(
-                item, "createTime"
+        # Best-effort: never let an incident-fetch problem drop the node data.
+        try:
+            records = self._fetch(
+                "/IncidentBeanService/IncidentBean",
+                _INCIDENT_NS,
+                "getIncidents",
+                ("lifecycleState", "NE", "CLOSED"),
             )
-            if ts:
-                try:
-                    started = datetime.fromtimestamp(
-                        int(ts) / 1000, tz=timezone.utc
-                    )
-                except (ValueError, TypeError):
-                    started = None
+        except CollectorError as exc:
+            self.logger.warning("incident fetch failed: %s", exc)
+            self.notes = f"Incidents unavailable: {exc}"
+            return []
+
+        alerts: list[dict] = []
+        for r in records:
+            sev = normalize_nnmi_severity(r.get("severity"))
+            if sev < 2:  # skip NORMAL/INFO noise
+                continue
+            started = self._parse_epoch_millis(
+                r.get("firstOccurrenceTime") or r.get("originOccurrenceTime")
+            )
             alerts.append(
                 {
-                    "external_id": self._text(item, "id")
-                    or self._text(item, "uuid"),
-                    "host_hostname": self._text(item, "sourceNodeName")
-                    or self._text(item, "sourceName"),
-                    "severity_int": normalize_nnmi_severity(
-                        self._text(item, "severity")
-                    ),
-                    "title": self._text(item, "name")
-                    or self._text(item, "message")
-                    or "",
+                    "external_id": r.get("id") or r.get("uuid"),
+                    "host_hostname": r.get("sourceNodeLongName")
+                    or r.get("sourceNodeName")
+                    or r.get("sourceObjectName"),
+                    "severity_int": sev,
+                    "title": r.get("name") or r.get("message") or "NNMi incident",
                     "started_at": started,
-                    "raw_payload": {"severity": self._text(item, "severity")},
+                    "raw_payload": r,
                 }
             )
         return alerts
+
+    @staticmethod
+    def _parse_epoch_millis(value: str | None) -> datetime | None:
+        """Parse an NNMi epoch-millis timestamp string into a datetime."""
+        if not value:
+            return None
+        try:
+            return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+        except (ValueError, TypeError):
+            return None

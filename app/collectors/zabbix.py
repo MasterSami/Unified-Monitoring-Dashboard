@@ -48,13 +48,19 @@ class ZabbixCollector(BaseCollector):
                 resp.raise_for_status()
                 return resp.json()
         except httpx.ConnectError as exc:
-            # Plain-HTTP server reached over https:// surfaces as this SSL error.
-            if "WRONG_VERSION_NUMBER" in str(exc):
-                raise CollectorError(
-                    f"TLS handshake failed — {self.config.url} looks like plain "
-                    f"HTTP. Use http:// (not https://) for this instance in "
-                    f"servers.yaml."
-                ) from exc
+            # A plain-HTTP server reached over https:// surfaces as this SSL
+            # error. Transparently retry once over http:// and stick with it.
+            if (
+                "WRONG_VERSION_NUMBER" in str(exc)
+                and self._api_url.startswith("https://")
+            ):
+                self.logger.warning(
+                    "TLS failed for %s; retrying over http:// (server appears "
+                    "to be plain HTTP)",
+                    self._api_url,
+                )
+                self._api_url = "http://" + self._api_url[len("https://"):]
+                return self._post(payload, auth=auth)
             raise
 
     def _login(self) -> str:
@@ -265,14 +271,16 @@ class ZabbixCollector(BaseCollector):
             }
         except CollectorError as exc:
             msg = str(exc)
-            # mediatype.test was added in Zabbix 5.4. Older APIs return -32601.
+            # The JSON-RPC API doesn't expose a media-type test on any version
+            # (the UI "Test" button uses an internal controller, not the API).
             if "-32601" in msg or "not found" in msg.lower():
                 return {
                     "ok": False,
                     "message": (
-                        f"Zabbix {version or '<5.4'} has no API test-mail method "
-                        f"(mediatype.test needs 5.4+). Send a test from the Zabbix "
-                        f"UI: Administration → Media types → Test."
+                        f"Zabbix {version or '?'} JSON-RPC API has no test-mail "
+                        f"method (the UI Test button uses an internal endpoint, "
+                        f"not the API). Send a test from the Zabbix UI: "
+                        f"Alerts → Media types → (email) → Test."
                     ),
                 }
             return {"ok": False, "message": msg}
