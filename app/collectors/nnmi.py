@@ -42,6 +42,15 @@ class NnmiCollector(BaseCollector):
     def __init__(self, config: ServerConfig, settings: Settings) -> None:
         super().__init__(config, settings)
         base = config.url.rstrip("/")
+        # The NNMi SOAP web services live at the server root, NOT under the
+        # "/nnm" console webapp path. Configuring the console URL (…/nnm/) and
+        # appending the service path yields a 403; strip the console suffix so
+        # we hit e.g. https://host/NodeBeanService/NodeBean.
+        for suffix in ("/nnm", "/nnmi"):
+            if base.lower().endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+        self._base = base
         self._node_url = f"{base}/NodeBeanService/NodeBean"
         self._incident_url = f"{base}/IncidentBeanService/IncidentBean"
 
@@ -64,7 +73,15 @@ class NnmiCollector(BaseCollector):
             resp = self._request_with_retries(
                 client, "POST", url, content=envelope.encode("utf-8")
             )
-            resp.raise_for_status()
+        if resp.status_code == 403:
+            raise CollectorError(
+                f"403 Forbidden from {url}. Check that the NNMi account "
+                f"'{self.config.user}' has the 'Web Service Clients' role, and "
+                f"that the URL points at the server root (not the /nnm console)."
+            )
+        if resp.status_code == 401:
+            raise CollectorError(f"401 Unauthorized from {url} — check credentials.")
+        resp.raise_for_status()
         try:
             root = etree.fromstring(resp.content)
         except etree.XMLSyntaxError as exc:  # pragma: no cover - defensive

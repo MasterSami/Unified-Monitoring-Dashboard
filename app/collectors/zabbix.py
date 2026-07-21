@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import httpx
+
 from app.collectors import mock_data
 from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
@@ -38,12 +40,22 @@ class ZabbixCollector(BaseCollector):
         headers = {"Content-Type": "application/json-rpc"}
         if auth:
             headers["Authorization"] = f"Bearer {auth}"
-        with self._client(headers=headers) as client:
-            resp = self._request_with_retries(
-                client, "POST", self._api_url, json=payload
-            )
-            resp.raise_for_status()
-            return resp.json()
+        try:
+            with self._client(headers=headers) as client:
+                resp = self._request_with_retries(
+                    client, "POST", self._api_url, json=payload
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.ConnectError as exc:
+            # Plain-HTTP server reached over https:// surfaces as this SSL error.
+            if "WRONG_VERSION_NUMBER" in str(exc):
+                raise CollectorError(
+                    f"TLS handshake failed — {self.config.url} looks like plain "
+                    f"HTTP. Use http:// (not https://) for this instance in "
+                    f"servers.yaml."
+                ) from exc
+            raise
 
     def _login(self) -> str:
         """Return an auth token, logging in with user/password if needed."""
@@ -221,13 +233,18 @@ class ZabbixCollector(BaseCollector):
                 "ok": True,
                 "message": f"(mock) test mail simulated to {sendto} via {self.instance}",
             }
+
+        version = self._api_version()
         try:
             media_types = self._rpc(
                 "mediatype.get",
                 {"output": ["mediatypeid", "name", "type"], "filter": {"type": 0}},
             )
             if not media_types:  # type: ignore[truthy-bool]
-                return {"ok": False, "message": "No email media type configured"}
+                return {
+                    "ok": False,
+                    "message": f"No email media type configured on {self.instance}",
+                }
             mt = media_types[0]  # type: ignore[index]
             result = self._rpc(
                 "mediatype.test",
@@ -246,6 +263,29 @@ class ZabbixCollector(BaseCollector):
                 "message": f"Test mail sent to {sendto} via '{mt.get('name')}'",
                 "detail": result,
             }
+        except CollectorError as exc:
+            msg = str(exc)
+            # mediatype.test was added in Zabbix 5.4. Older APIs return -32601.
+            if "-32601" in msg or "not found" in msg.lower():
+                return {
+                    "ok": False,
+                    "message": (
+                        f"Zabbix {version or '<5.4'} has no API test-mail method "
+                        f"(mediatype.test needs 5.4+). Send a test from the Zabbix "
+                        f"UI: Administration → Media types → Test."
+                    ),
+                }
+            return {"ok": False, "message": msg}
         except Exception as exc:  # noqa: BLE001 — reported to the UI
             self.logger.warning("test mail failed: %s", exc)
             return {"ok": False, "message": str(exc)}
+
+    def _api_version(self) -> str:
+        """Best-effort Zabbix API version (empty string if it can't be read)."""
+        try:
+            data = self._post(
+                {"jsonrpc": "2.0", "method": "apiinfo.version", "params": {}, "id": 1}
+            )
+            return str(data.get("result", ""))
+        except Exception:  # noqa: BLE001 — informational only
+            return ""
