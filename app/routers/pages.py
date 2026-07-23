@@ -21,7 +21,29 @@ from app.schemas import PlatformHostCount, SeverityBucket
 router = APIRouter(tags=["pages"])
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+_STATIC_DIR = _TEMPLATE_DIR.parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+
+
+def _asset_version() -> str:
+    """A cache-busting token derived from the newest static asset mtime.
+
+    Appended to CSS/JS URLs so browsers refetch them after a redeploy instead of
+    serving a stale cached copy.
+    """
+    try:
+        newest = max(
+            p.stat().st_mtime
+            for p in _STATIC_DIR.glob("*")
+            if p.is_file()
+        )
+        return str(int(newest))
+    except (OSError, ValueError):
+        return "1"
+
+
+# Exposed to every template as {{ asset_version }}.
+templates.env.globals["asset_version"] = _asset_version()
 
 
 # --- Template helpers -------------------------------------------------------
@@ -245,11 +267,19 @@ def _hosts_query(
     return list(db.scalars(stmt).all())
 
 
-def _active_alerts(db: Session) -> list[Alert]:
-    stmt = (
-        select(Alert)
-        .where(Alert.resolved.is_(False))
-        .order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+def _active_alerts(db: Session, q: str | None = None) -> list[Alert]:
+    stmt = select(Alert).where(Alert.resolved.is_(False))
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Alert.title).like(like)
+            | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
+            | func.lower(func.coalesce(Alert.source_instance, "")).like(like)
+            | func.lower(Alert.source_platform).like(like)
+            | func.lower(Alert.severity_label).like(like)
+        )
+    stmt = stmt.order_by(
+        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
     return list(db.scalars(stmt).all())
 
@@ -376,12 +406,12 @@ def hosts_partial(
 
 @router.get("/partials/alerts", response_class=HTMLResponse)
 def alerts_partial(
-    request: Request, db: Session = Depends(get_db)
+    request: Request, q: str | None = None, db: Session = Depends(get_db)
 ) -> HTMLResponse:
-    """Alerts table fragment (polled every 60s)."""
+    """Alerts table fragment (search + polled every 60s)."""
     return templates.TemplateResponse(
         "partials/alerts_table.html",
-        {"request": request, "alerts": _active_alerts(db)},
+        {"request": request, "alerts": _active_alerts(db, q)},
     )
 
 

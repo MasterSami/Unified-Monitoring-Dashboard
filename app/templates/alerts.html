@@ -4,12 +4,29 @@
 {% block page_sub %}Unresolved across all platforms, most severe first · auto-refreshes every 60s{% endblock %}
 
 {% block content %}
+<div class="toolbar">
+  <div class="search">
+    <span class="search-icon">⌕</span>
+    <input
+      type="search"
+      name="q"
+      placeholder="Search title, host, platform, instance, or severity…"
+      hx-get="/partials/alerts"
+      hx-trigger="input changed delay:250ms, search"
+      hx-target="#alerts-region"
+      hx-swap="innerHTML"
+      autocomplete="off"
+    />
+  </div>
+</div>
+
 <div
   id="alerts-region"
   data-refreshable
   hx-get="/partials/alerts"
   hx-trigger="every 60s, refresh"
   hx-swap="innerHTML"
+  hx-include="[name='q']"
 >
   {% include "partials/alerts_table.html" %}
 </div>

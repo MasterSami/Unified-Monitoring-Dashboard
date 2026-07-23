@@ -15,6 +15,7 @@ import smtplib
 import ssl
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
+from urllib.parse import urlparse
 
 import httpx
 
@@ -36,6 +37,7 @@ class ZabbixCollector(BaseCollector):
         super().__init__(config, settings)
         self._api_url = config.url.rstrip("/") + "/api_jsonrpc.php"
         self._auth: str | None = None
+        self._tried_subpath = False
 
     # --- JSON-RPC plumbing --------------------------------------------------
 
@@ -49,8 +51,12 @@ class ZabbixCollector(BaseCollector):
                 resp = self._request_with_retries(
                     client, "POST", self._api_url, json=payload
                 )
-                resp.raise_for_status()
-                return resp.json()
+            # A 404 at the site root usually means the frontend lives under a
+            # subpath (commonly /zabbix). Try that once before giving up.
+            if resp.status_code == 404 and self._add_zabbix_subpath():
+                return self._post(payload, auth=auth)
+            resp.raise_for_status()
+            return resp.json()
         except httpx.ConnectError as exc:
             # A plain-HTTP server reached over https:// surfaces as this SSL
             # error. Transparently retry once over http:// and stick with it.
@@ -66,6 +72,27 @@ class ZabbixCollector(BaseCollector):
                 self._api_url = "http://" + self._api_url[len("https://"):]
                 return self._post(payload, auth=auth)
             raise
+
+    def _add_zabbix_subpath(self) -> bool:
+        """On a root 404, retarget the API under ``/zabbix`` (once).
+
+        Returns True if the URL was changed and the call should be retried. Only
+        fires when the configured URL had no path beyond host:port, so an
+        explicit path in servers.yaml is respected.
+        """
+        if self._tried_subpath:
+            return False
+        parsed = urlparse(self._api_url)
+        base_path = parsed.path.rsplit("/api_jsonrpc.php", 1)[0]
+        if base_path not in ("", "/"):
+            return False  # a subpath was already configured; don't guess
+        self._tried_subpath = True
+        self._api_url = f"{parsed.scheme}://{parsed.netloc}/zabbix/api_jsonrpc.php"
+        self.logger.warning(
+            "api_jsonrpc.php 404 at root; retrying under /zabbix (%s)",
+            self._api_url,
+        )
+        return True
 
     def _login(self) -> str:
         """Return an auth token, logging in with user/password if needed."""

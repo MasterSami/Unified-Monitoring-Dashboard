@@ -624,6 +624,10 @@ a {
 .shared-head .hn {
   color: var(--text-muted);
   font-size: 13px;
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .shared-head .cnt {
   margin-left: auto;
