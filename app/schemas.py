@@ -52,6 +52,8 @@ class CollectorStatus(BaseModel):
     last_success_at: datetime | None
     status: str  # success | failed | never | disabled
     items_collected: int
+    hosts_collected: int = 0
+    alerts_collected: int = 0
     error_message: str | None
     notes: str | None = None
     test_mail: bool = False

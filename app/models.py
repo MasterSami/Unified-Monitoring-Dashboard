@@ -44,6 +44,7 @@ class HostStatus(str, enum.Enum):
     up = "up"
     down = "down"
     unknown = "unknown"
+    disabled = "disabled"
 
 
 class RunStatus(str, enum.Enum):
@@ -149,4 +150,6 @@ class CollectorRun(Base):
         Enum(RunStatus, native_enum=False, length=16), default=RunStatus.success
     )
     items_collected: Mapped[int] = mapped_column(Integer, default=0)
+    hosts_collected: Mapped[int] = mapped_column(Integer, default=0)
+    alerts_collected: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(String(2048), nullable=True)

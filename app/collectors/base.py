@@ -135,6 +135,8 @@ class BaseCollector(abc.ABC):
                 finished_at=datetime.now(timezone.utc),
                 status=RunStatus.success,
                 items_collected=host_count + alert_count,
+                hosts_collected=host_count,
+                alerts_collected=alert_count,
                 error_message=self.notes,
             )
             db.add(run)

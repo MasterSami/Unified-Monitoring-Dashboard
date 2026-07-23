@@ -201,12 +201,17 @@ class NnmiCollector(BaseCollector):
         hosts: list[dict] = []
         for r in records:
             status_str = (r.get("status") or "UNKNOWN").upper()
+            mgmt = (r.get("managementMode") or "").upper()
+            if mgmt in ("NOTMANAGED", "OUTOFSERVICE", "UNMANAGED"):
+                status = HostStatus.disabled
+            else:
+                status = _NNMI_STATUS.get(status_str, HostStatus.unknown)
             hosts.append(
                 {
                     "external_id": r.get("id") or r.get("uuid") or r.get("name"),
                     "hostname": r.get("name") or r.get("longName") or r.get("id"),
                     "ip": r.get("managementAddress") or None,
-                    "status": _NNMI_STATUS.get(status_str, HostStatus.unknown),
+                    "status": status,
                     "group_name": r.get("deviceCategory")
                     or r.get("deviceFamily")
                     or r.get("systemLocation"),

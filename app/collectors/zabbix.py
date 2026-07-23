@@ -132,14 +132,18 @@ class ZabbixCollector(BaseCollector):
                     ip = iface.get("ip") or ip
                 if is_main or iface_available is None:
                     iface_available = iface.get("available", iface_available)
-            # 0 unknown, 1 available/up, 2 unavailable/down. Prefer the
-            # interface value (6.0+); fall back to the host-level field.
-            available = iface_available
-            if available in (None, "0"):
-                available = h.get("available", available or "0")
-            status = {"1": HostStatus.up, "2": HostStatus.down}.get(
-                str(available), HostStatus.unknown
-            )
+            # Host-level status: "1" means the host is unmonitored (disabled).
+            if str(h.get("status")) == "1":
+                status = HostStatus.disabled
+            else:
+                # availability: 0 unknown, 1 available/up, 2 unavailable/down.
+                # Prefer the interface value (6.0+); fall back to host-level.
+                available = iface_available
+                if available in (None, "0"):
+                    available = h.get("available", available or "0")
+                status = {"1": HostStatus.up, "2": HostStatus.down}.get(
+                    str(available), HostStatus.unknown
+                )
             groups = h.get("groups", [])
             hosts.append(
                 {

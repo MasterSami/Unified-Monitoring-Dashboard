@@ -100,6 +100,8 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 last_success_at=last_success.finished_at if last_success else None,
                 status=status,
                 items_collected=last_run.items_collected if last_run else 0,
+                hosts_collected=last_run.hosts_collected if last_run else 0,
+                alerts_collected=last_run.alerts_collected if last_run else 0,
                 error_message=last_run.error_message
                 if last_run and last_run.status == RunStatus.failed
                 else None,

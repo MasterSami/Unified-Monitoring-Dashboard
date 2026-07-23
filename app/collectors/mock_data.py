@@ -34,6 +34,7 @@ _ZABBIX_HOSTS = [
     ("app-01", "51", HostStatus.up, "App Servers"),
     ("app-02", "52", HostStatus.unknown, "App Servers"),
     ("mq-01", "61", HostStatus.up, "Messaging"),
+    ("legacy-01", "71", HostStatus.disabled, "Decommissioned"),
 ]
 
 _DYNATRACE_HOSTS = [
@@ -54,6 +55,7 @@ _NNMI_HOSTS = [
     ("firewall-01", "21", HostStatus.up, "Security"),
     ("wan-router-01", "31", HostStatus.up, "WAN"),
     ("wan-router-02", "32", HostStatus.unknown, "WAN"),
+    ("old-switch-09", "99", HostStatus.disabled, "Decommissioned"),
 ]
 
 

@@ -8,7 +8,7 @@
       <span class="stat-ico">🖥</span>
     </div>
     <span class="value">{{ total_hosts }}</span>
-    <span class="meta">{{ hosts_up }} up · {{ total_hosts - hosts_up - hosts_down }} unknown</span>
+    <span class="meta">{{ status_counts.up }} active · {{ shared_count }} shared</span>
   </div>
   <div class="card stat danger">
     <div class="stat-top">
@@ -33,6 +33,27 @@
     </div>
     <span class="value">{{ collectors | selectattr('status', 'equalto', 'success') | list | length }}<span style="font-size:16px;color:var(--text-faint)">/{{ collectors | rejectattr('status', 'equalto', 'disabled') | list | length }}</span></span>
     <span class="meta">healthy feeds</span>
+  </div>
+</div>
+
+<!-- Hosts by status -->
+<div class="section-title">Hosts by status</div>
+<div class="status-row">
+  <div class="status-counter" style="--sc: var(--up)">
+    <span class="num">{{ status_counts.up }}</span>
+    <span class="lbl"><span class="d"></span>Active</span>
+  </div>
+  <div class="status-counter" style="--sc: var(--down)">
+    <span class="num">{{ status_counts.down }}</span>
+    <span class="lbl"><span class="d"></span>Down</span>
+  </div>
+  <div class="status-counter" style="--sc: var(--unknown)">
+    <span class="num">{{ status_counts.unknown }}</span>
+    <span class="lbl"><span class="d"></span>Unknown</span>
+  </div>
+  <div class="status-counter" style="--sc: var(--disabled)">
+    <span class="num">{{ status_counts.disabled }}</span>
+    <span class="lbl"><span class="d"></span>Disabled</span>
   </div>
 </div>
 
@@ -133,7 +154,7 @@
       <span class="cc-meta" title="{{ c.error_message }}">{{ (c.error_message or '')[:70] }}{% if c.error_message and c.error_message|length > 70 %}…{% endif %}</span>
     {% else %}
       <span class="cc-status">{{ c.last_success_at | relative_time }}</span>
-      <span class="cc-meta">{{ c.items_collected }} items collected</span>
+      <span class="cc-meta">{{ c.hosts_collected }} hosts · {{ c.alerts_collected }} alerts</span>
     {% endif %}
     {% if c.check_proxies and c.notes %}
       <div class="notice" style="{{ '' if 'OFFLINE' in c.notes else 'background: color-mix(in srgb, var(--up) 11%, transparent); color: var(--up); border-color: color-mix(in srgb, var(--up) 28%, transparent);' }}">

@@ -27,6 +27,7 @@
   --up: #16a34a;
   --down: #dc2626;
   --unknown: #9ca3af;
+  --disabled: #64748b;
 
   --radius: 14px;
   --radius-sm: 9px;
@@ -64,6 +65,7 @@
   --up: #22c55e;
   --down: #ef4444;
   --unknown: #6b7280;
+  --disabled: #7c8798;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow: 0 8px 28px -6px rgba(0, 0, 0, 0.55);
@@ -539,6 +541,128 @@ a {
 .status-unknown {
   background: color-mix(in srgb, var(--unknown) 18%, transparent);
   color: var(--unknown);
+}
+.status-disabled {
+  background: color-mix(in srgb, var(--disabled) 16%, transparent);
+  color: var(--disabled);
+}
+
+/* --- Host status counters ------------------------------------------------- */
+
+.status-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.status-counter {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+  overflow: hidden;
+}
+.status-counter::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--sc, var(--unknown));
+}
+.status-counter .num {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.status-counter .lbl {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-counter .lbl .d {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sc, var(--unknown));
+}
+
+/* --- Shared / correlated devices ----------------------------------------- */
+
+.shared-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.shared-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px 18px;
+}
+.shared-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.shared-head .ip {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 650;
+}
+.shared-head .hn {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.shared-head .cnt {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.shared-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+.member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}
+.member .mi {
+  font-weight: 600;
+}
+.member .mh {
+  color: var(--text-faint);
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+@media (max-width: 760px) {
+  .status-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .sev-pill {

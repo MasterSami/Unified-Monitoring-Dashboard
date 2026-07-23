@@ -113,10 +113,62 @@ def _donut_gradient(buckets: list[SeverityBucket]) -> str:
     return ", ".join(stops)
 
 
-def _hosts_up(db: Session) -> int:
-    return (
-        db.scalar(select(func.count(Host.id)).where(Host.status == HostStatus.up)) or 0
+def _host_status_counts(db: Session) -> dict[str, int]:
+    """Return host counts keyed by normalized status (up/down/unknown/disabled)."""
+    rows = db.execute(
+        select(Host.status, func.count(Host.id)).group_by(Host.status)
+    ).all()
+    counts = {s.value if hasattr(s, "value") else str(s): int(c) for s, c in rows}
+    return {
+        "up": counts.get("up", 0),
+        "down": counts.get("down", 0),
+        "unknown": counts.get("unknown", 0),
+        "disabled": counts.get("disabled", 0),
+    }
+
+
+def _shared_host_groups(db: Session) -> list[dict]:
+    """Group hosts that share an IP across 2+ instances.
+
+    The same physical device monitored by more than one platform/instance shows
+    up as several :class:`Host` rows with the same IP. Grouping by IP surfaces
+    that overlap (e.g. a node on both Zabbix-34 and Zabbix-67, or on Zabbix and
+    NNMi at once).
+    """
+    hosts = list(
+        db.scalars(
+            select(Host).where(Host.ip.isnot(None), Host.ip != "")
+        ).all()
     )
+    by_ip: dict[str, list[Host]] = {}
+    for h in hosts:
+        by_ip.setdefault(str(h.ip), []).append(h)
+
+    groups: list[dict] = []
+    for ip, members in by_ip.items():
+        instances = {(m.source_platform, m.source_instance) for m in members}
+        if len(instances) < 2:
+            continue
+        members = sorted(
+            members,
+            key=lambda m: (m.source_platform.value, m.source_instance),
+        )
+        groups.append(
+            {
+                "ip": ip,
+                "hostname": members[0].hostname,
+                "members": members,
+                "instance_count": len(instances),
+                "platforms": sorted({m.source_platform.value for m in members}),
+            }
+        )
+    groups.sort(key=lambda g: (-g["instance_count"], g["ip"]))
+    return groups
+
+
+def _shared_hosts_count(db: Session) -> int:
+    """Number of devices monitored by more than one instance."""
+    return len(_shared_host_groups(db))
 
 
 def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
@@ -141,16 +193,19 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     buckets = _severity_buckets(db)
     per_platform = _per_platform(db)
     max_total = max((p.total for p in per_platform), default=0) or 1
+    status_counts = _host_status_counts(db)
     return {
         "total_hosts": total_hosts,
-        "hosts_up": _hosts_up(db),
-        "hosts_down": hosts_down,
+        "status_counts": status_counts,
+        "hosts_up": status_counts["up"],
+        "hosts_down": status_counts["down"],
         "active_alerts": active_alerts,
         "per_platform": per_platform,
         "platform_max": max_total,
         "severity_buckets": buckets,
         "donut_gradient": _donut_gradient(buckets),
         "recent_critical": _recent_critical(db),
+        "shared_count": _shared_hosts_count(db),
         "collectors": get_collector_statuses(db, settings),
     }
 
@@ -174,6 +229,7 @@ def _hosts_query(
             func.lower(Host.hostname).like(like)
             | func.lower(func.coalesce(Host.ip, "")).like(like)
             | func.lower(func.coalesce(Host.group_name, "")).like(like)
+            | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
     sort_cols = {
         "hostname": Host.hostname,
@@ -235,6 +291,24 @@ def hosts_page(
                 "sort": "hostname",
                 "order": "asc",
             },
+        },
+    )
+
+
+@router.get("/shared", response_class=HTMLResponse)
+def shared_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Devices monitored by more than one instance (by shared IP)."""
+    return templates.TemplateResponse(
+        "shared.html",
+        {
+            "request": request,
+            "active_page": "shared",
+            "groups": _shared_host_groups(db),
+            "collectors": get_collector_statuses(db, settings),
         },
     )
 

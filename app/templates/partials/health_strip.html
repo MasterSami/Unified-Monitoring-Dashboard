@@ -3,7 +3,7 @@
   {% for c in collectors %}
     {% if c.status == 'success' %}
       {% set cls = 'ok' %}
-      {% set tip = c.instance ~ ' — ' ~ c.items_collected ~ ' items · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
+      {% set tip = c.instance ~ ' — ' ~ c.hosts_collected ~ ' hosts · ' ~ c.alerts_collected ~ ' alerts · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
       {% set meta = c.last_success_at | relative_time %}
     {% elif c.status == 'failed' %}
       {% set cls = 'fail' %}
