@@ -99,9 +99,9 @@ _ZABBIX_ALERTS = [
 ]
 
 _DYNATRACE_ALERTS = [
-    (5, "Service unavailable: payments-api", "payments-02", 5),
+    (4, "Service unavailable: payments-api", "payments-02", 5),
     (4, "Response time degradation on orders-service", "orders-01", 18),
-    (4, "Monitoring unavailable", "gateway-01", 33),
+    (3, "Monitoring unavailable", "gateway-01", 33),
     (3, "Memory saturation", "search-01", 60),
 ]
 

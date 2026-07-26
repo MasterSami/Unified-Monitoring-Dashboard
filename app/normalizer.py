@@ -28,14 +28,16 @@ SEVERITY_LABELS: dict[int, str] = {
     5: "disaster",
 }
 
-# Dynatrace severityLevel -> unified 1..5
+# Dynatrace severityLevel -> unified 1..5.
+# Dynatrace has no "disaster" tier, so nothing maps to 5 — its most severe
+# problems (availability / error) map to High (4).
 _DYNATRACE_SEVERITY: dict[str, int] = {
-    "AVAILABILITY": 5,
-    "ERROR": 5,
-    "PERFORMANCE": 4,
+    "AVAILABILITY": 4,
+    "ERROR": 4,
+    "PERFORMANCE": 3,
     "RESOURCE_CONTENTION": 3,
-    "CUSTOM_ALERT": 3,
-    "MONITORING_UNAVAILABLE": 4,
+    "CUSTOM_ALERT": 2,
+    "MONITORING_UNAVAILABLE": 3,
     "INFO": 1,
 }
 
@@ -71,7 +73,8 @@ def normalize_dynatrace_severity(severity_level: str | None) -> int:
     """Map a Dynatrace ``severityLevel`` onto the unified 1..5 scale."""
     if not severity_level:
         return 1
-    return _DYNATRACE_SEVERITY.get(severity_level.upper(), 3)
+    # Cap at 4 — Dynatrace never maps to disaster (5).
+    return min(4, _DYNATRACE_SEVERITY.get(severity_level.upper(), 3))
 
 
 def normalize_nnmi_severity(severity: str | None) -> int:

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -17,8 +17,13 @@ from app.models import Alert, Host, HostStatus
 from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses
 from app.schemas import PlatformHostCount, SeverityBucket
+from app.servers import load_servers
 
 router = APIRouter(tags=["pages"])
+
+#: Max rows rendered in a single HTML table; the rest are reachable by search /
+#: filter or CSV export. Keeps big environments (10k+ hosts) responsive.
+TABLE_LIMIT = 500
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 _STATIC_DIR = _TEMPLATE_DIR.parent / "static"
@@ -149,31 +154,45 @@ def _host_status_counts(db: Session) -> dict[str, int]:
     }
 
 
-def _shared_host_groups(db: Session) -> list[dict]:
-    """Group hosts that share an IP across 2+ instances.
-
-    The same physical device monitored by more than one platform/instance shows
-    up as several :class:`Host` rows with the same IP. Grouping by IP surfaces
-    that overlap (e.g. a node on both Zabbix-34 and Zabbix-67, or on Zabbix and
-    NNMi at once).
-    """
-    hosts = list(
-        db.scalars(
-            select(Host).where(Host.ip.isnot(None), Host.ip != "")
-        ).all()
+def _shared_ips_stmt():
+    """SELECT of IPs monitored by 2+ distinct instances (device overlap)."""
+    return (
+        select(Host.ip)
+        .where(Host.ip.isnot(None), Host.ip != "")
+        .group_by(Host.ip)
+        .having(func.count(distinct(Host.source_instance)) > 1)
     )
+
+
+def _shared_hosts_count(db: Session) -> int:
+    """Number of devices monitored by more than one instance (SQL, cheap)."""
+    return db.scalar(select(func.count()).select_from(_shared_ips_stmt().subquery())) or 0
+
+
+def _shared_host_groups(db: Session, limit: int = TABLE_LIMIT) -> tuple[list[dict], int]:
+    """Return (groups, total). Groups the shared-IP devices; loads only those hosts.
+
+    The same physical device monitored by more than one instance shows up as
+    several :class:`Host` rows with the same IP. Only IPs with 2+ distinct
+    instances are loaded, so this stays cheap on large environments.
+    """
+    total = _shared_hosts_count(db)
+    shared_ips = list(db.scalars(_shared_ips_stmt().limit(limit)).all())
+    if not shared_ips:
+        return [], total
+
+    hosts = list(db.scalars(select(Host).where(Host.ip.in_(shared_ips))).all())
     by_ip: dict[str, list[Host]] = {}
     for h in hosts:
         by_ip.setdefault(str(h.ip), []).append(h)
 
     groups: list[dict] = []
     for ip, members in by_ip.items():
-        instances = {(m.source_platform, m.source_instance) for m in members}
+        instances = {m.source_instance for m in members}
         if len(instances) < 2:
             continue
         members = sorted(
-            members,
-            key=lambda m: (m.source_platform.value, m.source_instance),
+            members, key=lambda m: (m.source_platform.value, m.source_instance)
         )
         groups.append(
             {
@@ -185,12 +204,7 @@ def _shared_host_groups(db: Session) -> list[dict]:
             }
         )
     groups.sort(key=lambda g: (-g["instance_count"], g["ip"]))
-    return groups
-
-
-def _shared_hosts_count(db: Session) -> int:
-    """Number of devices monitored by more than one instance."""
-    return len(_shared_host_groups(db))
+    return groups, total
 
 
 def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
@@ -212,6 +226,14 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     active_alerts = (
         db.scalar(select(func.count(Alert.id)).where(Alert.resolved.is_(False))) or 0
     )
+    critical_alerts = (
+        db.scalar(
+            select(func.count(Alert.id)).where(
+                Alert.resolved.is_(False), Alert.severity_int == 5
+            )
+        )
+        or 0
+    )
     buckets = _severity_buckets(db)
     per_platform = _per_platform(db)
     max_total = max((p.total for p in per_platform), default=0) or 1
@@ -222,6 +244,7 @@ def _overview_context(db: Session, settings: Settings) -> dict:
         "hosts_up": status_counts["up"],
         "hosts_down": status_counts["down"],
         "active_alerts": active_alerts,
+        "critical_alerts": critical_alerts,
         "per_platform": per_platform,
         "platform_max": max_total,
         "severity_buckets": buckets,
@@ -232,17 +255,18 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     }
 
 
-def _hosts_query(
-    db: Session,
+def _hosts_stmt(
     q: str | None,
     platform: str | None,
     status: str | None,
-    sort: str,
-    order: str,
-) -> list[Host]:
+    instance: str | None,
+):
+    """Build the filtered (unordered, unlimited) host SELECT."""
     stmt = select(Host)
     if platform and platform != "all":
         stmt = stmt.where(Host.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(Host.source_instance == instance)
     if status and status != "all":
         stmt = stmt.where(Host.status == status)
     if q:
@@ -253,6 +277,22 @@ def _hosts_query(
             | func.lower(func.coalesce(Host.group_name, "")).like(like)
             | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
+    return stmt
+
+
+def _hosts_query(
+    db: Session,
+    q: str | None,
+    platform: str | None,
+    status: str | None,
+    sort: str,
+    order: str,
+    instance: str | None = "all",
+    limit: int = TABLE_LIMIT,
+) -> tuple[list[Host], int]:
+    """Return (rows, total). Rows are capped at ``limit``; total is the full count."""
+    stmt = _hosts_stmt(q, platform, status, instance)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     sort_cols = {
         "hostname": Host.hostname,
         "ip": Host.ip,
@@ -263,11 +303,14 @@ def _hosts_query(
         "last_seen": Host.last_seen,
     }
     col = sort_cols.get(sort, Host.hostname)
-    stmt = stmt.order_by(col.desc() if order == "desc" else col.asc())
-    return list(db.scalars(stmt).all())
+    stmt = stmt.order_by(col.desc() if order == "desc" else col.asc()).limit(limit)
+    return list(db.scalars(stmt).all()), total
 
 
-def _active_alerts(db: Session, q: str | None = None) -> list[Alert]:
+def _active_alerts(
+    db: Session, q: str | None = None, limit: int = TABLE_LIMIT
+) -> tuple[list[Alert], int]:
+    """Return (rows, total). Rows are capped at ``limit``; total is the full count."""
     stmt = select(Alert).where(Alert.resolved.is_(False))
     if q:
         like = f"%{q.lower()}%"
@@ -278,10 +321,11 @@ def _active_alerts(db: Session, q: str | None = None) -> list[Alert]:
             | func.lower(Alert.source_platform).like(like)
             | func.lower(Alert.severity_label).like(like)
         )
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
-    )
-    return list(db.scalars(stmt).all())
+    ).limit(limit)
+    return list(db.scalars(stmt).all()), total
 
 
 # --- Full pages -------------------------------------------------------------
@@ -299,6 +343,13 @@ def overview(
     return templates.TemplateResponse("overview.html", ctx)
 
 
+def _instance_names(settings: Settings) -> list[dict]:
+    """Configured instances (name + platform) for filter dropdowns."""
+    return [
+        {"name": s.name, "platform": s.platform} for s in load_servers(settings)
+    ]
+
+
 @router.get("/hosts", response_class=HTMLResponse)
 def hosts_page(
     request: Request,
@@ -306,17 +357,21 @@ def hosts_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Unified hosts table page."""
-    hosts = _hosts_query(db, None, "all", "all", "hostname", "asc")
+    hosts, total = _hosts_query(db, None, "all", "all", "hostname", "asc", "all")
     return templates.TemplateResponse(
         "hosts.html",
         {
             "request": request,
             "active_page": "hosts",
             "hosts": hosts,
+            "total": total,
+            "limit": TABLE_LIMIT,
+            "instances": _instance_names(settings),
             "collectors": get_collector_statuses(db, settings),
             "current": {
                 "q": "",
                 "platform": "all",
+                "instance": "all",
                 "status": "all",
                 "sort": "hostname",
                 "order": "asc",
@@ -332,12 +387,15 @@ def shared_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Devices monitored by more than one instance (by shared IP)."""
+    groups, total = _shared_host_groups(db)
     return templates.TemplateResponse(
         "shared.html",
         {
             "request": request,
             "active_page": "shared",
-            "groups": _shared_host_groups(db),
+            "groups": groups,
+            "total": total,
+            "limit": TABLE_LIMIT,
             "collectors": get_collector_statuses(db, settings),
         },
     )
@@ -350,12 +408,15 @@ def alerts_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Active alerts table page."""
+    alerts, total = _active_alerts(db)
     return templates.TemplateResponse(
         "alerts.html",
         {
             "request": request,
             "active_page": "alerts",
-            "alerts": _active_alerts(db),
+            "alerts": alerts,
+            "total": total,
+            "limit": TABLE_LIMIT,
             "collectors": get_collector_statuses(db, settings),
         },
     )
@@ -381,21 +442,25 @@ def hosts_partial(
     request: Request,
     q: str | None = None,
     platform: str = "all",
+    instance: str = "all",
     status: str = "all",
     sort: str = "hostname",
     order: str = "asc",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Hosts table fragment (live search / filter / sort)."""
-    hosts = _hosts_query(db, q, platform, status, sort, order)
+    hosts, total = _hosts_query(db, q, platform, status, sort, order, instance)
     return templates.TemplateResponse(
         "partials/hosts_table.html",
         {
             "request": request,
             "hosts": hosts,
+            "total": total,
+            "limit": TABLE_LIMIT,
             "current": {
                 "q": q or "",
                 "platform": platform,
+                "instance": instance,
                 "status": status,
                 "sort": sort,
                 "order": order,
@@ -409,9 +474,10 @@ def alerts_partial(
     request: Request, q: str | None = None, db: Session = Depends(get_db)
 ) -> HTMLResponse:
     """Alerts table fragment (search + polled every 60s)."""
+    alerts, total = _active_alerts(db, q)
     return templates.TemplateResponse(
         "partials/alerts_table.html",
-        {"request": request, "alerts": _active_alerts(db, q)},
+        {"request": request, "alerts": alerts, "total": total, "limit": TABLE_LIMIT},
     )
 
 

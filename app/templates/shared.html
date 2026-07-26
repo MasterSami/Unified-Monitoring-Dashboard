@@ -6,7 +6,11 @@
 {% block content %}
 {% set sev_names = {} %}
 <div class="count-tag" style="margin-bottom: 12px">
-  {{ groups | length }} device{{ '' if groups | length == 1 else 's' }} monitored on 2+ instances
+  {% if total > groups | length %}
+    Showing <b>{{ groups | length }}</b> of <b>{{ total }}</b> devices monitored on 2+ instances
+  {% else %}
+    {{ total }} device{{ '' if total == 1 else 's' }} monitored on 2+ instances
+  {% endif %}
 </div>
 
 {% if groups %}

@@ -6,7 +6,12 @@ and automation.
 
 from __future__ import annotations
 
+import csv
+import io
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -62,6 +67,115 @@ def list_alerts(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
     return list(db.scalars(stmt).all())
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list]) -> StreamingResponse:
+    """Serialize rows to a downloadable CSV StreamingResponse."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(header)
+    writer.writerows(rows)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/hosts.csv")
+def export_hosts_csv(
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Export hosts (respecting filters) as CSV."""
+    stmt = select(Host)
+    if platform and platform != "all":
+        stmt = stmt.where(Host.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(Host.source_instance == instance)
+    if status and status != "all":
+        stmt = stmt.where(Host.status == status)
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Host.hostname).like(like)
+            | func.lower(func.coalesce(Host.ip, "")).like(like)
+            | func.lower(func.coalesce(Host.group_name, "")).like(like)
+            | func.lower(func.coalesce(Host.source_instance, "")).like(like)
+        )
+    stmt = stmt.order_by(Host.hostname.asc())
+    rows = [
+        [
+            h.hostname,
+            h.ip or "",
+            h.source_platform.value,
+            h.source_instance,
+            h.status.value,
+            h.group_name or "",
+            h.last_seen.isoformat() if h.last_seen else "",
+        ]
+        for h in db.scalars(stmt).all()
+    ]
+    return _csv_response(
+        "hosts.csv",
+        ["hostname", "ip", "platform", "instance", "status", "group", "last_seen"],
+        rows,
+    )
+
+
+@router.get("/alerts.csv")
+def export_alerts_csv(
+    active: bool = Query(default=True),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Export alerts (respecting filters) as CSV."""
+    stmt = select(Alert)
+    if active:
+        stmt = stmt.where(Alert.resolved.is_(False))
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Alert.title).like(like)
+            | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
+            | func.lower(func.coalesce(Alert.source_instance, "")).like(like)
+            | func.lower(Alert.source_platform).like(like)
+            | func.lower(Alert.severity_label).like(like)
+        )
+    stmt = stmt.order_by(
+        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
+    )
+    rows = [
+        [
+            a.severity_int,
+            a.severity_label,
+            a.title,
+            a.source_platform.value,
+            a.source_instance,
+            a.host_hostname or "",
+            a.started_at.isoformat() if a.started_at else "",
+            "resolved" if a.resolved else "active",
+        ]
+        for a in db.scalars(stmt).all()
+    ]
+    return _csv_response(
+        "alerts.csv",
+        [
+            "severity_int",
+            "severity_label",
+            "title",
+            "platform",
+            "instance",
+            "host",
+            "started_at",
+            "state",
+        ],
+        rows,
+    )
 
 
 @router.get("/summary", response_model=SummaryOut)

@@ -7,7 +7,7 @@
     hx-target="#hosts-region"
     hx-swap="innerHTML"
     hx-include="[name='q']"
-    hx-vals='{"platform": "{{ current.platform }}", "status": "{{ current.status }}", "sort": "{{ key }}", "order": "{{ next_order }}"}'
+    hx-vals='{"platform": "{{ current.platform }}", "instance": "{{ current.instance }}", "status": "{{ current.status }}", "sort": "{{ key }}", "order": "{{ next_order }}"}'
   >
     {{ label }}
     {% if is_active %}<span>{{ '▲' if current.order == 'asc' else '▼' }}</span>{% endif %}
@@ -15,7 +15,11 @@
 {% endmacro %}
 
 <div class="count-tag" style="margin-bottom: 8px">
-  {{ hosts | length }} host{{ '' if hosts | length == 1 else 's' }}
+  {% if total > hosts | length %}
+    Showing first <b>{{ hosts | length }}</b> of <b>{{ total }}</b> hosts — refine your search or export CSV for the full set
+  {% else %}
+    {{ total }} host{{ '' if total == 1 else 's' }}
+  {% endif %}
 </div>
 
 <div class="table-wrap">

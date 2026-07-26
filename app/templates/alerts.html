@@ -10,6 +10,7 @@
     <input
       type="search"
       name="q"
+      id="alert-q"
       placeholder="Search title, host, platform, instance, or severity…"
       hx-get="/partials/alerts"
       hx-trigger="input changed delay:250ms, search"
@@ -18,7 +19,19 @@
       autocomplete="off"
     />
   </div>
+  <button class="btn" type="button" onclick="exportAlerts()" title="Export current view to CSV">
+    ⭳ Export CSV
+  </button>
 </div>
+
+<script>
+  function exportAlerts() {
+    var q = document.getElementById("alert-q").value;
+    var params = new URLSearchParams({ active: "true" });
+    if (q) params.set("q", q);
+    window.location = "/api/v1/alerts.csv?" + params.toString();
+  }
+</script>
 
 <div
   id="alerts-region"

@@ -1,7 +1,11 @@
 {% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
 
 <div class="count-tag" style="margin-bottom: 8px">
-  {{ alerts | length }} active alert{{ '' if alerts | length == 1 else 's' }}
+  {% if total > alerts | length %}
+    Showing top <b>{{ alerts | length }}</b> of <b>{{ total }}</b> active alerts — refine your search or export CSV for the full set
+  {% else %}
+    {{ total }} active alert{{ '' if total == 1 else 's' }}
+  {% endif %}
 </div>
 
 <div class="table-wrap">

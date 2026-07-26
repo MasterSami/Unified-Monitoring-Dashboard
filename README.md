@@ -1,6 +1,6 @@
 # Unified Monitoring Dashboard
 
-> 📐 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full technology & design writeup.
+> 📐 [`ARCHITECTURE.md`](ARCHITECTURE.md) — technology & design writeup · ▶️ [`HOW_TO_RUN.md`](HOW_TO_RUN.md) — run & maintenance commands
 
 A single web UI that aggregates hosts and alerts from **Zabbix**, **Dynatrace**,
 and **NNMi** into one normalized view. Built as a local proof-of-concept for the

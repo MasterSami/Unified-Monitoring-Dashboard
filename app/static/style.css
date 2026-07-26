@@ -793,6 +793,24 @@ td.mono {
   color: var(--text-faint);
   pointer-events: none;
 }
+.select {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  font-family: inherit;
+  padding: 8px 12px;
+  cursor: pointer;
+  max-width: 200px;
+}
+.select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
 .tabs {
   display: inline-flex;
   border: 1px solid var(--border-strong);

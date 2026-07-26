@@ -10,19 +10,18 @@
     <input
       type="search"
       name="q"
-      placeholder="Search hostname, IP, or group…"
+      class="hfilter"
+      placeholder="Search hostname, IP, group, or instance…"
       hx-get="/partials/hosts"
       hx-trigger="input changed delay:250ms, search"
       hx-target="#hosts-region"
       hx-swap="innerHTML"
-      hx-include="#host-filters"
+      hx-include=".hfilter"
       autocomplete="off"
     />
   </div>
-  <div id="host-filters" class="tabs" role="tablist">
-    <input type="hidden" name="sort" value="hostname" />
-    <input type="hidden" name="order" value="asc" />
-    <input type="hidden" name="status" value="all" />
+
+  <div class="tabs" role="tablist">
     {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi'] %}
     <button
       type="button"
@@ -31,7 +30,7 @@
       hx-get="/partials/hosts"
       hx-target="#hosts-region"
       hx-swap="innerHTML"
-      hx-include="#host-filters, [name='q']"
+      hx-include=".hfilter"
       hx-vals='{"platform": "{{ p }}"}'
       onclick="selectTab(this)"
     >
@@ -39,6 +38,32 @@
     </button>
     {% endfor %}
   </div>
+
+  <select
+    name="instance"
+    class="hfilter select"
+    hx-get="/partials/hosts"
+    hx-trigger="change"
+    hx-target="#hosts-region"
+    hx-swap="innerHTML"
+    hx-include=".hfilter"
+    title="Filter by collector instance"
+  >
+    <option value="all">All instances</option>
+    {% for i in instances %}
+    <option value="{{ i.name }}">{{ i.name }}</option>
+    {% endfor %}
+  </select>
+
+  <button class="btn" type="button" onclick="exportHosts()" title="Export current view to CSV">
+    ⭳ Export CSV
+  </button>
+
+  <!-- Hidden filter mirrors, included on every request. -->
+  <input type="hidden" name="platform" value="all" class="hfilter" id="f-platform" />
+  <input type="hidden" name="status" value="all" class="hfilter" />
+  <input type="hidden" name="sort" value="hostname" class="hfilter" />
+  <input type="hidden" name="order" value="asc" class="hfilter" />
 </div>
 
 <div
@@ -48,7 +73,7 @@
   hx-trigger="refresh"
   hx-target="#hosts-region"
   hx-swap="innerHTML"
-  hx-include="#host-filters, [name='q']"
+  hx-include=".hfilter"
 >
   {% include "partials/hosts_table.html" %}
 </div>
@@ -57,22 +82,19 @@
 {% block scripts %}
 <script>
   function selectTab(btn) {
-    btn.parentElement
-      .querySelectorAll("button")
-      .forEach(function (b) {
-        b.classList.remove("active");
-      });
+    btn.parentElement.querySelectorAll("button").forEach(function (b) {
+      b.classList.remove("active");
+    });
     btn.classList.add("active");
-    // Keep the hidden platform filter in sync for subsequent search requests.
-    var container = document.getElementById("host-filters");
-    var pf = container.querySelector("[name='platform']");
-    if (!pf) {
-      pf = document.createElement("input");
-      pf.type = "hidden";
-      pf.name = "platform";
-      container.appendChild(pf);
-    }
-    pf.value = btn.dataset.platform;
+    document.getElementById("f-platform").value = btn.dataset.platform;
+  }
+
+  function exportHosts() {
+    var params = new URLSearchParams();
+    document.querySelectorAll(".hfilter").forEach(function (el) {
+      if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
+    });
+    window.location = "/api/v1/hosts.csv?" + params.toString();
   }
 </script>
 {% endblock %}
