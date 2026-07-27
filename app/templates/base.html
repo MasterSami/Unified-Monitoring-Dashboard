@@ -51,6 +51,15 @@
           <a href="/alerts" class="{{ 'active' if active_page == 'alerts' else '' }}">
             <span class="ico">◈</span> Alerts
           </a>
+          {% if enable_topology %}
+          <a href="/topology" class="{{ 'active' if active_page == 'topology' else '' }}">
+            <span class="ico">◉</span> Topology
+          </a>
+          {% else %}
+          <span class="nav-disabled" title="Coming soon — set ENABLE_TOPOLOGY=true">
+            <span class="ico">◉</span> Topology <span class="soon">soon</span>
+          </span>
+          {% endif %}
         </nav>
 
         <div class="sidebar-foot">

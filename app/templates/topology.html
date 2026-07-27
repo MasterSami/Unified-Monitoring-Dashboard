@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Topology · Unified Monitoring{% endblock %}
+{% block page_title %}Topology &amp; Dependency Maps{% endblock %}
+{% block page_sub %}Network topology (NNMi) · Service map &amp; Application map (Dynatrace){% endblock %}
+
+{% block content %}
+<div class="card card-pad" style="text-align:center; padding: 48px 24px;">
+  <div style="font-size:40px; margin-bottom: 12px;">◉</div>
+  {% if enabled %}
+  <h2 style="margin:0 0 8px;">Under construction</h2>
+  <p style="color:var(--text-muted); max-width:60ch; margin:0 auto;">
+    The topology feature is enabled, but the extraction collectors are still
+    being built. This will render the NNMi L2 network topology and the Dynatrace
+    service &amp; application dependency maps as interactive graphs.
+    See <code>TOPOLOGY.md</code> for the plan.
+  </p>
+  {% else %}
+  <h2 style="margin:0 0 8px;">Topology is turned off</h2>
+  <p style="color:var(--text-muted); max-width:64ch; margin:0 auto;">
+    This section will show the <b>NNMi network topology</b> and the
+    <b>Dynatrace service &amp; application dependency maps</b>. It is disabled by
+    default while it is being built.
+  </p>
+  <p style="color:var(--text-faint); margin-top:16px; font-size:13px;">
+    To enable the (in-progress) placeholder, set
+    <code>ENABLE_TOPOLOGY=true</code> in <code>.env</code> and restart.
+    Full design in <code>TOPOLOGY.md</code>.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

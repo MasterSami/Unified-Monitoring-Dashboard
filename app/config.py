@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     # Default recipient for the Zabbix "send test mail" action.
     test_mail_to: str = ""
 
+    # Rows per page in the hosts / alerts tables.
+    page_size: int = 300
+
+    # Feature flag for the (in-progress) Topology / Service-Map / App-Map views.
+    # Kept OFF: the nav entry is hidden and the page is a disabled placeholder
+    # until the topology collectors are built. See TOPOLOGY.md.
+    enable_topology: bool = False
+
     @property
     def enabled_collectors_list(self) -> list[str]:
         """Return the enabled collector names as a normalized list."""

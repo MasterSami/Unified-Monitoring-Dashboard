@@ -21,9 +21,15 @@ from app.servers import load_servers
 
 router = APIRouter(tags=["pages"])
 
-#: Max rows rendered in a single HTML table; the rest are reachable by search /
-#: filter or CSV export. Keeps big environments (10k+ hosts) responsive.
-TABLE_LIMIT = 500
+#: Rows per page in the hosts / alerts tables (from config).
+PAGE_SIZE = get_settings().page_size
+
+
+def _paginate(page: int | None, total: int) -> tuple[int, int, int]:
+    """Return (page, pages, offset) clamped to a valid range."""
+    pages = max(1, -(-total // PAGE_SIZE))  # ceil division
+    page = max(1, min(page or 1, pages))
+    return page, pages, (page - 1) * PAGE_SIZE
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 _STATIC_DIR = _TEMPLATE_DIR.parent / "static"
@@ -49,6 +55,8 @@ def _asset_version() -> str:
 
 # Exposed to every template as {{ asset_version }}.
 templates.env.globals["asset_version"] = _asset_version()
+# Feature flag for the (in-progress) Topology / Service-Map / App-Map views.
+templates.env.globals["enable_topology"] = get_settings().enable_topology
 
 
 # --- Template helpers -------------------------------------------------------
@@ -169,7 +177,7 @@ def _shared_hosts_count(db: Session) -> int:
     return db.scalar(select(func.count()).select_from(_shared_ips_stmt().subquery())) or 0
 
 
-def _shared_host_groups(db: Session, limit: int = TABLE_LIMIT) -> tuple[list[dict], int]:
+def _shared_host_groups(db: Session, limit: int = PAGE_SIZE) -> tuple[list[dict], int]:
     """Return (groups, total). Groups the shared-IP devices; loads only those hosts.
 
     The same physical device monitored by more than one instance shows up as
@@ -288,11 +296,12 @@ def _hosts_query(
     sort: str,
     order: str,
     instance: str | None = "all",
-    limit: int = TABLE_LIMIT,
-) -> tuple[list[Host], int]:
-    """Return (rows, total). Rows are capped at ``limit``; total is the full count."""
+    page: int | None = 1,
+) -> tuple[list[Host], int, int, int]:
+    """Return (rows, total, page, pages) — one page of the filtered hosts."""
     stmt = _hosts_stmt(q, platform, status, instance)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    page, pages, offset = _paginate(page, total)
     sort_cols = {
         "hostname": Host.hostname,
         "ip": Host.ip,
@@ -303,14 +312,18 @@ def _hosts_query(
         "last_seen": Host.last_seen,
     }
     col = sort_cols.get(sort, Host.hostname)
-    stmt = stmt.order_by(col.desc() if order == "desc" else col.asc()).limit(limit)
-    return list(db.scalars(stmt).all()), total
+    stmt = (
+        stmt.order_by(col.desc() if order == "desc" else col.asc())
+        .offset(offset)
+        .limit(PAGE_SIZE)
+    )
+    return list(db.scalars(stmt).all()), total, page, pages
 
 
 def _active_alerts(
-    db: Session, q: str | None = None, limit: int = TABLE_LIMIT
-) -> tuple[list[Alert], int]:
-    """Return (rows, total). Rows are capped at ``limit``; total is the full count."""
+    db: Session, q: str | None = None, page: int | None = 1
+) -> tuple[list[Alert], int, int, int]:
+    """Return (rows, total, page, pages) — one page of active alerts."""
     stmt = select(Alert).where(Alert.resolved.is_(False))
     if q:
         like = f"%{q.lower()}%"
@@ -322,10 +335,13 @@ def _active_alerts(
             | func.lower(Alert.severity_label).like(like)
         )
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    stmt = stmt.order_by(
-        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
-    ).limit(limit)
-    return list(db.scalars(stmt).all()), total
+    page, pages, offset = _paginate(page, total)
+    stmt = (
+        stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+        .offset(offset)
+        .limit(PAGE_SIZE)
+    )
+    return list(db.scalars(stmt).all()), total, page, pages
 
 
 # --- Full pages -------------------------------------------------------------
@@ -357,7 +373,9 @@ def hosts_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Unified hosts table page."""
-    hosts, total = _hosts_query(db, None, "all", "all", "hostname", "asc", "all")
+    hosts, total, page, pages = _hosts_query(
+        db, None, "all", "all", "hostname", "asc", "all", 1
+    )
     return templates.TemplateResponse(
         "hosts.html",
         {
@@ -365,7 +383,9 @@ def hosts_page(
             "active_page": "hosts",
             "hosts": hosts,
             "total": total,
-            "limit": TABLE_LIMIT,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
             "instances": _instance_names(settings),
             "collectors": get_collector_statuses(db, settings),
             "current": {
@@ -395,8 +415,28 @@ def shared_page(
             "active_page": "shared",
             "groups": groups,
             "total": total,
-            "limit": TABLE_LIMIT,
+            "limit": PAGE_SIZE,
             "collectors": get_collector_statuses(db, settings),
+        },
+    )
+
+
+@router.get("/topology", response_class=HTMLResponse)
+def topology_page(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Topology / Service-Map / App-Map — placeholder behind a feature flag.
+
+    The extraction collectors are not built yet (see TOPOLOGY.md). When
+    ``ENABLE_TOPOLOGY=false`` (default) this is a disabled placeholder.
+    """
+    return templates.TemplateResponse(
+        "topology.html",
+        {
+            "request": request,
+            "active_page": "topology",
+            "enabled": settings.enable_topology,
         },
     )
 
@@ -408,7 +448,7 @@ def alerts_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Active alerts table page."""
-    alerts, total = _active_alerts(db)
+    alerts, total, page, pages = _active_alerts(db, None, 1)
     return templates.TemplateResponse(
         "alerts.html",
         {
@@ -416,7 +456,9 @@ def alerts_page(
             "active_page": "alerts",
             "alerts": alerts,
             "total": total,
-            "limit": TABLE_LIMIT,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
             "collectors": get_collector_statuses(db, settings),
         },
     )
@@ -446,17 +488,22 @@ def hosts_partial(
     status: str = "all",
     sort: str = "hostname",
     order: str = "asc",
+    page: int = 1,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Hosts table fragment (live search / filter / sort)."""
-    hosts, total = _hosts_query(db, q, platform, status, sort, order, instance)
+    """Hosts table fragment (live search / filter / sort / paginate)."""
+    hosts, total, page, pages = _hosts_query(
+        db, q, platform, status, sort, order, instance, page
+    )
     return templates.TemplateResponse(
         "partials/hosts_table.html",
         {
             "request": request,
             "hosts": hosts,
             "total": total,
-            "limit": TABLE_LIMIT,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
             "current": {
                 "q": q or "",
                 "platform": platform,
@@ -471,13 +518,23 @@ def hosts_partial(
 
 @router.get("/partials/alerts", response_class=HTMLResponse)
 def alerts_partial(
-    request: Request, q: str | None = None, db: Session = Depends(get_db)
+    request: Request,
+    q: str | None = None,
+    page: int = 1,
+    db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Alerts table fragment (search + polled every 60s)."""
-    alerts, total = _active_alerts(db, q)
+    """Alerts table fragment (search + paginate + polled every 60s)."""
+    alerts, total, page, pages = _active_alerts(db, q, page)
     return templates.TemplateResponse(
         "partials/alerts_table.html",
-        {"request": request, "alerts": alerts, "total": total, "limit": TABLE_LIMIT},
+        {
+            "request": request,
+            "alerts": alerts,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
+        },
     )
 
 

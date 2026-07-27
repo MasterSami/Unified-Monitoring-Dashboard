@@ -17,6 +17,10 @@ without code changes.
   / unknown / disabled) and platform badges.
 - **Shared devices** — devices monitored by more than one instance, correlated
   by IP (e.g. the same node on Zabbix-34 *and* Zabbix-67, or on Zabbix and NNMi).
+- **Pagination & CSV export** — hosts and alerts paginate (300/page, configurable
+  via `PAGE_SIZE`) and export the current filtered view to CSV.
+- **Topology (planned)** — a feature-flagged placeholder for NNMi network
+  topology and Dynatrace service/app maps; see [`TOPOLOGY.md`](TOPOLOGY.md).
 - **Alerts** — active alerts sorted by severity then recency, colored severity
   pills, platform badges. Auto-refreshes every 60s.
 - **Collector health strip** on every page — green/red dot per platform with a

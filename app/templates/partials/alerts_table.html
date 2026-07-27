@@ -1,11 +1,7 @@
 {% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
 
 <div class="count-tag" style="margin-bottom: 8px">
-  {% if total > alerts | length %}
-    Showing top <b>{{ alerts | length }}</b> of <b>{{ total }}</b> active alerts — refine your search or export CSV for the full set
-  {% else %}
-    {{ total }} active alert{{ '' if total == 1 else 's' }}
-  {% endif %}
+  <b>{{ total }}</b> active alert{{ '' if total == 1 else 's' }}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
 </div>
 
 <div class="table-wrap">
@@ -46,3 +42,15 @@
     </tbody>
   </table>
 </div>
+
+{% if pages > 1 %}
+<div class="pager">
+  <button class="btn" type="button" {{ 'disabled' if page <= 1 }}
+    hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML"
+    hx-include="[name='q']" hx-vals='{"page": {{ page - 1 }}}'>← Prev</button>
+  <span class="pager-info">Page {{ page }} of {{ pages }} · {{ total }} total</span>
+  <button class="btn" type="button" {{ 'disabled' if page >= pages }}
+    hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML"
+    hx-include="[name='q']" hx-vals='{"page": {{ page + 1 }}}'>Next →</button>
+</div>
+{% endif %}
