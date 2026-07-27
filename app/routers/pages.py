@@ -57,6 +57,8 @@ def _asset_version() -> str:
 templates.env.globals["asset_version"] = _asset_version()
 # Feature flag for the (in-progress) Topology / Service-Map / App-Map views.
 templates.env.globals["enable_topology"] = get_settings().enable_topology
+# Feature flag for the CSV export buttons.
+templates.env.globals["enable_export"] = get_settings().enable_export
 
 
 # --- Template helpers -------------------------------------------------------

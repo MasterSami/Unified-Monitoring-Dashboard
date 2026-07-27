@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Rows per page in the hosts / alerts tables.
     page_size: int = 300
 
+    # Show the CSV "Export" buttons (and enable the .csv endpoints).
+    # Set to false to hide/disable export across the whole UI and API.
+    enable_export: bool = True
+
     # Feature flag for the (in-progress) Topology / Service-Map / App-Map views.
     # Kept OFF: the nav entry is hidden and the page is a disabled placeholder
     # until the topology collectors are built. See TOPOLOGY.md.

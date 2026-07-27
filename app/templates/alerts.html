@@ -19,9 +19,11 @@
       autocomplete="off"
     />
   </div>
+  {% if enable_export %}
   <button class="btn" type="button" onclick="exportAlerts()" title="Export current view to CSV">
     ⭳ Export CSV
   </button>
+  {% endif %}
 </div>
 
 <script>

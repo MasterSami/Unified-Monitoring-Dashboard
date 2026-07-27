@@ -117,6 +117,9 @@ Do this whenever data looks stale or after switching between MOCK_MODE and live.
 | Allow self-signed certs | `TLS_VERIFY=false` |
 | Disable a whole platform | `ENABLED_COLLECTORS=zabbix,nnmi` |
 | Change test-mail recipient | `TEST_MAIL_TO=you@company.com` |
+| Rows per page (hosts/alerts) | `PAGE_SIZE=300` |
+| Hide/disable the CSV Export buttons | `ENABLE_EXPORT=false` |
+| Reveal the (in-progress) Topology view | `ENABLE_TOPOLOGY=true` |
 
 Restart the app after editing `.env`.
 

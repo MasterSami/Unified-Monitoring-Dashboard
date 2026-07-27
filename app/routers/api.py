@@ -83,6 +83,12 @@ def _csv_response(filename: str, header: list[str], rows: list[list]) -> Streami
     )
 
 
+def _require_export(settings: Settings) -> None:
+    """Reject the request when CSV export is disabled by config."""
+    if not settings.enable_export:
+        raise HTTPException(status_code=404, detail="CSV export is disabled")
+
+
 @router.get("/hosts.csv")
 def export_hosts_csv(
     platform: str | None = Query(default=None),
@@ -90,8 +96,10 @@ def export_hosts_csv(
     status: str | None = Query(default=None),
     q: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Export hosts (respecting filters) as CSV."""
+    _require_export(settings)
     stmt = select(Host)
     if platform and platform != "all":
         stmt = stmt.where(Host.source_platform == platform)
@@ -132,8 +140,10 @@ def export_alerts_csv(
     active: bool = Query(default=True),
     q: str | None = Query(default=None),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Export alerts (respecting filters) as CSV."""
+    _require_export(settings)
     stmt = select(Alert)
     if active:
         stmt = stmt.where(Alert.resolved.is_(False))

@@ -55,9 +55,11 @@
     {% endfor %}
   </select>
 
+  {% if enable_export %}
   <button class="btn" type="button" onclick="exportHosts()" title="Export current view to CSV">
     ⭳ Export CSV
   </button>
+  {% endif %}
 
   <!-- Hidden filter mirrors, included on every request. -->
   <input type="hidden" name="platform" value="all" class="hfilter" id="f-platform" />
