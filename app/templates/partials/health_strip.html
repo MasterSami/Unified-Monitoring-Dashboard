@@ -23,3 +23,24 @@
     </div>
   {% endfor %}
 </div>
+
+{% set agents = agent_stats | default([]) %}
+{% set problem_agents = agents | selectattr('has_problem') | list %}
+<div class="health" style="margin-top: 8px">
+  <div class="h-title">
+    Agents{% if problem_agents %} · <span style="color: var(--down)">{{ problem_agents | length }} ⚠</span>{% endif %}
+  </div>
+  {% for a in agents %}
+    <div class="h-item {{ 'fail' if a.has_problem else 'ok' }}"
+      data-tip="{{ a.instance }} — {{ a.up }} up · {{ a.down }} down · {{ a.unknown }} unknown · {{ a.disabled }} disabled">
+      <span class="dot"></span>
+      <span class="h-name">{{ a.instance }}</span>
+      <span class="h-meta">
+        {%- if a.has_problem %}{{ a.problems }} issue{{ '' if a.problems == 1 else 's' }}
+        {%- else %}OK{% endif -%}
+      </span>
+    </div>
+  {% else %}
+    <div class="h-item"><span class="dot"></span><span class="h-name" style="color: var(--text-faint)">no data yet</span></div>
+  {% endfor %}
+</div>

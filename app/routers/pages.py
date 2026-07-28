@@ -133,6 +133,51 @@ def _per_platform(db: Session) -> list[PlatformHostCount]:
     ]
 
 
+def _agent_stats(db: Session) -> list[dict]:
+    """Per-instance monitoring-agent health, derived from host status.
+
+    Each host's status reflects whether its monitoring agent is reporting
+    (Zabbix agent / Dynatrace OneAgent / NNMi SNMP). A "problem" agent is one
+    that is down or unknown (disabled hosts are excluded — intentionally off).
+    Returns one dict per instance, most-problematic first.
+    """
+    rows = db.execute(
+        select(
+            Host.source_instance,
+            Host.source_platform,
+            Host.status,
+            func.count(Host.id),
+        ).group_by(Host.source_instance, Host.source_platform, Host.status)
+    ).all()
+
+    agg: dict[str, dict] = {}
+    for instance, platform, status, count in rows:
+        entry = agg.setdefault(
+            instance or "—",
+            {
+                "instance": instance or "—",
+                "platform": getattr(platform, "value", str(platform)),
+                "up": 0,
+                "down": 0,
+                "unknown": 0,
+                "disabled": 0,
+            },
+        )
+        key = status.value if hasattr(status, "value") else str(status)
+        entry[key] = entry.get(key, 0) + int(count)
+
+    out: list[dict] = []
+    for entry in agg.values():
+        entry["total"] = (
+            entry["up"] + entry["down"] + entry["unknown"] + entry["disabled"]
+        )
+        entry["problems"] = entry["down"] + entry["unknown"]
+        entry["has_problem"] = entry["problems"] > 0
+        out.append(entry)
+    out.sort(key=lambda e: (-e["problems"], e["instance"]))
+    return out
+
+
 def _donut_gradient(buckets: list[SeverityBucket]) -> str:
     """Build a CSS conic-gradient stop list for the severity donut."""
     total = sum(b.count for b in buckets)
@@ -248,6 +293,7 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     per_platform = _per_platform(db)
     max_total = max((p.total for p in per_platform), default=0) or 1
     status_counts = _host_status_counts(db)
+    agent_stats = _agent_stats(db)
     return {
         "total_hosts": total_hosts,
         "status_counts": status_counts,
@@ -261,6 +307,9 @@ def _overview_context(db: Session, settings: Settings) -> dict:
         "donut_gradient": _donut_gradient(buckets),
         "recent_critical": _recent_critical(db),
         "shared_count": _shared_hosts_count(db),
+        "agent_stats": agent_stats,
+        "agent_problem_total": sum(a["problems"] for a in agent_stats),
+        "agent_problem_instances": sum(1 for a in agent_stats if a["has_problem"]),
         "collectors": get_collector_statuses(db, settings),
     }
 
@@ -546,8 +595,12 @@ def health_partial(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Collector health strip fragment."""
+    """Collector + agent health strip fragment (sidebar)."""
     return templates.TemplateResponse(
         "partials/health_strip.html",
-        {"request": request, "collectors": get_collector_statuses(db, settings)},
+        {
+            "request": request,
+            "collectors": get_collector_statuses(db, settings),
+            "agent_stats": _agent_stats(db),
+        },
     )
