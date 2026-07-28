@@ -989,6 +989,128 @@ td.mono {
   margin: calc(var(--space) * 3) 0 calc(var(--space) * 1.5);
 }
 
+/* --- Agents page (master / detail) --------------------------------------- */
+
+.agents-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1080px) {
+  .agents-layout {
+    grid-template-columns: 1fr;
+  }
+}
+.agent-row.sel {
+  background: var(--accent-soft);
+}
+.agent-row.sel td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.agent-detail {
+  position: sticky;
+  top: 76px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+  min-height: 200px;
+}
+.agent-detail-empty {
+  color: var(--text-faint);
+  text-align: center;
+  padding: 40px 12px;
+  font-size: 13.5px;
+}
+.agent-detail-head .ad-name {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  word-break: break-all;
+}
+.agent-detail-head .ad-sub {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ad-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 16px 0;
+  font-size: 13px;
+}
+.ad-fields dt {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.ad-fields dd {
+  margin: 0;
+  word-break: break-all;
+}
+.ad-alerts-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  font-size: 13px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-bottom: 10px;
+}
+.ad-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ad-alert {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.ad-alert-body {
+  min-width: 0;
+}
+.ad-alert-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+.ad-alert-meta {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+.ad-noalerts {
+  color: var(--up);
+  font-size: 13px;
+  padding: 10px 0;
+}
+.ad-raw {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.ad-raw summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.ad-raw pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  max-height: 260px;
+}
+
 /* --- Agent health bar ----------------------------------------------------- */
 
 .agent-bar {

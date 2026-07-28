@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Agents · Unified Monitoring{% endblock %}
+{% block page_title %}Agents{% endblock %}
+{% block page_sub %}Monitoring agents on every host — status and the alerts on each{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="search">
+    <span class="search-icon">⌕</span>
+    <input
+      type="search"
+      name="q"
+      class="afilter"
+      placeholder="Search agent, IP, group, or instance…"
+      hx-get="/partials/agents"
+      hx-trigger="input changed delay:250ms, search"
+      hx-target="#agents-region"
+      hx-swap="innerHTML"
+      hx-include=".afilter"
+      autocomplete="off"
+    />
+  </div>
+
+  <div class="tabs" role="tablist">
+    {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi'] %}
+    <button
+      type="button"
+      class="{{ 'active' if p == 'all' else '' }}"
+      data-platform="{{ p }}"
+      hx-get="/partials/agents"
+      hx-target="#agents-region"
+      hx-swap="innerHTML"
+      hx-include=".afilter"
+      hx-vals='{"platform": "{{ p }}"}'
+      onclick="selectPlatform(this)"
+    >
+      {{ 'All' if p == 'all' else p | capitalize }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <select
+    name="instance"
+    class="afilter select"
+    hx-get="/partials/agents"
+    hx-trigger="change"
+    hx-target="#agents-region"
+    hx-swap="innerHTML"
+    hx-include=".afilter"
+    title="Filter by collector instance"
+  >
+    <option value="all">All instances</option>
+    {% for i in instances %}
+    <option value="{{ i.name }}">{{ i.name }}</option>
+    {% endfor %}
+  </select>
+
+  <select
+    name="status"
+    class="afilter select"
+    hx-get="/partials/agents"
+    hx-trigger="change"
+    hx-target="#agents-region"
+    hx-swap="innerHTML"
+    hx-include=".afilter"
+    title="Filter by agent status"
+  >
+    <option value="all">All statuses</option>
+    <option value="issues">⚠ Issues only</option>
+    <option value="up">Up</option>
+    <option value="down">Down</option>
+    <option value="unknown">Unknown</option>
+    <option value="disabled">Disabled</option>
+  </select>
+
+  <!-- Hidden filter mirrors. -->
+  <input type="hidden" name="platform" value="all" class="afilter" id="af-platform" />
+  <input type="hidden" name="sort" value="hostname" class="afilter" />
+  <input type="hidden" name="order" value="asc" class="afilter" />
+</div>
+
+<div class="agents-layout">
+  <div
+    id="agents-region"
+    data-refreshable
+    hx-get="/partials/agents"
+    hx-trigger="refresh"
+    hx-target="#agents-region"
+    hx-swap="innerHTML"
+    hx-include=".afilter"
+  >
+    {% include "partials/agents_table.html" %}
+  </div>
+
+  <aside id="agent-detail" class="agent-detail">
+    <div class="agent-detail-empty">
+      <div style="font-size: 26px; margin-bottom: 8px;">⬡</div>
+      Select an agent to see its details and alerts.
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectPlatform(btn) {
+    btn.parentElement.querySelectorAll("button").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    btn.classList.add("active");
+    document.getElementById("af-platform").value = btn.dataset.platform;
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,50 @@
+{% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
+{% if host %}
+<div class="agent-detail-head">
+  <div>
+    <div class="ad-name">{{ host.hostname }}</div>
+    <div class="ad-sub">
+      <span class="badge badge-{{ host.source_platform.value }}"><span class="dot"></span>{{ host.source_platform.value }}</span>
+      <span class="pill status-{{ host.status.value }}"><span class="dot"></span>{{ host.status.value }}</span>
+    </div>
+  </div>
+</div>
+
+<dl class="ad-fields">
+  <dt>IP</dt><dd class="mono">{{ host.ip or '—' }}</dd>
+  <dt>Instance</dt><dd>{{ host.source_instance or '—' }}</dd>
+  <dt>Group</dt><dd>{{ host.group_name or '—' }}</dd>
+  <dt>Last seen</dt><dd>{{ host.last_seen | relative_time }}</dd>
+  <dt>External ID</dt><dd class="mono">{{ host.external_id }}</dd>
+</dl>
+
+<div class="ad-alerts-title">
+  Active alerts
+  <span class="count-tag">{{ alerts | length }}</span>
+</div>
+
+{% if alerts %}
+<div class="ad-alerts">
+  {% for a in alerts %}
+  <div class="ad-alert">
+    <span class="pill sev-pill sev-{{ a.severity_int }}"><span class="dot"></span>{{ sev_names[a.severity_int] }}</span>
+    <div class="ad-alert-body">
+      <div class="ad-alert-title">{{ a.title }}</div>
+      <div class="ad-alert-meta">started {{ a.started_at | relative_time }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="ad-noalerts">🎉 No active alerts on this agent.</div>
+{% endif %}
+
+{% if host.raw_payload %}
+<details class="ad-raw">
+  <summary>Raw payload</summary>
+  <pre>{{ host.raw_payload | tojson(indent=2) }}</pre>
+</details>
+{% endif %}
+{% else %}
+<div class="agent-detail-empty">Agent not found (it may have been reconciled away).</div>
+{% endif %}

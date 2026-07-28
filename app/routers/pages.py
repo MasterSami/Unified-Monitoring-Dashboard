@@ -178,6 +178,51 @@ def _agent_stats(db: Session) -> list[dict]:
     return out
 
 
+def _annotate_agent_alerts(db: Session, hosts: list[Host]) -> None:
+    """Attach ``alert_count`` and ``max_sev`` (active alerts) to each host.
+
+    Alerts are matched to a host by (source_instance, host_hostname). Only the
+    hosts on the current page are looked up, so this stays cheap.
+    """
+    for h in hosts:
+        h.alert_count = 0  # type: ignore[attr-defined]
+        h.max_sev = 0  # type: ignore[attr-defined]
+    if not hosts:
+        return
+    hostnames = list({h.hostname for h in hosts})
+    rows = db.execute(
+        select(
+            Alert.source_instance,
+            Alert.host_hostname,
+            func.count(Alert.id),
+            func.max(Alert.severity_int),
+        )
+        .where(Alert.resolved.is_(False), Alert.host_hostname.in_(hostnames))
+        .group_by(Alert.source_instance, Alert.host_hostname)
+    ).all()
+    counts = {
+        (inst, hn): (int(cnt), int(sev or 0)) for inst, hn, cnt, sev in rows
+    }
+    for h in hosts:
+        cnt, sev = counts.get((h.source_instance, h.hostname), (0, 0))
+        h.alert_count = cnt  # type: ignore[attr-defined]
+        h.max_sev = sev  # type: ignore[attr-defined]
+
+
+def _agent_alerts(db: Session, instance: str, hostname: str) -> list[Alert]:
+    """Active alerts for one agent (host), most severe first."""
+    stmt = (
+        select(Alert)
+        .where(
+            Alert.resolved.is_(False),
+            Alert.source_instance == instance,
+            Alert.host_hostname == hostname,
+        )
+        .order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+    )
+    return list(db.scalars(stmt).all())
+
+
 def _donut_gradient(buckets: list[SeverityBucket]) -> str:
     """Build a CSS conic-gradient stop list for the severity donut."""
     total = sum(b.count for b in buckets)
@@ -326,7 +371,12 @@ def _hosts_stmt(
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
         stmt = stmt.where(Host.source_instance == instance)
-    if status and status != "all":
+    if status == "issues":
+        # A problem agent: down or unknown (disabled hosts are intentional).
+        stmt = stmt.where(
+            Host.status.in_([HostStatus.down, HostStatus.unknown])
+        )
+    elif status and status != "all":
         stmt = stmt.where(Host.status == status)
     if q:
         like = f"%{q.lower()}%"
@@ -472,6 +522,103 @@ def shared_page(
     )
 
 
+@router.get("/agents", response_class=HTMLResponse)
+def agents_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Agents (monitored hosts) with their status and the alerts on each."""
+    hosts, total, page, pages = _hosts_query(
+        db, None, "all", "all", "hostname", "asc", "all", 1
+    )
+    _annotate_agent_alerts(db, hosts)
+    return templates.TemplateResponse(
+        "agents.html",
+        {
+            "request": request,
+            "active_page": "agents",
+            "hosts": hosts,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
+            "instances": _instance_names(settings),
+            "collectors": get_collector_statuses(db, settings),
+            "current": {
+                "q": "",
+                "platform": "all",
+                "instance": "all",
+                "status": "all",
+                "sort": "hostname",
+                "order": "asc",
+            },
+        },
+    )
+
+
+@router.get("/partials/agents", response_class=HTMLResponse)
+def agents_partial(
+    request: Request,
+    q: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
+    status: str = "all",
+    sort: str = "hostname",
+    order: str = "asc",
+    page: int = 1,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Agents table fragment (search / filter / sort / paginate)."""
+    hosts, total, page, pages = _hosts_query(
+        db, q, platform, status, sort, order, instance, page
+    )
+    _annotate_agent_alerts(db, hosts)
+    return templates.TemplateResponse(
+        "partials/agents_table.html",
+        {
+            "request": request,
+            "hosts": hosts,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "current": {
+                "q": q or "",
+                "platform": platform,
+                "instance": instance,
+                "status": status,
+                "sort": sort,
+                "order": order,
+            },
+        },
+    )
+
+
+@router.get("/partials/agent-detail", response_class=HTMLResponse)
+def agent_detail_partial(
+    request: Request,
+    instance: str,
+    hostname: str,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Full detail for one agent: its host record + the active alerts on it."""
+    host = db.scalar(
+        select(Host).where(
+            Host.source_instance == instance, Host.hostname == hostname
+        )
+    )
+    return templates.TemplateResponse(
+        "partials/agent_detail.html",
+        {
+            "request": request,
+            "host": host,
+            "instance": instance,
+            "hostname": hostname,
+            "alerts": _agent_alerts(db, instance, hostname),
+        },
+    )
+
+
 @router.get("/topology", response_class=HTMLResponse)
 def topology_page(
     request: Request,
@@ -595,12 +742,8 @@ def health_partial(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Collector + agent health strip fragment (sidebar)."""
+    """Collector health strip fragment (sidebar)."""
     return templates.TemplateResponse(
         "partials/health_strip.html",
-        {
-            "request": request,
-            "collectors": get_collector_statuses(db, settings),
-            "agent_stats": _agent_stats(db),
-        },
+        {"request": request, "collectors": get_collector_statuses(db, settings)},
     )
