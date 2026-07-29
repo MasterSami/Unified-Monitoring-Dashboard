@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import Alert, Host, HostStatus
+from app.models import (
+    Alert,
+    Host,
+    HostStatus,
+    SourcePlatform,
+    TopologyEdge,
+    TopologyNode,
+)
 from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses
 from app.schemas import PlatformHostCount, SeverityBucket
@@ -619,22 +626,122 @@ def agent_detail_partial(
     )
 
 
+#: UI "view" -> the platform that owns that kind of topology graph.
+_TOPO_VIEWS = {
+    "network": {
+        "platform": SourcePlatform.nnmi,
+        "label": "Network topology",
+        "source": "NNMi",
+        "node_word": "Devices",
+        "edge_word": "L2 links",
+    },
+    "service": {
+        "platform": SourcePlatform.dynatrace,
+        "label": "Service map",
+        "source": "Dynatrace",
+        "node_word": "Services",
+        "edge_word": "Calls",
+    },
+}
+
+
+def _topology_instances(db: Session, platform: SourcePlatform) -> list[dict]:
+    """Instances (with node counts) that currently have topology for a platform."""
+    rows = db.execute(
+        select(
+            TopologyNode.source_instance, func.count(TopologyNode.id)
+        )
+        .where(TopologyNode.source_platform == platform)
+        .group_by(TopologyNode.source_instance)
+        .order_by(TopologyNode.source_instance)
+    ).all()
+    return [{"name": inst, "nodes": int(cnt)} for inst, cnt in rows]
+
+
 @router.get("/topology", response_class=HTMLResponse)
 def topology_page(
     request: Request,
+    view: str = "network",
+    instance: str | None = None,
+    mode: str = "graph",
+    db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Topology / Service-Map / App-Map — placeholder behind a feature flag.
+    """Topology views: NNMi network map + Dynatrace service map.
 
-    The extraction collectors are not built yet (see TOPOLOGY.md). When
-    ``ENABLE_TOPOLOGY=false`` (default) this is a disabled placeholder.
+    Two view types (network / service), each viewable as a **table** or an
+    interactive **graph**. Gated behind ``ENABLE_TOPOLOGY`` (default off) so the
+    user turns it on themselves.
     """
+    if not settings.enable_topology:
+        return templates.TemplateResponse(
+            "topology.html",
+            {"request": request, "active_page": "topology", "enabled": False},
+        )
+
+    if view not in _TOPO_VIEWS:
+        view = "network"
+    if mode not in ("graph", "table"):
+        mode = "graph"
+    meta = _TOPO_VIEWS[view]
+    platform = meta["platform"]
+
+    instances = _topology_instances(db, platform)
+    names = [i["name"] for i in instances]
+    if instance not in names:
+        instance = names[0] if names else None
+
+    nodes: list[TopologyNode] = []
+    edges: list[TopologyEdge] = []
+    if instance:
+        nodes = list(
+            db.scalars(
+                select(TopologyNode)
+                .where(
+                    TopologyNode.source_platform == platform,
+                    TopologyNode.source_instance == instance,
+                )
+                .order_by(TopologyNode.name)
+            ).all()
+        )
+        edges = list(
+            db.scalars(
+                select(TopologyEdge).where(
+                    TopologyEdge.source_platform == platform,
+                    TopologyEdge.source_instance == instance,
+                )
+            ).all()
+        )
+    name_by_ext = {n.external_id: n.name for n in nodes}
+    # Only connections whose endpoints are present as nodes (for the table).
+    edge_rows = [
+        {
+            "from": name_by_ext.get(e.from_external_id, e.from_external_id),
+            "to": name_by_ext.get(e.to_external_id, e.to_external_id),
+            "label": e.label or "",
+            "kind": e.kind,
+        }
+        for e in edges
+        if e.from_external_id in name_by_ext and e.to_external_id in name_by_ext
+    ]
+    edge_rows.sort(key=lambda r: (r["from"], r["to"]))
+
     return templates.TemplateResponse(
         "topology.html",
         {
             "request": request,
             "active_page": "topology",
-            "enabled": settings.enable_topology,
+            "enabled": True,
+            "view": view,
+            "mode": mode,
+            "meta": meta,
+            "views": _TOPO_VIEWS,
+            "instance": instance,
+            "instances": instances,
+            "nodes": nodes,
+            "edges": edge_rows,
+            "node_count": len(nodes),
+            "edge_count": len(edge_rows),
         },
     )
 

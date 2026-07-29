@@ -131,6 +131,66 @@ class Alert(Base):
     )
 
 
+class TopologyNode(Base):
+    """A node in a topology graph (NNMi network device or Dynatrace service)."""
+
+    __tablename__ = "topology_nodes"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_platform",
+            "source_instance",
+            "external_id",
+            name="uq_topo_node_platform_instance_external",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_platform: Mapped[SourcePlatform] = mapped_column(
+        Enum(SourcePlatform, native_enum=False, length=16), index=True
+    )
+    source_instance: Mapped[str] = mapped_column(String(64), default="", index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    #: device (NNMi) | service | middleware | application (Dynatrace)
+    kind: Mapped[str] = mapped_column(String(24), default="node", index=True)
+    name: Mapped[str] = mapped_column(String(512), default="")
+    category: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class TopologyEdge(Base):
+    """A link between two topology nodes (NNMi L2 link or Dynatrace call)."""
+
+    __tablename__ = "topology_edges"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_platform",
+            "source_instance",
+            "external_id",
+            name="uq_topo_edge_platform_instance_external",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_platform: Mapped[SourcePlatform] = mapped_column(
+        Enum(SourcePlatform, native_enum=False, length=16), index=True
+    )
+    source_instance: Mapped[str] = mapped_column(String(64), default="", index=True)
+    external_id: Mapped[str] = mapped_column(String(255), index=True)
+    from_external_id: Mapped[str] = mapped_column(String(255), index=True)
+    to_external_id: Mapped[str] = mapped_column(String(255), index=True)
+    #: l2 (NNMi) | call | via-middleware (Dynatrace)
+    kind: Mapped[str] = mapped_column(String(24), default="link")
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class CollectorRun(Base):
     """A single execution of a collector, recorded for health tracking."""
 

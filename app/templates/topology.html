@@ -1,31 +1,278 @@
 {% extends "base.html" %}
 {% block title %}Topology · Unified Monitoring{% endblock %}
 {% block page_title %}Topology &amp; Dependency Maps{% endblock %}
-{% block page_sub %}Network topology (NNMi) · Service map &amp; Application map (Dynatrace){% endblock %}
+{% block page_sub %}Network topology (NNMi) · Service map (Dynatrace){% endblock %}
 
 {% block content %}
+{% if not enabled %}
 <div class="card card-pad" style="text-align:center; padding: 48px 24px;">
   <div style="font-size:40px; margin-bottom: 12px;">◉</div>
-  {% if enabled %}
-  <h2 style="margin:0 0 8px;">Under construction</h2>
-  <p style="color:var(--text-muted); max-width:60ch; margin:0 auto;">
-    The topology feature is enabled, but the extraction collectors are still
-    being built. This will render the NNMi L2 network topology and the Dynatrace
-    service &amp; application dependency maps as interactive graphs.
-    See <code>TOPOLOGY.md</code> for the plan.
-  </p>
-  {% else %}
   <h2 style="margin:0 0 8px;">Topology is turned off</h2>
   <p style="color:var(--text-muted); max-width:64ch; margin:0 auto;">
-    This section will show the <b>NNMi network topology</b> and the
-    <b>Dynatrace service &amp; application dependency maps</b>. It is disabled by
-    default while it is being built.
+    This section shows the <b>NNMi network topology</b> and the
+    <b>Dynatrace service map</b> — as browsable <b>tables</b> and as an
+    interactive <b>graph</b> of connection points.
   </p>
   <p style="color:var(--text-faint); margin-top:16px; font-size:13px;">
-    To enable the (in-progress) placeholder, set
-    <code>ENABLE_TOPOLOGY=true</code> in <code>.env</code> and restart.
-    Full design in <code>TOPOLOGY.md</code>.
+    To enable it, set <code>ENABLE_TOPOLOGY=true</code> in <code>.env</code> and
+    restart. Design details in <code>TOPOLOGY.md</code>.
   </p>
-  {% endif %}
 </div>
+{% else %}
+
+<!-- View switcher + instance + mode toggle -->
+<div class="topo-bar">
+  <div class="seg">
+    {% for key, m in views.items() %}
+    <a class="seg-item {{ 'active' if key == view else '' }}"
+       href="/topology?view={{ key }}&mode={{ mode }}">
+      {{ m.label }} <span class="seg-sub">{{ m.source }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="spacer"></div>
+
+  {% if instances %}
+  <label class="topo-inst">
+    <span>Instance</span>
+    <select onchange="location.href='/topology?view={{ view }}&mode={{ mode }}&instance='+encodeURIComponent(this.value)">
+      {% for i in instances %}
+      <option value="{{ i.name }}" {{ 'selected' if i.name == instance else '' }}>{{ i.name }} · {{ i.nodes }} nodes</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+
+  <div class="seg seg-sm">
+    <a class="seg-item {{ 'active' if mode == 'graph' else '' }}"
+       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=graph">◈ Graph</a>
+    <a class="seg-item {{ 'active' if mode == 'table' else '' }}"
+       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=table">▤ Table</a>
+  </div>
+
+  <button class="btn" type="button" onclick="rebuildTopology(event)"
+          title="Re-extract topology from all sources now">
+    <span class="htmx-indicator">⏳</span> ↻ Rebuild
+  </button>
+</div>
+
+{% if not instance %}
+<div class="card">
+  <div class="empty">
+    <span class="big">◉</span>
+    No {{ meta.label | lower }} data yet.
+    <div style="margin-top:10px; font-size:13px; color:var(--text-faint);">
+      Click <b>↻ Rebuild</b> to extract it from {{ meta.source }}
+      {% if not enable_export %}{% endif %}
+      (in MOCK_MODE this seeds a sample graph).
+    </div>
+  </div>
+</div>
+{% else %}
+
+<div class="count-tag" style="margin:2px 0 12px;">
+  <b>{{ node_count }}</b> {{ meta.node_word | lower }} ·
+  <b>{{ edge_count }}</b> {{ meta.edge_word | lower }} ·
+  <span style="color:var(--text-faint)">{{ meta.source }} / {{ instance }}</span>
+</div>
+
+{% if mode == 'graph' %}
+<div class="card">
+  <div class="card-head">
+    <h3>{{ meta.label }} — {{ instance }}</h3>
+    <span class="hint">drag to pan · scroll to zoom · drag a node to reposition</span>
+  </div>
+  <div id="cy" class="topo-graph"
+       data-url="/api/v1/topology/graph?view={{ view }}&instance={{ instance | urlencode }}"></div>
+  <div class="topo-legend">
+    {% if view == 'network' %}
+    <span><i class="lg" style="background:var(--up)"></i> Up / Normal</span>
+    <span><i class="lg" style="background:var(--sev3)"></i> Warning / Minor</span>
+    <span><i class="lg" style="background:var(--down)"></i> Down / Major</span>
+    <span><i class="lg" style="background:var(--unknown)"></i> Unknown</span>
+    {% else %}
+    <span><i class="lg" style="background:var(--accent)"></i> Service</span>
+    <span><i class="lg" style="background:#8b5cf6"></i> Middleware (DB / MQ)</span>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+
+<!-- Table view: nodes + connections -->
+<div class="grid cols-2 topo-tables">
+  <div class="card">
+    <div class="card-head"><h3>{{ meta.node_word }}</h3><span class="hint">{{ node_count }}</span></div>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Category</th>
+            {% if view == 'network' %}<th>Status</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in nodes %}
+          <tr>
+            <td><strong>{{ n.name }}</strong></td>
+            <td style="color:var(--text-muted)">{{ n.category or '—' }}</td>
+            {% if view == 'network' %}
+            <td>
+              {% set st = (n.status or 'unknown') | lower %}
+              {% if st in ('normal','up','warning','minor') %}
+                <span class="pill status-up"><span class="dot"></span>{{ n.status or 'normal' }}</span>
+              {% elif st in ('major','critical','down') %}
+                <span class="pill status-down"><span class="dot"></span>{{ n.status }}</span>
+              {% else %}
+                <span class="pill status-unknown"><span class="dot"></span>{{ n.status or 'unknown' }}</span>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% else %}
+          <tr><td colspan="3"><div class="empty">No nodes.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head"><h3>{{ meta.edge_word }}</h3><span class="hint">{{ edge_count }}</span></div>
+    <div class="table-wrap" style="border:none;">
+      <table>
+        <thead>
+          <tr><th>From</th><th></th><th>To</th></tr>
+        </thead>
+        <tbody>
+          {% for e in edges %}
+          <tr>
+            <td><strong>{{ e.from }}</strong></td>
+            <td style="text-align:center; color:var(--accent); font-weight:700;">
+              {{ '→' if e.kind == 'call' else '↔' }}
+            </td>
+            <td><strong>{{ e.to }}</strong></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3"><div class="empty">No connections.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if enabled %}
+<script src="/static/cytoscape.min.js?v={{ asset_version }}"></script>
+<script>
+  function rebuildTopology(event) {
+    var btn = event.currentTarget;
+    btn.classList.add("htmx-request");
+    btn.disabled = true;
+    fetch("/api/v1/topology/run", { method: "POST" })
+      .then(function (r) {
+        if (window.toast) window.toast(r.ok ? "↻ Topology rebuilt" : "Rebuild failed", r.ok);
+        if (r.ok) setTimeout(function () { location.reload(); }, 500);
+        else { btn.classList.remove("htmx-request"); btn.disabled = false; }
+      })
+      .catch(function () {
+        if (window.toast) window.toast("Rebuild failed", false);
+        btn.classList.remove("htmx-request");
+        btn.disabled = false;
+      });
+  }
+
+  (function () {
+    var el = document.getElementById("cy");
+    if (!el || typeof cytoscape === "undefined") return;
+    var css = getComputedStyle(document.documentElement);
+    function v(name, fb) { return (css.getPropertyValue(name) || "").trim() || fb; }
+    var COLORS = {
+      up: v("--up", "#16a34a"),
+      warn: v("--sev3", "#d97706"),
+      down: v("--down", "#dc2626"),
+      unknown: v("--unknown", "#9ca3af"),
+      service: v("--accent", "#4f46e5"),
+      mw: "#8b5cf6",
+      edge: v("--border-strong", "#cdd2da"),
+      text: v("--text", "#16181d"),
+      surface: v("--surface", "#fff"),
+    };
+    function nodeColor(d) {
+      var kind = d("kind");
+      if (kind === "middleware") return COLORS.mw;
+      if (kind === "service" || kind === "application") return COLORS.service;
+      var s = (d("status") || "").toUpperCase();
+      if (["MAJOR", "CRITICAL", "DOWN"].indexOf(s) >= 0) return COLORS.down;
+      if (["WARNING", "MINOR"].indexOf(s) >= 0) return COLORS.warn;
+      if (["NORMAL", "UP", ""].indexOf(s) >= 0) return COLORS.up;
+      return COLORS.unknown;
+    }
+    fetch(el.dataset.url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var els = (data.elements.nodes || []).concat(data.elements.edges || []);
+        if (!els.length) {
+          el.innerHTML =
+            '<div class="empty" style="padding:60px;">No graph elements for this instance.</div>';
+          return;
+        }
+        cytoscape({
+          container: el,
+          elements: els,
+          wheelSensitivity: 0.25,
+          layout: { name: "cose", animate: false, padding: 30, nodeRepulsion: 9000, idealEdgeLength: 90 },
+          style: [
+            {
+              selector: "node",
+              style: {
+                "background-color": function (ele) { return nodeColor(function (k) { return ele.data(k); }); },
+                label: "data(label)",
+                color: COLORS.text,
+                "font-size": "10px",
+                "font-weight": "600",
+                "text-valign": "bottom",
+                "text-margin-y": "4px",
+                "text-wrap": "ellipsis",
+                "text-max-width": "110px",
+                width: 26,
+                height: 26,
+                "border-width": 2,
+                "border-color": COLORS.surface,
+              },
+            },
+            {
+              selector: "edge",
+              style: {
+                width: 1.6,
+                "line-color": COLORS.edge,
+                "curve-style": "bezier",
+                "target-arrow-color": COLORS.edge,
+                "target-arrow-shape": function (ele) {
+                  return ele.data("kind") === "call" ? "triangle" : "none";
+                },
+                "arrow-scale": 0.9,
+                opacity: 0.85,
+              },
+            },
+            {
+              selector: "node:selected",
+              style: { "border-color": COLORS.service, "border-width": 3 },
+            },
+          ],
+        });
+      })
+      .catch(function () {
+        el.innerHTML =
+          '<div class="empty" style="padding:60px;">Failed to load graph data.</div>';
+      });
+  })();
+</script>
+{% endif %}
 {% endblock %}

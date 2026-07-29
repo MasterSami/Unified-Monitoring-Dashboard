@@ -119,7 +119,7 @@ Do this whenever data looks stale or after switching between MOCK_MODE and live.
 | Change test-mail recipient | `TEST_MAIL_TO=you@company.com` |
 | Rows per page (hosts/alerts) | `PAGE_SIZE=300` |
 | Hide/disable the CSV Export buttons | `ENABLE_EXPORT=false` |
-| Reveal the (in-progress) Topology view | `ENABLE_TOPOLOGY=true` |
+| Show the Topology views (network map + service map, table + graph) | `ENABLE_TOPOLOGY=true` |
 
 Restart the app after editing `.env`.
 

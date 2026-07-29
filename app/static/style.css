@@ -1242,3 +1242,110 @@ td.mono {
     flex-direction: column;
   }
 }
+
+/* --- Topology ------------------------------------------------------------- */
+
+.topo-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  flex-wrap: wrap;
+  margin-bottom: calc(var(--space) * 2);
+}
+.topo-bar .spacer {
+  flex: 1;
+}
+.seg {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 2px;
+}
+.seg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+.seg-item:hover {
+  color: var(--text);
+}
+.seg-item.active {
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.seg-item .seg-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.seg-item.active .seg-sub {
+  color: var(--accent);
+  opacity: 0.75;
+}
+.seg-sm .seg-item {
+  padding: 6px 11px;
+  font-size: 12.5px;
+}
+.topo-inst {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.topo-inst select {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.topo-graph {
+  height: 620px;
+  width: 100%;
+  background:
+    radial-gradient(circle at 1px 1px, var(--surface-3) 1px, transparent 0);
+  background-size: 22px 22px;
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+.topo-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.topo-legend i.lg {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.topo-tables {
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .topo-tables {
+    grid-template-columns: 1fr;
+  }
+  .topo-graph {
+    height: 460px;
+  }
+}

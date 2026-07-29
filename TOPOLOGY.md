@@ -1,106 +1,107 @@
-# Topology / Service Map / App Map — design & enablement
+# Topology / Service Map — design & enablement
 
-Status: **planned / scaffolded, disabled by default.** This document is the plan
-for adding network- and application-topology views to the dashboard. The UI
-entry point exists (a disabled "Topology · soon" item and a placeholder page);
-the extraction collectors are not built yet.
-
----
-
-## What it will show
-
-Three related maps, from the systems you already monitor:
-
-1. **Network topology (NNMi)** — nodes, interfaces, IP addresses, and **L2
-   connections** (which switch/router port connects to which), i.e. the
-   physical/logical network graph from NNMi-13.
-2. **Service map (Dynatrace)** — service→service call graph, resolving calls
-   that flow **through middleware** (MQ / Kafka / ESB / API-gateway / DB).
-3. **Application map (Dynatrace)** — the service graph rolled up to
-   **business-application** level (App→App, direct or via middleware).
-
-These mirror the three sample scripts you provided
-(`ExportNnmiTopology.py`, `dynatrace_service_map.py`, `dynatrace_app_map.py`).
+Status: **built, disabled by default.** The topology feature is fully
+implemented — data model, collectors, JSON API, and a UI with both a **table**
+view and an interactive **connection-graph** view. It ships **off** behind
+`ENABLE_TOPOLOGY` so you turn it on yourself when you want it.
 
 ---
 
-## How to enable the placeholder now
+## What it shows
+
+Two maps, extracted from the systems you already monitor:
+
+1. **Network topology (NNMi)** — devices (nodes) and their **L2 connections**
+   (which switch/router connects to which), i.e. the physical/logical network
+   graph. Nodes are colored by NNMi status (Normal / Warning / Major).
+2. **Service map (Dynatrace)** — the service→service **call graph**, with
+   databases and message queues shown as middleware. Directional arrows show
+   who calls whom — the same shape as the Dynatrace service map.
+
+Each map is viewable two ways:
+
+- **Graph** — an interactive, zoomable, draggable node/edge diagram
+  (Cytoscape.js, vendored locally — no CDN).
+- **Table** — a *Devices/Services* table plus a *Connections* table, for
+  reading and searching the same data as text.
+
+> **Application map** (services rolled up to business-application level) is a
+> natural next step and is intentionally **not** built yet — the data model and
+> UI generalize to it (add a `kind="application"` node + rollup edges).
+
+---
+
+## How to enable it
 
 ```
 # .env
 ENABLE_TOPOLOGY=true
 ```
 
-Restart the app. The nav item becomes active and `/topology` opens the page.
-Until the collectors below are implemented it shows an "under construction"
-state. Leaving `ENABLE_TOPOLOGY=false` (default) hides the feature.
+Restart the app. The **Topology** nav item becomes active and `/topology`
+opens the views. On startup (and then on a slow interval) the topology is
+extracted for every configured NNMi and Dynatrace instance. In `MOCK_MODE`
+a representative sample graph is seeded so you can see the feature immediately.
 
-> To hide the "soon" nav item entirely, remove the `{% else %}` branch of the
-> Topology block in `app/templates/base.html`.
+Leaving `ENABLE_TOPOLOGY=false` (the default) hides the nav item, serves a
+"turned off" placeholder at `/topology`, and returns `404` from the topology
+API — nothing is collected.
+
+Use the **↻ Rebuild** button on the page to re-extract on demand.
 
 ---
 
-## Build plan (when we turn it on)
+## How it's built
 
 ### 1. Data model (`app/models.py`)
 
-Add topology tables, scoped by `source_instance` like everything else:
+Two tables, scoped by `source_instance` like everything else:
 
-- `TopologyNode(id, source_platform, source_instance, external_id, kind, name,
-  ip, attributes JSON, updated_at)` — a node (NNMi node, Dynatrace service, app).
-- `TopologyEdge(id, source_platform, source_instance, from_external_id,
-  to_external_id, kind, via JSON, attributes JSON, updated_at)` — a link
-  (L2 connection, service call, app→app), `via` holding any middleware chain.
+- `TopologyNode(source_platform, source_instance, external_id, kind, name,
+  category, status, attributes JSON)` — a device (NNMi) or service/middleware
+  (Dynatrace). Unique on `(platform, instance, external_id)`.
+- `TopologyEdge(source_platform, source_instance, external_id,
+  from_external_id, to_external_id, kind, label, attributes JSON)` — an L2 link
+  (`kind="l2"`) or a service call (`kind="call"`).
 
-### 2. Collectors (`app/collectors/`)
+### 2. Collectors (`app/topology.py`)
 
-Reuse the collector base and the proven extraction logic from the scripts:
+Extraction recipes learned from the provided export scripts:
 
-- **NNMi** (`nnmi.py`, extend): add `NodeBean` (have it), `InterfaceBean`,
-  `IPAddressBean`, `L2ConnectionBean` using the same `filt:expression` SOAP
-  envelope already in the collector. L2 connection `name` is
-  `NodeA[ifA],NodeB[ifB]` — split into edges.
-- **Dynatrace** (`dynatrace.py`, extend): Entities v2 with
-  `fields=+fromRelationships,+toRelationships,+properties,+managementZones,+tags`
-  for `SERVICE` (and `QUEUE`, `APPLICATION`). Port the middleware classification
-  and path-resolution from `dynatrace_service_map.py`, and the 4-layer
-  application-grouping engine from `dynatrace_app_map.py`.
+- **NNMi** — `NodeBean` (`getNodes`) for devices and `L2ConnectionBean`
+  (`getL2Connections`) for links, over the same `filt:expression` SOAP envelope
+  the host collector already uses. The L2 connection `name` is
+  `NodeA[ifA],NodeB[ifB]` — parsed and mapped back to node IDs to build edges.
+- **Dynatrace** — Entities v2 for `SERVICE` with
+  `fields=+fromRelationships,+toRelationships,+properties`, paginated by
+  `nextPageKey`. `calls` relationships become directed edges; only edges whose
+  endpoints are known services are kept.
 
-Run these on a **slower schedule** than hosts/alerts (topology changes rarely) —
-e.g. a separate hourly job — to keep polling light.
+`run_topology()` replaces each instance's graph as a **snapshot** (delete +
+insert) on every run — topology changes rarely, so this is simpler and safe.
+It runs on a **slower schedule** than hosts/alerts (a separate job, ~6× the
+poll interval, min 30 min) plus once on startup.
 
 ### 3. API (`app/routers/api.py`)
 
-- `GET /api/v1/topology/nodes` and `/edges` (filter by platform/instance/kind).
-- `GET /api/v1/topology/graph?view=network|service|app` → nodes+edges JSON for
-  the renderer.
-- CSV/Excel export of the maps (the scripts already produce Excel + Mermaid;
-  reuse that shape).
+- `GET /api/v1/topology/graph?view=network|service&instance=<name>` →
+  Cytoscape elements JSON (nodes + edges), gated by `ENABLE_TOPOLOGY`.
+- `POST /api/v1/topology/run` → rebuild all instances now.
 
 ### 4. UI (`app/templates/topology.html`)
 
-- A view switcher: **Network / Service / Application**.
-- Render the graph. Options, lightest first:
-  - **Mermaid** (already supported in this repo's docs) for small/medium graphs —
-    generate the diagram server-side like the scripts do.
-  - A vendored graph library (e.g. Cytoscape.js) for large, interactive,
-    zoomable graphs — vendored locally to keep the no-CDN rule.
-- Filters: by management zone / device category / instance; search a node and
-  highlight its neighbors; export the current view.
+- View switcher (**Network / Service**), an instance dropdown, and a
+  **Graph / Table** toggle — all plain links/selects, so state lives in the URL
+  (`/topology?view=…&instance=…&mode=…`).
+- Graph rendered by vendored `app/static/cytoscape.min.js`; node colors read the
+  app's CSS variables so the graph respects light/dark mode. A legend explains
+  the colors.
 
 ### 5. Scale note
 
-The Dynatrace environment is large (tens of thousands of entities). Fetch with
-pagination (`nextPageKey`), cache the computed graph in the topology tables, and
-render a filtered/limited subgraph in the browser rather than the whole graph at
-once.
-
----
-
-## Why it's staged
-
-Topology extraction is a substantial subsystem (SOAP bean-by-bean for NNMi, plus
-Dynatrace relationship-graph building, middleware resolution, and application
-grouping). Shipping it disabled keeps the dashboard stable while the collectors
-are built and tuned against the real environments — the same iterative approach
-that got hosts and alerts working.
+The Dynatrace environment can be large (tens of thousands of entities). The
+collector paginates via `nextPageKey` and the computed graph is cached in the
+topology tables; the browser renders one instance's subgraph at a time. If a
+single instance's graph is still very large, filter it further before rendering
+(by management zone / category) — the data model already supports it via
+`attributes`.

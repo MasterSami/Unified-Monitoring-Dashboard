@@ -17,9 +17,16 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.models import Alert, Host, HostStatus
+from app.models import (
+    Alert,
+    Host,
+    HostStatus,
+    SourcePlatform,
+    TopologyEdge,
+    TopologyNode,
+)
 from app.normalizer import severity_label
-from app.scheduler import get_collector_statuses, get_service
+from app.scheduler import get_collector_statuses, get_service, run_topology_now
 from app.schemas import (
     AlertOut,
     CollectorStatus,
@@ -186,6 +193,97 @@ def export_alerts_csv(
         ],
         rows,
     )
+
+
+# --- Topology ---------------------------------------------------------------
+
+#: Map the UI "view" name to the platform that owns that kind of graph.
+_VIEW_PLATFORM = {
+    "network": SourcePlatform.nnmi,
+    "service": SourcePlatform.dynatrace,
+}
+
+
+def _require_topology(settings: Settings) -> None:
+    """Reject the request when the topology feature is disabled by config."""
+    if not settings.enable_topology:
+        raise HTTPException(status_code=404, detail="Topology is disabled")
+
+
+@router.get("/topology/graph")
+def topology_graph(
+    view: str = Query(default="network"),
+    instance: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Return the topology graph as Cytoscape.js elements JSON.
+
+    ``view=network`` returns the NNMi L2 map; ``view=service`` returns the
+    Dynatrace service dependency map. Filter to one instance with ``instance``.
+    """
+    _require_topology(settings)
+    platform = _VIEW_PLATFORM.get(view, SourcePlatform.nnmi)
+
+    node_stmt = select(TopologyNode).where(TopologyNode.source_platform == platform)
+    edge_stmt = select(TopologyEdge).where(TopologyEdge.source_platform == platform)
+    if instance and instance != "all":
+        node_stmt = node_stmt.where(TopologyNode.source_instance == instance)
+        edge_stmt = edge_stmt.where(TopologyEdge.source_instance == instance)
+
+    nodes = list(db.scalars(node_stmt).all())
+    edges = list(db.scalars(edge_stmt).all())
+    # A node is keyed per instance, so scope the id by instance to stay unique
+    # even when two instances share an external_id.
+    def nid(inst: str, ext: str) -> str:
+        return f"{inst}::{ext}"
+
+    known = {nid(n.source_instance, n.external_id) for n in nodes}
+    el_nodes = [
+        {
+            "data": {
+                "id": nid(n.source_instance, n.external_id),
+                "label": n.name,
+                "kind": n.kind,
+                "category": n.category or "",
+                "status": (n.status or "").upper(),
+                "instance": n.source_instance,
+            }
+        }
+        for n in nodes
+    ]
+    el_edges = []
+    for e in edges:
+        src = nid(e.source_instance, e.from_external_id)
+        dst = nid(e.source_instance, e.to_external_id)
+        if src not in known or dst not in known:
+            continue
+        el_edges.append(
+            {
+                "data": {
+                    "id": nid(e.source_instance, e.external_id),
+                    "source": src,
+                    "target": dst,
+                    "label": e.label or "",
+                    "kind": e.kind,
+                }
+            }
+        )
+    return {
+        "view": view,
+        "platform": platform.value,
+        "instance": instance or "all",
+        "counts": {"nodes": len(el_nodes), "edges": len(el_edges)},
+        "elements": {"nodes": el_nodes, "edges": el_edges},
+    }
+
+
+@router.post("/topology/run")
+def topology_run(settings: Settings = Depends(get_settings)) -> dict[str, str]:
+    """Rebuild every instance's topology graph now (synchronous)."""
+    _require_topology(settings)
+    run_topology_now()
+    return {"status": "ok"}
 
 
 @router.get("/summary", response_model=SummaryOut)

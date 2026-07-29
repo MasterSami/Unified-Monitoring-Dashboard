@@ -20,10 +20,12 @@ from app.db import SessionLocal
 from app.models import CollectorRun, RunStatus
 from app.schemas import CollectorStatus
 from app.servers import load_servers
+from app.topology import run_topology
 
 logger = logging.getLogger("scheduler")
 
 _JOB_ID = "poll_all_collectors"
+_TOPOLOGY_JOB_ID = "poll_topology"
 
 
 class CollectorService:
@@ -129,6 +131,16 @@ def get_service() -> CollectorService:
     return _service
 
 
+def _run_topology_job() -> None:
+    """Scheduler entry point: rebuild every instance's topology graph."""
+    run_topology(get_settings())
+
+
+def run_topology_now() -> None:
+    """Rebuild topology synchronously (used by the manual API trigger)."""
+    run_topology(get_settings())
+
+
 def start_scheduler(settings: Settings) -> BackgroundScheduler:
     """Start the background polling scheduler and return it."""
     global _scheduler
@@ -148,6 +160,23 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         # Fire once right away (in the background), then every interval.
         next_run_time=datetime.now(),
     )
+    # Topology (NNMi network map + Dynatrace service map) is gated behind
+    # ENABLE_TOPOLOGY. It changes slowly, so it polls on a much longer interval
+    # than the host/alert collectors — but still fires once on startup.
+    if settings.enable_topology:
+        topo_minutes = max(settings.poll_interval_minutes * 6, 30)
+        scheduler.add_job(
+            _run_topology_job,
+            trigger="interval",
+            minutes=topo_minutes,
+            id=_TOPOLOGY_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+            next_run_time=datetime.now(),
+        )
+        logger.info("topology collection enabled; polling every %d minute(s)", topo_minutes)
+
     scheduler.start()
     _scheduler = scheduler
     logger.info(
