@@ -8,59 +8,31 @@
   </a>
 {% endmacro %}
 
-{% macro rbar(pct) %}
-  {% if pct is none %}
+{# Resource cell: a utilization bar plus absolute "used / total unit". #}
+{% macro rcell(pct, used, total, unit) %}
+  {% set width = pct if pct is not none else ((used / total * 100) if (used is not none and total) else none) %}
+  {% if width is none and total is none %}
     <span class="res-na" title="no metric reported">—</span>
   {% else %}
-    {% set cls = 'ok' if pct < 70 else ('warn' if pct < 90 else 'hot') %}
+    {% set w = width if width is not none else 0 %}
+    {% set cls = 'ok' if w < 70 else ('warn' if w < 90 else 'hot') %}
     <div class="res">
-      <div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ pct if pct <= 100 else 100 }}%"></span></div>
-      <span class="res-val {{ cls }}">{{ pct }}%</span>
+      <div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ w if w <= 100 else 100 }}%"></span></div>
+      <div class="res-txt">
+        {% if used is not none and total %}
+          <span class="res-abs {{ cls }}">{{ used }}</span><span class="res-tot"> / {{ total }} {{ unit }}</span>
+        {% elif total %}
+          <span class="res-tot">{{ total }} {{ unit }} total</span>
+        {% else %}
+          <span class="res-abs {{ cls }}">{{ w | round(0, 'floor') | int }}%</span>
+        {% endif %}
+        {% if width is not none %}<span class="res-pct">{{ width | round(0, 'floor') | int }}%</span>{% endif %}
+      </div>
     </div>
   {% endif %}
 {% endmacro %}
 
-{% macro captile(label, cell, unit='%') %}
-  <div class="cap-tile">
-    <span class="cap-k">{{ label }}</span>
-    {% if cell.avg is none %}
-      <span class="cap-v muted">—</span>
-      <span class="cap-sub">no data</span>
-    {% else %}
-      {% set cls = 'ok' if cell.avg < 70 else ('warn' if cell.avg < 90 else 'hot') %}
-      <span class="cap-v {{ cls }}">{{ cell.avg }}{{ unit }}</span>
-      <span class="cap-sub">peak {{ cell.max }}{{ unit }}</span>
-    {% endif %}
-  </div>
-{% endmacro %}
-
-<!-- Capacity rollup for the current selection -->
-<div class="cap-summary">
-  <div class="cap-tile">
-    <span class="cap-k">Servers in view</span>
-    <span class="cap-v">{{ summary.count }}</span>
-    <span class="cap-sub">
-      {% if current.group != 'all' %}group “{{ current.group }}”
-      {% elif current.instance != 'all' %}{{ current.instance }}
-      {% else %}all servers{% endif %}
-    </span>
-  </div>
-  {{ captile('CPU (avg)', summary.cpu) }}
-  {{ captile('Memory (avg)', summary.mem) }}
-  {{ captile('Disk (avg)', summary.disk) }}
-  <div class="cap-tile wide">
-    <span class="cap-k">Hottest server (CPU)</span>
-    {% if summary.hottest %}
-      <span class="cap-v hot" style="font-size:16px;">{{ summary.hottest.hostname }}</span>
-      <span class="cap-sub">{{ summary.hottest.cpu_pct }}% CPU · {{ summary.hottest.mem_pct if summary.hottest.mem_pct is not none else '—' }}% mem · {{ summary.hottest.source_instance }}</span>
-    {% else %}
-      <span class="cap-v muted">—</span>
-      <span class="cap-sub">no metrics</span>
-    {% endif %}
-  </div>
-</div>
-
-<div class="count-tag" style="margin: 4px 0 8px">
+<div class="count-tag" style="margin: 2px 0 8px">
   <b>{{ total }}</b> server{{ '' if total == 1 else 's' }}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
 </div>
 
@@ -72,27 +44,23 @@
         <th>{{ sort_link('IP', 'ip', current) }}</th>
         <th>{{ sort_link('Platform', 'platform', current) }}</th>
         <th>{{ sort_link('Group', 'group', current) }}</th>
-        <th style="width: 160px">{{ sort_link('CPU', 'cpu', current) }}</th>
-        <th style="width: 160px">{{ sort_link('Memory', 'mem', current) }}</th>
-        <th style="width: 160px">{{ sort_link('Disk', 'disk', current) }}</th>
+        <th style="width: 190px">{{ sort_link('CPU', 'cpu', current) }}</th>
+        <th style="width: 200px">{{ sort_link('Memory', 'mem', current) }}</th>
+        <th style="width: 200px">{{ sort_link('Disk', 'disk', current) }}</th>
         <th>{{ sort_link('Status', 'status', current) }}</th>
       </tr>
     </thead>
     <tbody>
       {% for h in hosts %}
+      {% set m = h.metrics or {} %}
       <tr>
-        <td>
-          <strong>{{ h.hostname }}</strong>
-          {% if h.metrics and h.metrics.cores %}
-          <span class="res-spec">{{ h.metrics.cores }} vCPU{% if h.metrics.mem_total_gb %} · {{ h.metrics.mem_total_gb }} GB{% endif %}</span>
-          {% endif %}
-        </td>
+        <td><strong>{{ h.hostname }}</strong></td>
         <td class="mono">{{ h.ip or '—' }}</td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>
-        <td>{{ rbar(h.cpu_pct) }}</td>
-        <td>{{ rbar(h.mem_pct) }}</td>
-        <td>{{ rbar(h.disk_pct) }}</td>
+        <td>{{ rcell(h.cpu_pct, m.cpu_used_cores, m.cores, 'cores') }}</td>
+        <td>{{ rcell(h.mem_pct, m.mem_used_gb, m.mem_total_gb, 'GB') }}</td>
+        <td>{{ rcell(h.disk_pct, m.disk_used_gb, m.disk_total_gb, 'GB') }}</td>
         <td><span class="pill status-{{ h.status.value }}"><span class="dot"></span>{{ h.status.value }}</span></td>
       </tr>
       {% else %}

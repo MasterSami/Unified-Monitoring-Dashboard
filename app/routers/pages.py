@@ -459,71 +459,6 @@ def _active_alerts(
     return list(db.scalars(stmt).all()), total, page, pages
 
 
-# --- Capacity helpers -------------------------------------------------------
-
-
-def _group_names(db: Session) -> list[str]:
-    """Distinct host groups (for the Capacity group selector), sorted."""
-    rows = db.execute(
-        select(distinct(Host.group_name))
-        .where(Host.group_name.isnot(None), Host.group_name != "")
-        .order_by(Host.group_name)
-    ).all()
-    return [r[0] for r in rows]
-
-
-def _capacity_summary(
-    db: Session,
-    q: str | None,
-    platform: str | None,
-    status: str | None,
-    instance: str | None,
-    group: str | None,
-) -> dict:
-    """Aggregate CPU/mem/disk over the *entire* filtered selection (via SQL).
-
-    Averages and peaks reflect every host that matches the current filters (a
-    single server, a group, or all), not just the visible page — so the capacity
-    team gets a true rollup. Hosts with no metric are excluded from that metric's
-    average.
-    """
-    base = _hosts_stmt(q, platform, status, instance, group).subquery()
-    row = db.execute(
-        select(
-            func.count(),
-            func.avg(base.c.cpu_pct),
-            func.max(base.c.cpu_pct),
-            func.avg(base.c.mem_pct),
-            func.max(base.c.mem_pct),
-            func.avg(base.c.disk_pct),
-            func.max(base.c.disk_pct),
-        )
-    ).one()
-    count, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg, disk_max = row
-
-    def _mk(avg, mx):
-        return {
-            "avg": round(float(avg), 1) if avg is not None else None,
-            "max": round(float(mx), 1) if mx is not None else None,
-        }
-
-    # The single hottest host by CPU in the current selection.
-    hottest = db.scalars(
-        _hosts_stmt(q, platform, status, instance, group)
-        .where(Host.cpu_pct.isnot(None))
-        .order_by(Host.cpu_pct.desc())
-        .limit(1)
-    ).first()
-
-    return {
-        "count": int(count or 0),
-        "cpu": _mk(cpu_avg, cpu_max),
-        "mem": _mk(mem_avg, mem_max),
-        "disk": _mk(disk_avg, disk_max),
-        "hottest": hottest,
-    }
-
-
 # --- Full pages -------------------------------------------------------------
 
 
@@ -577,7 +512,6 @@ def capacity_page(
     hosts, total, page, pages = _hosts_query(
         db, None, "all", "all", "hostname", "asc", "all", 1, "all"
     )
-    summary = _capacity_summary(db, None, "all", "all", "all", "all")
     return templates.TemplateResponse(
         "capacity.html",
         {
@@ -589,8 +523,6 @@ def capacity_page(
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings),
-            "groups": _group_names(db),
-            "summary": summary,
             "collectors": get_collector_statuses(db, settings),
             "current": dict(_CAPACITY_CURRENT_DEFAULT),
         },
@@ -614,7 +546,6 @@ def capacity_partial(
     hosts, total, page, pages = _hosts_query(
         db, q, platform, status, sort, order, instance, page, group
     )
-    summary = _capacity_summary(db, q, platform, status, instance, group)
     return templates.TemplateResponse(
         "partials/capacity_table.html",
         {
@@ -623,7 +554,6 @@ def capacity_partial(
             "total": total,
             "page": page,
             "pages": pages,
-            "summary": summary,
             "current": {
                 "q": q or "",
                 "platform": platform,

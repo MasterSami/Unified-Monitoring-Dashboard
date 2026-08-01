@@ -40,22 +40,6 @@
   </div>
 
   <select
-    name="group"
-    class="cfilter select"
-    hx-get="/partials/capacity"
-    hx-trigger="change"
-    hx-target="#capacity-region"
-    hx-swap="innerHTML"
-    hx-include=".cfilter"
-    title="Filter by server group"
-  >
-    <option value="all">All groups</option>
-    {% for g in groups %}
-    <option value="{{ g }}">{{ g }}</option>
-    {% endfor %}
-  </select>
-
-  <select
     name="instance"
     class="cfilter select"
     hx-get="/partials/capacity"

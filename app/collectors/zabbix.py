@@ -193,23 +193,34 @@ class ZabbixCollector(BaseCollector):
 
     #: Item keys we read for the Capacity view. CPU-idle is inverted to busy%.
     _CPU_KEYS = ("system.cpu.util", "system.cpu.util[,idle]", "system.cpu.util[,user]")
-    _MEM_KEYS = ("vm.memory.utilization", "vm.memory.size[pused]")
+    _MEM_PCT_KEYS = ("vm.memory.utilization", "vm.memory.size[pused]")
+    _MEM_TOTAL_KEYS = ("vm.memory.size[total]",)
+    _MEM_USED_KEYS = ("vm.memory.size[used]",)
+    _CORE_KEYS = ("system.cpu.num",)
 
     def _attach_metrics(self, hosts: list[dict]) -> None:
-        """Best-effort: attach CPU%/memory% to hosts from their last item values.
+        """Best-effort: attach CPU%, memory used/total and cores from items.
 
         One bulk ``item.get`` for a small set of standard keys, mapped back by
-        hostid. Fully contained — any failure just leaves metrics unset (the
-        Capacity view shows "—") and never affects host collection.
+        hostid. Memory is reported as used/total (GB) as well as a percentage, so
+        the Capacity view can show absolute consumption. Fully contained — any
+        failure just leaves metrics unset ("—") and never affects host collection.
         """
         if not hosts:
             return
+        all_keys = (
+            self._CPU_KEYS
+            + self._MEM_PCT_KEYS
+            + self._MEM_TOTAL_KEYS
+            + self._MEM_USED_KEYS
+            + self._CORE_KEYS
+        )
         try:
             items = self._rpc(
                 "item.get",
                 {
                     "output": ["hostid", "key_", "lastvalue"],
-                    "filter": {"key_": list(self._CPU_KEYS + self._MEM_KEYS)},
+                    "filter": {"key_": list(all_keys)},
                     "monitored": True,
                 },
             )
@@ -218,7 +229,10 @@ class ZabbixCollector(BaseCollector):
             return
 
         cpu: dict[str, float] = {}
-        mem: dict[str, float] = {}
+        mem_pct: dict[str, float] = {}
+        mem_total: dict[str, float] = {}
+        mem_used: dict[str, float] = {}
+        cores: dict[str, int] = {}
         for it in items:  # type: ignore[union-attr]
             hostid = str(it.get("hostid"))
             key = it.get("key_", "")
@@ -227,18 +241,38 @@ class ZabbixCollector(BaseCollector):
             except (TypeError, ValueError):
                 continue
             if key in self._CPU_KEYS:
-                # An "idle" key reports free CPU; convert to busy%.
                 busy = 100.0 - val if "idle" in key else val
                 cpu[hostid] = max(cpu.get(hostid, 0.0), round(busy, 1))
-            elif key in self._MEM_KEYS:
-                mem[hostid] = max(mem.get(hostid, 0.0), round(val, 1))
+            elif key in self._MEM_PCT_KEYS:
+                mem_pct[hostid] = max(mem_pct.get(hostid, 0.0), round(val, 1))
+            elif key in self._MEM_TOTAL_KEYS:
+                mem_total[hostid] = val
+            elif key in self._MEM_USED_KEYS:
+                mem_used[hostid] = val
+            elif key in self._CORE_KEYS:
+                cores[hostid] = int(val)
 
+        gb = 1024**3
         for h in hosts:
             hid = str(h.get("external_id"))
+            metrics = h.setdefault("metrics", {})
             if hid in cpu:
                 h["cpu_pct"] = cpu[hid]
-            if hid in mem:
-                h["mem_pct"] = mem[hid]
+            if hid in cores:
+                metrics["cores"] = cores[hid]
+                if hid in cpu:
+                    metrics["cpu_used_cores"] = round(cores[hid] * cpu[hid] / 100, 1)
+            total = mem_total.get(hid)
+            used = mem_used.get(hid)
+            if total:
+                metrics["mem_total_gb"] = round(total / gb, 1)
+                if used is not None:
+                    metrics["mem_used_gb"] = round(used / gb, 1)
+                    h["mem_pct"] = round(used / total * 100, 1)
+            if "mem_pct" not in h and hid in mem_pct:
+                h["mem_pct"] = mem_pct[hid]
+                if total:
+                    metrics["mem_used_gb"] = round(total / gb * mem_pct[hid] / 100, 1)
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:

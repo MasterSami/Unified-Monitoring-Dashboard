@@ -74,14 +74,18 @@ def _metrics(instance: str, idx: int, name: str, status: HostStatus) -> dict:
     disk = round(28 + (seed * 3 + idx * 11) % 66, 1)
     cores = [4, 8, 16, 32][seed % 4]
     mem_total = [8, 16, 32, 64, 128][seed % 5]
+    disk_total = [120, 250, 500, 1000, 2000][seed % 5]
     return {
         "cpu_pct": cpu,
         "mem_pct": mem,
         "disk_pct": disk,
         "metrics": {
             "cores": cores,
+            "cpu_used_cores": round(cores * cpu / 100, 1),
             "mem_total_gb": mem_total,
-            "disk_total_gb": mem_total * 8,
+            "mem_used_gb": round(mem_total * mem / 100, 1),
+            "disk_total_gb": disk_total,
+            "disk_used_gb": round(disk_total * disk / 100, 1),
         },
     }
 
