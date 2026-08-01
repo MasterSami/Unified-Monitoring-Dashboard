@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import distinct, func, select
 from sqlalchemy.orm import Session
@@ -371,6 +371,7 @@ def _hosts_stmt(
     platform: str | None,
     status: str | None,
     instance: str | None,
+    group: str | None = "all",
 ):
     """Build the filtered (unordered, unlimited) host SELECT."""
     stmt = select(Host)
@@ -378,6 +379,8 @@ def _hosts_stmt(
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
         stmt = stmt.where(Host.source_instance == instance)
+    if group and group != "all":
+        stmt = stmt.where(Host.group_name == group)
     if status == "issues":
         # A problem agent: down or unknown (disabled hosts are intentional).
         stmt = stmt.where(
@@ -405,9 +408,10 @@ def _hosts_query(
     order: str,
     instance: str | None = "all",
     page: int | None = 1,
+    group: str | None = "all",
 ) -> tuple[list[Host], int, int, int]:
     """Return (rows, total, page, pages) — one page of the filtered hosts."""
-    stmt = _hosts_stmt(q, platform, status, instance)
+    stmt = _hosts_stmt(q, platform, status, instance, group)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page, pages, offset = _paginate(page, total)
     sort_cols = {
@@ -418,6 +422,9 @@ def _hosts_query(
         "status": Host.status,
         "group": Host.group_name,
         "last_seen": Host.last_seen,
+        "cpu": Host.cpu_pct,
+        "mem": Host.mem_pct,
+        "disk": Host.disk_pct,
     }
     col = sort_cols.get(sort, Host.hostname)
     stmt = (
@@ -452,6 +459,71 @@ def _active_alerts(
     return list(db.scalars(stmt).all()), total, page, pages
 
 
+# --- Capacity helpers -------------------------------------------------------
+
+
+def _group_names(db: Session) -> list[str]:
+    """Distinct host groups (for the Capacity group selector), sorted."""
+    rows = db.execute(
+        select(distinct(Host.group_name))
+        .where(Host.group_name.isnot(None), Host.group_name != "")
+        .order_by(Host.group_name)
+    ).all()
+    return [r[0] for r in rows]
+
+
+def _capacity_summary(
+    db: Session,
+    q: str | None,
+    platform: str | None,
+    status: str | None,
+    instance: str | None,
+    group: str | None,
+) -> dict:
+    """Aggregate CPU/mem/disk over the *entire* filtered selection (via SQL).
+
+    Averages and peaks reflect every host that matches the current filters (a
+    single server, a group, or all), not just the visible page — so the capacity
+    team gets a true rollup. Hosts with no metric are excluded from that metric's
+    average.
+    """
+    base = _hosts_stmt(q, platform, status, instance, group).subquery()
+    row = db.execute(
+        select(
+            func.count(),
+            func.avg(base.c.cpu_pct),
+            func.max(base.c.cpu_pct),
+            func.avg(base.c.mem_pct),
+            func.max(base.c.mem_pct),
+            func.avg(base.c.disk_pct),
+            func.max(base.c.disk_pct),
+        )
+    ).one()
+    count, cpu_avg, cpu_max, mem_avg, mem_max, disk_avg, disk_max = row
+
+    def _mk(avg, mx):
+        return {
+            "avg": round(float(avg), 1) if avg is not None else None,
+            "max": round(float(mx), 1) if mx is not None else None,
+        }
+
+    # The single hottest host by CPU in the current selection.
+    hottest = db.scalars(
+        _hosts_stmt(q, platform, status, instance, group)
+        .where(Host.cpu_pct.isnot(None))
+        .order_by(Host.cpu_pct.desc())
+        .limit(1)
+    ).first()
+
+    return {
+        "count": int(count or 0),
+        "cpu": _mk(cpu_avg, cpu_max),
+        "mem": _mk(mem_avg, mem_max),
+        "disk": _mk(disk_avg, disk_max),
+        "hottest": hottest,
+    }
+
+
 # --- Full pages -------------------------------------------------------------
 
 
@@ -474,35 +546,92 @@ def _instance_names(settings: Settings) -> list[dict]:
     ]
 
 
-@router.get("/hosts", response_class=HTMLResponse)
-def hosts_page(
+@router.get("/hosts")
+def hosts_page() -> RedirectResponse:
+    """Legacy path — the Hosts view is now the Capacity view."""
+    return RedirectResponse(url="/capacity", status_code=307)
+
+
+_CAPACITY_CURRENT_DEFAULT = {
+    "q": "",
+    "platform": "all",
+    "instance": "all",
+    "status": "all",
+    "group": "all",
+    "sort": "hostname",
+    "order": "asc",
+}
+
+
+@router.get("/capacity", response_class=HTMLResponse)
+def capacity_page(
     request: Request,
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Unified hosts table page."""
+    """Capacity view — server resource utilization for the capacity team.
+
+    Filter to a server, instance, or group and read CPU / memory / disk
+    utilization plus an aggregate rollup (averages, peaks, hottest host).
+    """
     hosts, total, page, pages = _hosts_query(
-        db, None, "all", "all", "hostname", "asc", "all", 1
+        db, None, "all", "all", "hostname", "asc", "all", 1, "all"
     )
+    summary = _capacity_summary(db, None, "all", "all", "all", "all")
     return templates.TemplateResponse(
-        "hosts.html",
+        "capacity.html",
         {
             "request": request,
-            "active_page": "hosts",
+            "active_page": "capacity",
             "hosts": hosts,
             "total": total,
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings),
+            "groups": _group_names(db),
+            "summary": summary,
             "collectors": get_collector_statuses(db, settings),
+            "current": dict(_CAPACITY_CURRENT_DEFAULT),
+        },
+    )
+
+
+@router.get("/partials/capacity", response_class=HTMLResponse)
+def capacity_partial(
+    request: Request,
+    q: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
+    status: str = "all",
+    group: str = "all",
+    sort: str = "hostname",
+    order: str = "asc",
+    page: int = 1,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Capacity table fragment (search / filter / group / sort / paginate)."""
+    hosts, total, page, pages = _hosts_query(
+        db, q, platform, status, sort, order, instance, page, group
+    )
+    summary = _capacity_summary(db, q, platform, status, instance, group)
+    return templates.TemplateResponse(
+        "partials/capacity_table.html",
+        {
+            "request": request,
+            "hosts": hosts,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "summary": summary,
             "current": {
-                "q": "",
-                "platform": "all",
-                "instance": "all",
-                "status": "all",
-                "sort": "hostname",
-                "order": "asc",
+                "q": q or "",
+                "platform": platform,
+                "instance": instance,
+                "status": status,
+                "group": group,
+                "sort": sort,
+                "order": order,
             },
         },
     )

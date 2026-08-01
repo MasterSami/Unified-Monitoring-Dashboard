@@ -20,12 +20,47 @@ from app.models import Alert, Host, HostStatus, SourcePlatform
 
 # --- Severity scale ---------------------------------------------------------
 
+# Neutral, cross-platform labels for the aggregate severity rollup (the donut).
+# Deliberately NOT Zabbix wording ("disaster"/"average") — those are shown only
+# on Zabbix's own alerts via the native labels below.
 SEVERITY_LABELS: dict[int, str] = {
     1: "info",
-    2: "warning",
-    3: "average",
+    2: "low",
+    3: "medium",
     4: "high",
-    5: "disaster",
+    5: "critical",
+}
+
+# --- Native (per-tool) severity labels --------------------------------------
+# Each alert carries its source tool's own severity label, shown verbatim in the
+# UI. The 1..5 int above is only for sorting and the cross-platform donut.
+
+ZABBIX_SEVERITY_LABELS: dict[int, str] = {
+    0: "Not classified",
+    1: "Information",
+    2: "Warning",
+    3: "Average",
+    4: "High",
+    5: "Disaster",
+}
+
+_DYNATRACE_LABELS: dict[str, str] = {
+    "AVAILABILITY": "Availability",
+    "ERROR": "Error",
+    "PERFORMANCE": "Performance",
+    "RESOURCE_CONTENTION": "Resource",
+    "MONITORING_UNAVAILABLE": "Monitoring unavailable",
+    "CUSTOM_ALERT": "Custom alert",
+    "INFO": "Info",
+}
+
+_NNMI_LABELS: dict[str, str] = {
+    "CRITICAL": "Critical",
+    "MAJOR": "Major",
+    "MINOR": "Minor",
+    "WARNING": "Warning",
+    "NORMAL": "Normal",
+    "INFO": "Info",
 }
 
 # Dynatrace severityLevel -> unified 1..5.
@@ -84,6 +119,32 @@ def normalize_nnmi_severity(severity: str | None) -> int:
     return _NNMI_SEVERITY.get(severity.upper(), 1)
 
 
+# --- Native label helpers (shown as-is per tool) ----------------------------
+
+
+def zabbix_severity_label(priority: int | str) -> str:
+    """Return Zabbix's own priority label (e.g. 'Disaster', 'High')."""
+    try:
+        p = int(priority)
+    except (TypeError, ValueError):
+        return "Information"
+    return ZABBIX_SEVERITY_LABELS.get(max(0, min(5, p)), "Information")
+
+
+def dynatrace_severity_label(severity_level: str | None) -> str:
+    """Return Dynatrace's own severityLevel label (e.g. 'Availability')."""
+    if not severity_level:
+        return "Info"
+    return _DYNATRACE_LABELS.get(severity_level.upper(), severity_level.title())
+
+
+def nnmi_severity_label(severity: str | None) -> str:
+    """Return NNMi's own incident severity label (e.g. 'Critical', 'Major')."""
+    if not severity:
+        return "Normal"
+    return _NNMI_LABELS.get(severity.upper(), severity.title())
+
+
 # --- Upsert helpers ---------------------------------------------------------
 
 
@@ -136,6 +197,18 @@ def upsert_hosts(
         row.status = item.get("status", HostStatus.unknown)
         row.group_name = item.get("group_name")
         row.last_seen = item.get("last_seen") or now
+        # Capacity metrics: only overwrite when this run provided them, so a
+        # collector that doesn't emit metrics never wipes previously-known ones.
+        if "cpu_pct" in item:
+            row.cpu_pct = item.get("cpu_pct")
+        if "mem_pct" in item:
+            row.mem_pct = item.get("mem_pct")
+        if "disk_pct" in item:
+            row.disk_pct = item.get("disk_pct")
+        if item.get("metrics") is not None:
+            row.metrics = item["metrics"]
+        elif row.metrics is None:
+            row.metrics = {}
         row.raw_payload = item.get("raw_payload", {})
         row.updated_at = now
 
@@ -191,7 +264,8 @@ def upsert_alerts(
             db.add(row)
         sev = int(item.get("severity_int", 1))
         row.severity_int = sev
-        row.severity_label = severity_label(sev)
+        # Prefer the source tool's own label; fall back to the unified label.
+        row.severity_label = item.get("severity_label") or severity_label(sev)
         row.host_hostname = item.get("host_hostname")
         row.title = item.get("title", "")
         row.started_at = item.get("started_at")

@@ -142,6 +142,71 @@ def export_hosts_csv(
     )
 
 
+@router.get("/capacity.csv")
+def export_capacity_csv(
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Export the capacity view (hosts + CPU/mem/disk) as CSV."""
+    _require_export(settings)
+    stmt = select(Host)
+    if platform and platform != "all":
+        stmt = stmt.where(Host.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(Host.source_instance == instance)
+    if group and group != "all":
+        stmt = stmt.where(Host.group_name == group)
+    if status and status != "all":
+        stmt = stmt.where(Host.status == status)
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Host.hostname).like(like)
+            | func.lower(func.coalesce(Host.ip, "")).like(like)
+            | func.lower(func.coalesce(Host.group_name, "")).like(like)
+            | func.lower(func.coalesce(Host.source_instance, "")).like(like)
+        )
+    stmt = stmt.order_by(Host.hostname.asc())
+    rows = [
+        [
+            h.hostname,
+            h.ip or "",
+            h.source_platform.value,
+            h.source_instance,
+            h.group_name or "",
+            "" if h.cpu_pct is None else h.cpu_pct,
+            "" if h.mem_pct is None else h.mem_pct,
+            "" if h.disk_pct is None else h.disk_pct,
+            (h.metrics or {}).get("cores", ""),
+            (h.metrics or {}).get("mem_total_gb", ""),
+            h.status.value,
+        ]
+        for h in db.scalars(stmt).all()
+    ]
+    return _csv_response(
+        "capacity.csv",
+        [
+            "server",
+            "ip",
+            "platform",
+            "instance",
+            "group",
+            "cpu_pct",
+            "mem_pct",
+            "disk_pct",
+            "cores",
+            "mem_total_gb",
+            "status",
+        ],
+        rows,
+    )
+
+
 @router.get("/alerts.csv")
 def export_alerts_csv(
     active: bool = Query(default=True),

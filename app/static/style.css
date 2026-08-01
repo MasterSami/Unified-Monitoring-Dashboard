@@ -1349,3 +1349,101 @@ td.mono {
     height: 460px;
   }
 }
+
+/* --- Capacity ------------------------------------------------------------- */
+
+.cap-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr) 1.4fr;
+  gap: calc(var(--space) * 1.5);
+  margin-bottom: calc(var(--space) * 2);
+}
+.cap-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.cap-tile .cap-k {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.cap-tile .cap-v {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cap-tile .cap-v.ok { color: var(--up); }
+.cap-tile .cap-v.warn { color: var(--sev3); }
+.cap-tile .cap-v.hot { color: var(--down); }
+.cap-tile .cap-v.muted { color: var(--text-faint); }
+.cap-tile .cap-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Resource utilization bars in the capacity table */
+.res {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.res-track {
+  flex: 1;
+  height: 8px;
+  min-width: 60px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.res-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--up);
+}
+.res-fill.ok { background: var(--up); }
+.res-fill.warn { background: var(--sev3); }
+.res-fill.hot { background: var(--down); }
+.res-val {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  width: 44px;
+  text-align: right;
+  color: var(--text-muted);
+}
+.res-val.ok { color: var(--up); }
+.res-val.warn { color: var(--sev3); }
+.res-val.hot { color: var(--down); }
+.res-na { color: var(--text-faint); }
+.res-spec {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 2px;
+}
+
+@media (max-width: 1100px) {
+  .cap-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .cap-tile.wide {
+    grid-column: span 2;
+  }
+}

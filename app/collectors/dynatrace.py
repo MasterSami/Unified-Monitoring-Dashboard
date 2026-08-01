@@ -14,7 +14,7 @@ from app.collectors.base import BaseCollector
 from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
-from app.normalizer import normalize_dynatrace_severity
+from app.normalizer import dynatrace_severity_label, normalize_dynatrace_severity
 from app.servers import ServerConfig
 
 _PROBLEMS_UNAVAILABLE = "unavailable — token lacks problems.read scope"
@@ -116,6 +116,9 @@ class DynatraceCollector(BaseCollector):
                         "external_id": p.get("problemId"),
                         "host_hostname": hostname,
                         "severity_int": normalize_dynatrace_severity(
+                            p.get("severityLevel")
+                        ),
+                        "severity_label": dynatrace_severity_label(
                             p.get("severityLevel")
                         ),
                         "title": p.get("title", ""),

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     Integer,
     String,
     UniqueConstraint,
@@ -85,6 +86,13 @@ class Host(Base):
     last_seen: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # --- Capacity metrics (utilization %, for the Capacity view) ------------
+    #: CPU / memory / disk utilization as a percentage (0..100), when known.
+    cpu_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mem_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    disk_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Extra capacity attributes (cores, mem_total_gb, disk_total_gb, …).
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

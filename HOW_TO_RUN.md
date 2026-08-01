@@ -130,7 +130,12 @@ Restart the app after editing `.env`.
 - **Refresh now** button (top right) — polls every instance immediately.
 - **Send test mail** button (Zabbix instance cards) — sends a test email via
   that instance's SMTP relay.
-- **Export CSV** buttons (Hosts, Alerts pages) — download the current, filtered view.
+- **Export CSV** buttons (Capacity, Alerts pages) — download the current, filtered view.
+- **Capacity** page — server resource utilization (CPU / memory / disk) for the
+  capacity team; filter to a server or group to see per-server bars plus an
+  aggregate rollup (averages, peaks, hottest server). Replaces the old Hosts tab
+  (`/hosts` redirects here). CPU/memory come from Zabbix items where available;
+  in MOCK_MODE realistic sample metrics are seeded.
 - **Shared** page — devices monitored by more than one instance (by IP).
 
 JSON API (also at `/docs`):
@@ -138,7 +143,7 @@ JSON API (also at `/docs`):
 ```
 GET  /api/v1/hosts?platform=&instance=&status=&q=
 GET  /api/v1/alerts?active=true&q=
-GET  /api/v1/hosts.csv           GET /api/v1/alerts.csv     # exports
+GET  /api/v1/capacity.csv  /api/v1/hosts.csv  /api/v1/alerts.csv   # exports
 GET  /api/v1/summary
 GET  /api/v1/collectors/status
 POST /api/v1/collectors/run                      # run all

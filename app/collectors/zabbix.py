@@ -23,7 +23,7 @@ from app.collectors import mock_data
 from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
-from app.normalizer import normalize_zabbix_severity
+from app.normalizer import normalize_zabbix_severity, zabbix_severity_label
 from app.servers import ServerConfig
 
 
@@ -184,9 +184,61 @@ class ZabbixCollector(BaseCollector):
                 }
             )
 
+        self._attach_metrics(hosts)
         if self.config.check_proxies:
             self._summarize_proxies()
         return hosts
+
+    # --- Capacity metrics ---------------------------------------------------
+
+    #: Item keys we read for the Capacity view. CPU-idle is inverted to busy%.
+    _CPU_KEYS = ("system.cpu.util", "system.cpu.util[,idle]", "system.cpu.util[,user]")
+    _MEM_KEYS = ("vm.memory.utilization", "vm.memory.size[pused]")
+
+    def _attach_metrics(self, hosts: list[dict]) -> None:
+        """Best-effort: attach CPU%/memory% to hosts from their last item values.
+
+        One bulk ``item.get`` for a small set of standard keys, mapped back by
+        hostid. Fully contained — any failure just leaves metrics unset (the
+        Capacity view shows "—") and never affects host collection.
+        """
+        if not hosts:
+            return
+        try:
+            items = self._rpc(
+                "item.get",
+                {
+                    "output": ["hostid", "key_", "lastvalue"],
+                    "filter": {"key_": list(self._CPU_KEYS + self._MEM_KEYS)},
+                    "monitored": True,
+                },
+            )
+        except CollectorError as exc:
+            self.logger.warning("item.get for metrics failed: %s", exc)
+            return
+
+        cpu: dict[str, float] = {}
+        mem: dict[str, float] = {}
+        for it in items:  # type: ignore[union-attr]
+            hostid = str(it.get("hostid"))
+            key = it.get("key_", "")
+            try:
+                val = float(it.get("lastvalue"))
+            except (TypeError, ValueError):
+                continue
+            if key in self._CPU_KEYS:
+                # An "idle" key reports free CPU; convert to busy%.
+                busy = 100.0 - val if "idle" in key else val
+                cpu[hostid] = max(cpu.get(hostid, 0.0), round(busy, 1))
+            elif key in self._MEM_KEYS:
+                mem[hostid] = max(mem.get(hostid, 0.0), round(val, 1))
+
+        for h in hosts:
+            hid = str(h.get("external_id"))
+            if hid in cpu:
+                h["cpu_pct"] = cpu[hid]
+            if hid in mem:
+                h["mem_pct"] = mem[hid]
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
@@ -219,6 +271,7 @@ class ZabbixCollector(BaseCollector):
                     "external_id": t["triggerid"],
                     "host_hostname": hostname,
                     "severity_int": normalize_zabbix_severity(t.get("priority", 0)),
+                    "severity_label": zabbix_severity_label(t.get("priority", 0)),
                     "title": t.get("description", ""),
                     "started_at": started,
                     "raw_payload": t,

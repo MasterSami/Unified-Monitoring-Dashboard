@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -51,9 +51,45 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+#: Columns added after the first release, applied to existing DBs on startup.
+#: (name -> SQL type) — kept in sync with the ORM models. New tables are handled
+#: by create_all; only *added columns on existing tables* need this.
+_ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "hosts": {
+        "cpu_pct": "FLOAT",
+        "mem_pct": "FLOAT",
+        "disk_pct": "FLOAT",
+        "metrics": "JSON",
+    },
+}
+
+
+def _ensure_columns() -> None:
+    """Add any missing columns to existing tables (tiny forward-only migration).
+
+    ``create_all`` never alters existing tables, so a schema that grew a column
+    (e.g. the Capacity metrics) would break queries against an older DB. Both
+    SQLite and PostgreSQL support ``ALTER TABLE ... ADD COLUMN``; we only add
+    columns that are absent, so this is safe to run on every startup.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table, columns in _ADDED_COLUMNS.items():
+            if table not in existing_tables:
+                continue  # create_all will build it fresh with all columns
+            present = {c["name"] for c in inspector.get_columns(table)}
+            for name, sql_type in columns.items():
+                if name not in present:
+                    conn.execute(
+                        text(f'ALTER TABLE {table} ADD COLUMN {name} {sql_type}')
+                    )
+
+
 def init_db() -> None:
-    """Create all tables. Safe to call repeatedly (idempotent)."""
+    """Create all tables, then apply small column migrations. Idempotent."""
     # Import models so they register with the metadata before create_all.
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _ensure_columns()

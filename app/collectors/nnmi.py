@@ -21,7 +21,7 @@ from app.collectors import mock_data
 from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
-from app.normalizer import normalize_nnmi_severity
+from app.normalizer import nnmi_severity_label, normalize_nnmi_severity
 from app.servers import ServerConfig
 
 # NNMi status string -> normalized host status.
@@ -253,6 +253,7 @@ class NnmiCollector(BaseCollector):
                     or r.get("sourceNodeName")
                     or r.get("sourceObjectName"),
                     "severity_int": sev,
+                    "severity_label": nnmi_severity_label(r.get("severity")),
                     "title": r.get("name") or r.get("message") or "NNMi incident",
                     "started_at": started,
                     "raw_payload": r,

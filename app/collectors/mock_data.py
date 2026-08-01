@@ -59,6 +59,33 @@ _NNMI_HOSTS = [
 ]
 
 
+def _metrics(instance: str, idx: int, name: str, status: HostStatus) -> dict:
+    """Deterministic, realistic capacity metrics for one mock host.
+
+    Disabled hosts report no metrics (they're intentionally off); every other
+    host gets a spread of CPU/memory/disk utilization plus sizing extras, so the
+    Capacity view has hot and cold servers to look at.
+    """
+    if status == HostStatus.disabled:
+        return {"cpu_pct": None, "mem_pct": None, "disk_pct": None, "metrics": {}}
+    seed = sum(ord(c) for c in f"{instance}:{name}")
+    cpu = round(8 + (seed * 7 + idx * 13) % 86, 1)
+    mem = round(20 + (seed * 5 + idx * 17) % 75, 1)
+    disk = round(28 + (seed * 3 + idx * 11) % 66, 1)
+    cores = [4, 8, 16, 32][seed % 4]
+    mem_total = [8, 16, 32, 64, 128][seed % 5]
+    return {
+        "cpu_pct": cpu,
+        "mem_pct": mem,
+        "disk_pct": disk,
+        "metrics": {
+            "cores": cores,
+            "mem_total_gb": mem_total,
+            "disk_total_gb": mem_total * 8,
+        },
+    }
+
+
 def _hosts(instance: str, octet: int, rows: list[tuple]) -> list[dict]:
     slug = _slug(instance)
     out: list[dict] = []
@@ -71,6 +98,7 @@ def _hosts(instance: str, octet: int, rows: list[tuple]) -> list[dict]:
                 "status": status,
                 "group_name": group,
                 "last_seen": _ago(idx),
+                **_metrics(instance, idx, name, status),
                 "raw_payload": {"mock": True, "instance": instance},
             }
         )
@@ -89,39 +117,43 @@ def mock_nnmi_hosts(instance: str) -> list[dict]:
     return _hosts(instance, 40, _NNMI_HOSTS)
 
 
-# --- Alert templates (severity, title, host suffix, minutes ago) -----------
+# --- Alert templates (severity, native label, title, host suffix, mins ago) -
+# The native label is the source tool's OWN severity wording (Zabbix has
+# Disaster/High/Average; NNMi has Critical/Major/Minor; Dynatrace has
+# Availability/Performance/…), shown as-is in the UI.
 
 _ZABBIX_ALERTS = [
-    (5, "Database replication stopped", "db-02", 8),
-    (4, "High CPU load (>90%)", "app-01", 22),
-    (3, "Disk space 82% used", "cache-01", 47),
-    (2, "SSL certificate expires in 21 days", "web-01", 130),
+    (5, "Disaster", "Database replication stopped", "db-02", 8),
+    (4, "High", "High CPU load (>90%)", "app-01", 22),
+    (3, "Average", "Disk space 82% used", "cache-01", 47),
+    (2, "Warning", "SSL certificate expires in 21 days", "web-01", 130),
 ]
 
 _DYNATRACE_ALERTS = [
-    (4, "Service unavailable: payments-api", "payments-02", 5),
-    (4, "Response time degradation on orders-service", "orders-01", 18),
-    (3, "Monitoring unavailable", "gateway-01", 33),
-    (3, "Memory saturation", "search-01", 60),
+    (4, "Availability", "Service unavailable: payments-api", "payments-02", 5),
+    (4, "Performance", "Response time degradation on orders-service", "orders-01", 18),
+    (3, "Monitoring unavailable", "Monitoring unavailable", "gateway-01", 33),
+    (3, "Resource", "Memory saturation", "search-01", 60),
 ]
 
 _NNMI_ALERTS = [
-    (5, "Node down", "dist-switch-02", 12),
-    (4, "Interface GigabitEthernet0/1 down", "core-router-01", 27),
-    (3, "High interface utilization", "wan-router-01", 55),
-    (2, "SNMP agent not responding", "wan-router-02", 90),
+    (5, "Critical", "Node down", "dist-switch-02", 12),
+    (4, "Major", "Interface GigabitEthernet0/1 down", "core-router-01", 27),
+    (3, "Minor", "High interface utilization", "wan-router-01", 55),
+    (2, "Warning", "SNMP agent not responding", "wan-router-02", 90),
 ]
 
 
 def _alerts(instance: str, rows: list[tuple]) -> list[dict]:
     slug = _slug(instance)
     out: list[dict] = []
-    for idx, (sev, title, host, mins_ago) in enumerate(rows, start=1):
+    for idx, (sev, label, title, host, mins_ago) in enumerate(rows, start=1):
         out.append(
             {
                 "external_id": f"{slug}-a{idx}",
                 "host_hostname": f"{host}.{slug}",
                 "severity_int": sev,
+                "severity_label": label,
                 "title": f"{title} on {host}.{slug}",
                 "started_at": _ago(mins_ago),
                 "raw_payload": {"mock": True, "instance": instance},

@@ -1,4 +1,6 @@
-{% set sev_names = {5: 'Disaster', 4: 'High', 3: 'Average', 2: 'Warning', 1: 'Info'} %}
+{# Neutral cross-platform labels for the aggregate donut (per-alert rows show
+   each tool's own native label via a.severity_label). #}
+{% set sev_names = {5: 'Critical', 4: 'High', 3: 'Medium', 2: 'Low', 1: 'Info'} %}
 
 <!-- KPI stat tiles -->
 <div class="grid cols-4">
@@ -16,7 +18,7 @@
       <span class="stat-ico">🔴</span>
     </div>
     <span class="value">{{ critical_alerts }}</span>
-    <span class="meta">disaster severity · needs action now</span>
+    <span class="meta">highest severity · needs action now</span>
   </div>
   <div class="card stat warn">
     <div class="stat-top">
@@ -55,46 +57,6 @@
     <span class="num">{{ status_counts.disabled }}</span>
     <span class="lbl"><span class="d"></span>Disabled</span>
   </div>
-</div>
-
-<!-- Agent health by tool -->
-<div class="section-title">
-  Agent Health
-  {% if agent_problem_total %}
-    <span style="color: var(--down); font-weight: 700; text-transform: none; letter-spacing: 0;">
-      · ⚠ {{ agent_problem_total }} agent{{ '' if agent_problem_total == 1 else 's' }}
-      need attention on {{ agent_problem_instances }} tool{{ '' if agent_problem_instances == 1 else 's' }}
-    </span>
-  {% else %}
-    <span style="color: var(--up); font-weight: 700; text-transform: none; letter-spacing: 0;">· all healthy</span>
-  {% endif %}
-</div>
-<div class="grid cols-3">
-  {% for a in agent_stats %}
-  <div class="card coll-card">
-    <div class="cc-top">
-      <span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.instance }}</span>
-      {% if a.has_problem %}
-        <span class="pill status-down"><span class="dot"></span>{{ a.problems }} issue{{ '' if a.problems == 1 else 's' }}</span>
-      {% else %}
-        <span class="pill status-up"><span class="dot"></span>all up</span>
-      {% endif %}
-    </div>
-    <div class="agent-bar">
-      {% set tot = a.total or 1 %}
-      {% if a.up %}<span class="ab up" style="width: {{ (a.up / tot * 100) }}%" title="{{ a.up }} up"></span>{% endif %}
-      {% if a.down %}<span class="ab down" style="width: {{ (a.down / tot * 100) }}%" title="{{ a.down }} down"></span>{% endif %}
-      {% if a.unknown %}<span class="ab unknown" style="width: {{ (a.unknown / tot * 100) }}%" title="{{ a.unknown }} unknown"></span>{% endif %}
-      {% if a.disabled %}<span class="ab disabled" style="width: {{ (a.disabled / tot * 100) }}%" title="{{ a.disabled }} disabled"></span>{% endif %}
-    </div>
-    <span class="cc-meta">
-      {{ a.up }} up · <span style="color: var(--down)">{{ a.down }} down</span> ·
-      {{ a.unknown }} unknown{% if a.disabled %} · {{ a.disabled }} disabled{% endif %}
-    </span>
-  </div>
-  {% else %}
-  <div class="card coll-card"><span class="cc-meta">No agent data yet.</span></div>
-  {% endfor %}
 </div>
 
 <!-- Charts row -->
@@ -146,6 +108,46 @@
   </div>
 </div>
 
+<!-- Agent health by tool -->
+<div class="section-title">
+  Agent Health
+  {% if agent_problem_total %}
+    <span style="color: var(--down); font-weight: 700; text-transform: none; letter-spacing: 0;">
+      · ⚠ {{ agent_problem_total }} agent{{ '' if agent_problem_total == 1 else 's' }}
+      need attention on {{ agent_problem_instances }} tool{{ '' if agent_problem_instances == 1 else 's' }}
+    </span>
+  {% else %}
+    <span style="color: var(--up); font-weight: 700; text-transform: none; letter-spacing: 0;">· all healthy</span>
+  {% endif %}
+</div>
+<div class="grid cols-3">
+  {% for a in agent_stats %}
+  <div class="card coll-card">
+    <div class="cc-top">
+      <span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.instance }}</span>
+      {% if a.has_problem %}
+        <span class="pill status-down"><span class="dot"></span>{{ a.problems }} issue{{ '' if a.problems == 1 else 's' }}</span>
+      {% else %}
+        <span class="pill status-up"><span class="dot"></span>all up</span>
+      {% endif %}
+    </div>
+    <div class="agent-bar">
+      {% set tot = a.total or 1 %}
+      {% if a.up %}<span class="ab up" style="width: {{ (a.up / tot * 100) }}%" title="{{ a.up }} up"></span>{% endif %}
+      {% if a.down %}<span class="ab down" style="width: {{ (a.down / tot * 100) }}%" title="{{ a.down }} down"></span>{% endif %}
+      {% if a.unknown %}<span class="ab unknown" style="width: {{ (a.unknown / tot * 100) }}%" title="{{ a.unknown }} unknown"></span>{% endif %}
+      {% if a.disabled %}<span class="ab disabled" style="width: {{ (a.disabled / tot * 100) }}%" title="{{ a.disabled }} disabled"></span>{% endif %}
+    </div>
+    <span class="cc-meta">
+      {{ a.up }} up · <span style="color: var(--down)">{{ a.down }} down</span> ·
+      {{ a.unknown }} unknown{% if a.disabled %} · {{ a.disabled }} disabled{% endif %}
+    </span>
+  </div>
+  {% else %}
+  <div class="card coll-card"><span class="cc-meta">No agent data yet.</span></div>
+  {% endfor %}
+</div>
+
 <!-- Recent critical alerts -->
 <div class="card" style="margin-top: 16px;">
   <div class="card-head">
@@ -159,7 +161,7 @@
         <tr>
           <td style="width: 1%; white-space: nowrap;">
             <span class="sev-dot" style="background: var(--sev{{ a.severity_int }})"></span>
-            <span style="font-weight:600;font-size:11px;color:var(--text-muted);text-transform:uppercase;">{{ sev_names[a.severity_int] }}</span>
+            <span style="font-weight:600;font-size:11px;color:var(--text-muted);text-transform:uppercase;">{{ a.severity_label }}</span>
           </td>
           <td>{{ a.title }}</td>
           <td style="width: 1%;"><span class="badge badge-{{ a.source_platform.value }}"><span class="dot"></span>{{ a.source_platform.value }}</span></td>
