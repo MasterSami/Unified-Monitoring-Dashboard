@@ -11,7 +11,7 @@ import io
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,14 @@ from app.models import (
 )
 from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses, get_service, run_topology_now
+from app.topology import (
+    NNMI_L2_COLUMNS,
+    UNIFIED_COLUMNS,
+    dynatrace_app_rows,
+    dynatrace_service_rows,
+    dynatrace_unified_rows,
+    nnmi_connection_rows,
+)
 from app.schemas import (
     AlertOut,
     CollectorStatus,
@@ -349,6 +357,111 @@ def topology_run(settings: Settings = Depends(get_settings)) -> dict[str, str]:
     _require_topology(settings)
     run_topology_now()
     return {"status": "ok"}
+
+
+def _require_topology_export(settings: Settings) -> None:
+    """Reject the request when topology export is disabled by config."""
+    if not settings.enable_topology or not settings.enable_topology_export:
+        raise HTTPException(status_code=404, detail="Topology export is disabled")
+
+
+def _topology_edges(
+    db: Session, platform: SourcePlatform, instance: str | None
+) -> list[TopologyEdge]:
+    stmt = select(TopologyEdge).where(TopologyEdge.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(TopologyEdge.source_instance == instance)
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/topology/nnmi-l2.csv")
+def export_nnmi_l2_csv(
+    instance: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> StreamingResponse:
+    """Export the NNMi L2 connections (name, status, endpoints, interfaces)."""
+    _require_topology_export(settings)
+    edges = _topology_edges(db, SourcePlatform.nnmi, instance)
+    rows = nnmi_connection_rows(edges)
+    return _csv_response(
+        "nnmi_l2_connections.csv",
+        NNMI_L2_COLUMNS,
+        [[r[c] for c in NNMI_L2_COLUMNS] for r in rows],
+    )
+
+
+@router.get("/topology/dynatrace-map.xlsx")
+def export_dynatrace_map_xlsx(
+    instance: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Export the Dynatrace unified map as an XLSX with three sheets.
+
+    Sheets: ``Unified_Map`` (per-path), ``App_to_App`` and ``Service_to_Service``
+    — the same shape as the ``Dynatrace_Inventory_Map.xlsx`` export.
+    """
+    _require_topology_export(settings)
+    from openpyxl import Workbook  # local import: only needed for export
+    from openpyxl.styles import Font, PatternFill
+
+    edges = _topology_edges(db, SourcePlatform.dynatrace, instance)
+    unified = dynatrace_unified_rows(edges)
+    app2app = dynatrace_app_rows(unified)
+    svc2svc = dynatrace_service_rows(unified)
+
+    hdr_fill = PatternFill("solid", fgColor="1F4E79")
+    hdr_font = Font(bold=True, color="FFFFFF")
+
+    def _sheet(wb, title, columns, rows):
+        ws = wb.create_sheet(title)
+        ws.append([label for _key, label in columns])
+        for c in range(1, len(columns) + 1):
+            cell = ws.cell(row=1, column=c)
+            cell.fill, cell.font = hdr_fill, hdr_font
+        for r in rows:
+            ws.append([r.get(key, "") for key, _label in columns])
+        ws.freeze_panes = "A2"
+        if ws.max_row > 1:
+            ws.auto_filter.ref = ws.dimensions
+        return ws
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    _sheet(wb, "Unified_Map", UNIFIED_COLUMNS, unified)
+    _sheet(
+        wb,
+        "App_to_App",
+        [
+            ("source_application", "Source Application"),
+            ("target_application", "Target Application"),
+            ("link_type", "Link Type"),
+        ],
+        app2app,
+    )
+    _sheet(
+        wb,
+        "Service_to_Service",
+        [
+            ("source_service", "Source Service"),
+            ("target_service", "Target Service"),
+            ("link_type", "Link Type"),
+            ("middleware_chain", "Middleware Chain"),
+        ],
+        svc2svc,
+    )
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="dynatrace_unified_map.xlsx"'
+        },
+    )
 
 
 @router.get("/summary", response_model=SummaryOut)

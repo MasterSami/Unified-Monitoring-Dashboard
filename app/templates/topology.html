@@ -48,8 +48,18 @@
     <a class="seg-item {{ 'active' if mode == 'graph' else '' }}"
        href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=graph">◈ Graph</a>
     <a class="seg-item {{ 'active' if mode == 'table' else '' }}"
-       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=table">▤ Table</a>
+       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=table&sub={{ sub }}">▤ Table</a>
   </div>
+
+  {% if enable_topology_export and instance %}
+    {% if view == 'network' %}
+    <a class="btn" href="/api/v1/topology/nnmi-l2.csv?instance={{ instance | urlencode }}"
+       title="Export L2 connections to CSV">⭳ Export CSV</a>
+    {% else %}
+    <a class="btn" href="/api/v1/topology/dynatrace-map.xlsx?instance={{ instance | urlencode }}"
+       title="Export the unified map (3 sheets) to XLSX">⭳ Export XLSX</a>
+    {% endif %}
+  {% endif %}
 
   <button class="btn" type="button" onclick="rebuildTopology(event)"
           title="Re-extract topology from all sources now">
@@ -99,69 +109,110 @@
 </div>
 {% else %}
 
-<!-- Table view: nodes + connections -->
-<div class="grid cols-2 topo-tables">
-  <div class="card">
-    <div class="card-head"><h3>{{ meta.node_word }}</h3><span class="hint">{{ node_count }}</span></div>
-    <div class="table-wrap" style="border:none;">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Category</th>
-            {% if view == 'network' %}<th>Status</th>{% endif %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for n in nodes %}
-          <tr>
-            <td><strong>{{ n.name }}</strong></td>
-            <td style="color:var(--text-muted)">{{ n.category or '—' }}</td>
-            {% if view == 'network' %}
-            <td>
-              {% set st = (n.status or 'unknown') | lower %}
-              {% if st in ('normal','up','warning','minor') %}
-                <span class="pill status-up"><span class="dot"></span>{{ n.status or 'normal' }}</span>
-              {% elif st in ('major','critical','down') %}
-                <span class="pill status-down"><span class="dot"></span>{{ n.status }}</span>
-              {% else %}
-                <span class="pill status-unknown"><span class="dot"></span>{{ n.status or 'unknown' }}</span>
-              {% endif %}
-            </td>
-            {% endif %}
-          </tr>
-          {% else %}
-          <tr><td colspan="3"><div class="empty">No nodes.</div></td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+<!-- Table view -->
+{% macro nnmi_status(st) %}
+  {% set s = (st or 'unknown') | lower %}
+  {% if s in ('normal','up') %}<span class="pill status-up"><span class="dot"></span>{{ st or 'NORMAL' }}</span>
+  {% elif s in ('warning','minor') %}<span class="pill sev-pill sev-3"><span class="dot"></span>{{ st }}</span>
+  {% elif s in ('major','critical','down') %}<span class="pill status-down"><span class="dot"></span>{{ st }}</span>
+  {% else %}<span class="pill status-unknown"><span class="dot"></span>{{ st or 'UNKNOWN' }}</span>{% endif %}
+{% endmacro %}
 
-  <div class="card">
-    <div class="card-head"><h3>{{ meta.edge_word }}</h3><span class="hint">{{ edge_count }}</span></div>
-    <div class="table-wrap" style="border:none;">
-      <table>
-        <thead>
-          <tr><th>From</th><th></th><th>To</th></tr>
-        </thead>
-        <tbody>
-          {% for e in edges %}
-          <tr>
-            <td><strong>{{ e.from }}</strong></td>
-            <td style="text-align:center; color:var(--accent); font-weight:700;">
-              {{ '→' if e.kind == 'call' else '↔' }}
-            </td>
-            <td><strong>{{ e.to }}</strong></td>
-          </tr>
-          {% else %}
-          <tr><td colspan="3"><div class="empty">No connections.</div></td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+{% if view == 'network' %}
+<!-- NNMi: L2 connections (matches NNMI_l2_connections.csv) -->
+<div class="card">
+  <div class="card-head"><h3>L2 connections</h3><span class="hint">{{ edge_count }}</span></div>
+  <div class="table-wrap" style="border:none;">
+    <table>
+      <thead>
+        <tr><th>Connection</th><th>Status</th><th>Endpoint 1</th><th>Endpoint 2</th><th>Endpoint 3</th><th>Endpoint 4</th><th>Interfaces</th></tr>
+      </thead>
+      <tbody>
+        {% for c in connections %}
+        <tr>
+          <td><strong>{{ c.name }}</strong></td>
+          <td>{{ nnmi_status(c.status) }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint1 or '—' }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint2 or '—' }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint3 or '' }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint4 or '' }}</td>
+          <td class="mono" style="font-size:11px; color:var(--text-faint);">{{ c.interfaces or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7"><div class="empty">No L2 connections.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
+
+{% else %}
+<!-- Dynatrace: unified map sub-views (match the export sheets) -->
+<div class="seg seg-sm" style="margin-bottom:12px;">
+  <a class="seg-item {{ 'active' if sub == 'unified' else '' }}"
+     href="/topology?view=service&instance={{ instance or '' }}&mode=table&sub=unified">Unified map</a>
+  <a class="seg-item {{ 'active' if sub == 'app' else '' }}"
+     href="/topology?view=service&instance={{ instance or '' }}&mode=table&sub=app">App → App</a>
+  <a class="seg-item {{ 'active' if sub == 'service' else '' }}"
+     href="/topology?view=service&instance={{ instance or '' }}&mode=table&sub=service">Service → Service</a>
+</div>
+
+<div class="card">
+  <div class="table-wrap" style="border:none;">
+    {% if sub == 'app' %}
+    <table>
+      <thead><tr><th>Source Application</th><th>Target Application</th><th>Link Type</th></tr></thead>
+      <tbody>
+        {% for r in app2app %}
+        <tr>
+          <td><strong>{{ r.source_application }}</strong></td>
+          <td><strong>{{ r.target_application }}</strong></td>
+          <td>{% if r.link_type == 'Direct' %}<span class="pill status-up"><span class="dot"></span>Direct</span>{% else %}<span class="pill sev-pill sev-3"><span class="dot"></span>{{ r.link_type }}</span>{% endif %}</td>
+        </tr>
+        {% else %}<tr><td colspan="3"><div class="empty">No application links.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% elif sub == 'service' %}
+    <table>
+      <thead><tr><th>Source Service</th><th>Target Service</th><th>Link Type</th><th>Middleware Chain</th></tr></thead>
+      <tbody>
+        {% for r in svc2svc %}
+        <tr>
+          <td><strong>{{ r.source_service }}</strong></td>
+          <td><strong>{{ r.target_service }}</strong></td>
+          <td>{% if r.link_type == 'Direct' %}<span class="pill status-up"><span class="dot"></span>Direct</span>{% else %}<span class="pill sev-pill sev-3"><span class="dot"></span>{{ r.link_type }}</span>{% endif %}</td>
+          <td style="color:var(--text-muted); font-size:12px;">{{ r.middleware_chain }}</td>
+        </tr>
+        {% else %}<tr><td colspan="4"><div class="empty">No service links.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Source App</th><th>Source Service</th><th>Link</th><th>Middleware Chain</th>
+          <th>MW Type</th><th>Hops</th><th>Target Service</th><th>Target App</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in unified %}
+        <tr>
+          <td><strong>{{ r.source_application }}</strong></td>
+          <td style="font-size:12px;">{{ r.source_service }}</td>
+          <td>{% if r.link_type == 'Direct' %}<span class="pill status-up"><span class="dot"></span>Direct</span>{% else %}<span class="pill sev-pill sev-3"><span class="dot"></span>Via MW</span>{% endif %}</td>
+          <td style="color:var(--text-muted); font-size:12px;">{{ r.middleware_chain }}</td>
+          <td style="font-size:12px;">{{ r.middleware_type }}</td>
+          <td style="text-align:center;">{{ r.mw_hops }}</td>
+          <td style="font-size:12px;">{{ r.target_service }}</td>
+          <td><strong>{{ r.target_application }}</strong></td>
+        </tr>
+        {% else %}<tr><td colspan="8"><div class="empty">No dependencies resolved.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 {% endif %}
 {% endif %}
 {% endif %}
@@ -255,7 +306,11 @@
                 "curve-style": "bezier",
                 "target-arrow-color": COLORS.edge,
                 "target-arrow-shape": function (ele) {
-                  return ele.data("kind") === "call" ? "triangle" : "none";
+                  var k = ele.data("kind");
+                  return k === "call" || k === "path" ? "triangle" : "none";
+                },
+                "line-style": function (ele) {
+                  return ele.data("label") === "Via Middleware" ? "dashed" : "solid";
                 },
                 "arrow-scale": 0.9,
                 opacity: 0.85,

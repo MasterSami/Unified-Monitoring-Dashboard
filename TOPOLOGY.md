@@ -22,8 +22,30 @@ Each map is viewable two ways:
 
 - **Graph** — an interactive, zoomable, draggable node/edge diagram
   (Cytoscape.js, vendored locally — no CDN).
-- **Table** — a *Devices/Services* table plus a *Connections* table, for
-  reading and searching the same data as text.
+- **Table** — the same data as browsable rows, shaped to match the source
+  exports:
+  - **NNMi** → an *L2 connections* table: `name, status, endpoint1..4,
+    interfaces` (identical to the `NNMI_l2_connections.csv` export).
+  - **Dynatrace** → three sub-views matching the inventory workbook:
+    **Unified map** (`Source App / Service → [middleware chain] → Target
+    Service / App`), **App → App**, and **Service → Service**. Middleware
+    (MQ / ESB / DB) is classified and made transparent, and services are grouped
+    into business applications by tag → name pattern → management zone → RUM —
+    a port of `dynatrace_unified_map.py`.
+
+### Export
+
+With `ENABLE_TOPOLOGY_EXPORT=true` (separate switch, off by default) the table
+views get an **Export** button:
+
+- **NNMi** → `nnmi_l2_connections.csv` (the L2 columns above).
+- **Dynatrace** → `dynatrace_unified_map.xlsx` with three sheets —
+  `Unified_Map`, `App_to_App`, `Service_to_Service` — the same shape as the
+  provided `Dynatrace_Inventory_Map.xlsx`.
+
+API: `GET /api/v1/topology/nnmi-l2.csv?instance=` and
+`GET /api/v1/topology/dynatrace-map.xlsx?instance=` (both 404 when the flag is
+off).
 
 > **Application map** (services rolled up to business-application level) is a
 > natural next step and is intentionally **not** built yet — the data model and

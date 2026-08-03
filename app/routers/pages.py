@@ -25,6 +25,13 @@ from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses
 from app.schemas import PlatformHostCount, SeverityBucket
 from app.servers import load_servers
+from app.topology import (
+    dynatrace_app_rows,
+    dynatrace_service_rows,
+    dynatrace_unified_rows,
+    load_topology,
+    nnmi_connection_rows,
+)
 
 router = APIRouter(tags=["pages"])
 
@@ -66,6 +73,8 @@ templates.env.globals["asset_version"] = _asset_version()
 templates.env.globals["enable_topology"] = get_settings().enable_topology
 # Feature flag for the CSV export buttons.
 templates.env.globals["enable_export"] = get_settings().enable_export
+# Feature flag for the Topology export buttons (NNMi CSV / Dynatrace XLSX).
+templates.env.globals["enable_topology_export"] = get_settings().enable_topology_export
 
 
 # --- Template helpers -------------------------------------------------------
@@ -692,14 +701,14 @@ _TOPO_VIEWS = {
         "label": "Network topology",
         "source": "NNMi",
         "node_word": "Devices",
-        "edge_word": "L2 links",
+        "edge_word": "L2 connections",
     },
     "service": {
         "platform": SourcePlatform.dynatrace,
         "label": "Service map",
         "source": "Dynatrace",
         "node_word": "Services",
-        "edge_word": "Calls",
+        "edge_word": "Dependencies",
     },
 }
 
@@ -723,14 +732,16 @@ def topology_page(
     view: str = "network",
     instance: str | None = None,
     mode: str = "graph",
+    sub: str = "unified",
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Topology views: NNMi network map + Dynatrace service map.
+    """Topology views: NNMi network map + Dynatrace unified service map.
 
     Two view types (network / service), each viewable as a **table** or an
-    interactive **graph**. Gated behind ``ENABLE_TOPOLOGY`` (default off) so the
-    user turns it on themselves.
+    interactive **graph**. The service table has sub-views matching the export
+    sheets (unified / app→app / service→service). Gated behind
+    ``ENABLE_TOPOLOGY`` (default off) so the user turns it on themselves.
     """
     if not settings.enable_topology:
         return templates.TemplateResponse(
@@ -742,6 +753,8 @@ def topology_page(
         view = "network"
     if mode not in ("graph", "table"):
         mode = "graph"
+    if sub not in ("unified", "app", "service"):
+        sub = "unified"
     meta = _TOPO_VIEWS[view]
     platform = meta["platform"]
 
@@ -753,56 +766,38 @@ def topology_page(
     nodes: list[TopologyNode] = []
     edges: list[TopologyEdge] = []
     if instance:
-        nodes = list(
-            db.scalars(
-                select(TopologyNode)
-                .where(
-                    TopologyNode.source_platform == platform,
-                    TopologyNode.source_instance == instance,
-                )
-                .order_by(TopologyNode.name)
-            ).all()
-        )
-        edges = list(
-            db.scalars(
-                select(TopologyEdge).where(
-                    TopologyEdge.source_platform == platform,
-                    TopologyEdge.source_instance == instance,
-                )
-            ).all()
-        )
-    name_by_ext = {n.external_id: n.name for n in nodes}
-    # Only connections whose endpoints are present as nodes (for the table).
-    edge_rows = [
-        {
-            "from": name_by_ext.get(e.from_external_id, e.from_external_id),
-            "to": name_by_ext.get(e.to_external_id, e.to_external_id),
-            "label": e.label or "",
-            "kind": e.kind,
-        }
-        for e in edges
-        if e.from_external_id in name_by_ext and e.to_external_id in name_by_ext
-    ]
-    edge_rows.sort(key=lambda r: (r["from"], r["to"]))
+        nodes, edges = load_topology(db, platform, instance)
 
-    return templates.TemplateResponse(
-        "topology.html",
-        {
-            "request": request,
-            "active_page": "topology",
-            "enabled": True,
-            "view": view,
-            "mode": mode,
-            "meta": meta,
-            "views": _TOPO_VIEWS,
-            "instance": instance,
-            "instances": instances,
-            "nodes": nodes,
-            "edges": edge_rows,
-            "node_count": len(nodes),
-            "edge_count": len(edge_rows),
-        },
-    )
+    ctx = {
+        "request": request,
+        "active_page": "topology",
+        "enabled": True,
+        "view": view,
+        "mode": mode,
+        "sub": sub,
+        "meta": meta,
+        "views": _TOPO_VIEWS,
+        "instance": instance,
+        "instances": instances,
+        "nodes": nodes,
+        "node_count": len(nodes),
+    }
+
+    if view == "network":
+        connections = nnmi_connection_rows(edges)
+        ctx.update({"connections": connections, "edge_count": len(connections)})
+    else:
+        unified = dynatrace_unified_rows(edges)
+        ctx.update(
+            {
+                "unified": unified,
+                "app2app": dynatrace_app_rows(unified),
+                "svc2svc": dynatrace_service_rows(unified),
+                "edge_count": len(unified),
+            }
+        )
+
+    return templates.TemplateResponse("topology.html", ctx)
 
 
 @router.get("/alerts", response_class=HTMLResponse)

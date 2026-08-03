@@ -42,10 +42,14 @@ class Settings(BaseSettings):
     # Set to false to hide/disable export across the whole UI and API.
     enable_export: bool = True
 
-    # Feature flag for the (in-progress) Topology / Service-Map / App-Map views.
-    # Kept OFF: the nav entry is hidden and the page is a disabled placeholder
-    # until the topology collectors are built. See TOPOLOGY.md.
+    # Feature flag for the Topology views (NNMi network map + Dynatrace unified
+    # service/app map). Kept OFF by default; enable it yourself. See TOPOLOGY.md.
     enable_topology: bool = False
+
+    # Show the Topology export buttons (NNMi L2 CSV, Dynatrace map XLSX) and
+    # enable the topology export endpoints. Separate switch so you can turn the
+    # exports on independently. Enable it yourself from .env.
+    enable_topology_export: bool = False
 
     @property
     def enabled_collectors_list(self) -> list[str]:
