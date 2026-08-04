@@ -37,6 +37,7 @@ class SourcePlatform(str, enum.Enum):
     zabbix = "zabbix"
     dynatrace = "dynatrace"
     nnmi = "nnmi"
+    sitescope = "sitescope"
 
 
 class HostStatus(str, enum.Enum):
@@ -130,6 +131,15 @@ class Alert(Base):
         DateTime(timezone=True), nullable=True
     )
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # --- SiteScope context (nullable; other platforms leave these unset) ----
+    #: Raw event state (e.g. "back to default", "error"). State-wins drives sev.
+    state: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Correlation key: hostname lowercased, domain stripped (shared convention).
+    dedup_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    #: True for events carrying "Alert has no defined Metric" (kept, flagged).
+    metric_missing: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    #: Full monitor path (group hierarchy + monitor name).
+    monitor_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

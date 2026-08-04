@@ -61,6 +61,12 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "disk_pct": "FLOAT",
         "metrics": "JSON",
     },
+    "alerts": {
+        "state": "VARCHAR(64)",
+        "dedup_key": "VARCHAR(255)",
+        "metric_missing": "BOOLEAN",
+        "monitor_name": "VARCHAR(512)",
+    },
 }
 
 

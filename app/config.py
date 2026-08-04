@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # exports on independently. Enable it yourself from .env.
     enable_topology_export: bool = False
 
+    # --- SiteScope push ingest ---------------------------------------------
+    # Bearer token the SiteScope forwarder must present to POST events. Empty
+    # (default) disables the ingest endpoint entirely (returns 503). Set it in
+    # the environment, never in code.
+    sitescope_ingest_token: str = ""
+    # Hard caps on an ingest request (matches the forwarder's batch size of 500).
+    ingest_max_events: int = 500
+    ingest_max_bytes: int = 5_000_000
+
     @property
     def enabled_collectors_list(self) -> list[str]:
         """Return the enabled collector names as a normalized list."""

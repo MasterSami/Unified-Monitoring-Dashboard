@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import csv
 import io
+import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -19,14 +20,17 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
     Alert,
+    CollectorRun,
     Host,
     HostStatus,
+    RunStatus,
     SourcePlatform,
     TopologyEdge,
     TopologyNode,
 )
 from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses, get_service, run_topology_now
+from app.sitescope import NormalizedEvent, ParseError, parse_line, redact
 from app.topology import (
     NNMI_L2_COLUMNS,
     UNIFIED_COLUMNS,
@@ -39,12 +43,135 @@ from app.schemas import (
     AlertOut,
     CollectorStatus,
     HostOut,
+    IngestResult,
     PlatformHostCount,
     SeverityBucket,
+    SiteScopeIngest,
     SummaryOut,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
+
+
+# --- SiteScope push ingest --------------------------------------------------
+
+
+def _check_ingest_auth(authorization: str | None, settings: Settings) -> None:
+    """Bearer-token auth for the ingest endpoint (constant-time compare)."""
+    token = settings.sitescope_ingest_token
+    if not token:
+        raise HTTPException(status_code=503, detail="SiteScope ingest is not configured")
+    expected = f"Bearer {token}"
+    if not authorization or not secrets.compare_digest(authorization, expected):
+        raise HTTPException(status_code=401, detail="invalid or missing bearer token")
+
+
+def _upsert_sitescope(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]:
+    """Idempotent upsert on (platform, instance, external_id). No reconciliation.
+
+    Push ingest only ever sees a batch — never the full active set — so unlike
+    the pull collectors we must NOT resolve rows absent from the batch.
+    """
+    inserted = updated = 0
+    # Two lines can map to the same event_id (same monitor + state in the same
+    # second). Track rows touched this batch so a duplicate updates in place
+    # instead of inserting a second row that would violate the unique key.
+    batch: dict[tuple[str, str], Alert] = {}
+    for ev in events:
+        key = (ev.source_instance, ev.external_id)
+        row = batch.get(key)
+        if row is None:
+            row = db.scalar(
+                select(Alert).where(
+                    Alert.source_platform == SourcePlatform.sitescope,
+                    Alert.source_instance == ev.source_instance,
+                    Alert.external_id == ev.external_id,
+                )
+            )
+            if row is None:
+                row = Alert(
+                    source_platform=SourcePlatform.sitescope,
+                    source_instance=ev.source_instance,
+                    external_id=ev.external_id,
+                )
+                db.add(row)
+                inserted += 1
+            else:
+                updated += 1
+            batch[key] = row
+        row.host_hostname = ev.host_hostname
+        row.severity_int = ev.severity_int
+        row.severity_label = ev.severity_label
+        row.title = ev.title
+        row.started_at = ev.started_at
+        row.resolved = ev.resolved
+        row.state = ev.state
+        row.dedup_key = ev.dedup_key
+        row.metric_missing = ev.metric_missing
+        row.monitor_name = ev.monitor_name
+        row.raw_payload = ev.raw_payload
+    return inserted, updated
+
+
+@router.post("/ingest/sitescope", response_model=IngestResult)
+def ingest_sitescope(
+    payload: SiteScopeIngest,
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> IngestResult:
+    """Receive a batch of redacted SiteScope log lines from the forwarder.
+
+    Bearer-authenticated, size-capped, and idempotent: re-sending the same batch
+    updates rows in place (no duplicates). A heartbeat (empty ``lines``) still
+    records a collector run so a dead forwarder shows up as stale in the UI.
+    """
+    _check_ingest_auth(authorization, settings)
+    if len(payload.lines) > settings.ingest_max_events:
+        raise HTTPException(
+            status_code=413,
+            detail=f"too many events (>{settings.ingest_max_events})",
+        )
+    if sum(len(line) for line in payload.lines) > settings.ingest_max_bytes:
+        raise HTTPException(status_code=413, detail="payload too large")
+
+    started = datetime.now(timezone.utc)
+    events: list[NormalizedEvent] = []
+    skipped = 0
+    redactions = 0
+    for line in payload.lines:
+        _, fired = redact(line)  # safety-net count (parse_line redacts too)
+        redactions += fired
+        try:
+            events.append(parse_line(line, payload.source_instance))
+        except ParseError:
+            skipped += 1
+
+    inserted, updated = _upsert_sitescope(db, events)
+
+    # Collector-health heartbeat: one run row per ingest, so the dashboard can
+    # tell "no alerts" (recent run, 0 events) from "collector dead" (stale run).
+    db.add(
+        CollectorRun(
+            platform="sitescope",
+            instance=payload.source_instance,
+            started_at=started,
+            finished_at=datetime.now(timezone.utc),
+            status=RunStatus.success,
+            items_collected=len(events),
+            hosts_collected=0,
+            alerts_collected=len(events),
+        )
+    )
+    db.commit()
+    return IngestResult(
+        status="ok",
+        received=len(payload.lines),
+        inserted=inserted,
+        updated=updated,
+        skipped=skipped,
+        redactions=redactions,
+    )
 
 
 @router.get("/hosts", response_model=list[HostOut])

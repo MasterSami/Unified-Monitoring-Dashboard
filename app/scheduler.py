@@ -114,6 +114,45 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 check_proxies=cfg.check_proxies,
             )
         )
+
+    # Push-based collectors (e.g. the SiteScope forwarder) aren't in the server
+    # inventory — derive their health from the run rows they record on ingest,
+    # so a stale/dead forwarder still shows up in the UI.
+    configured = {cfg.name for cfg in load_servers(settings)}
+    push_instances = db.execute(
+        select(CollectorRun.instance)
+        .where(CollectorRun.platform == "sitescope")
+        .group_by(CollectorRun.instance)
+    ).scalars().all()
+    for instance in push_instances:
+        if instance in configured:
+            continue
+        last_run = db.scalar(
+            select(CollectorRun)
+            .where(
+                CollectorRun.platform == "sitescope",
+                CollectorRun.instance == instance,
+            )
+            .order_by(CollectorRun.started_at.desc())
+            .limit(1)
+        )
+        if last_run is None:
+            continue
+        statuses.append(
+            CollectorStatus(
+                platform="sitescope",
+                instance=instance,
+                enabled=True,
+                last_run_at=last_run.started_at,
+                last_success_at=last_run.finished_at,
+                status=last_run.status.value,
+                items_collected=last_run.items_collected,
+                hosts_collected=0,
+                alerts_collected=last_run.alerts_collected,
+                error_message=None,
+                notes="push (forwarder)",
+            )
+        )
     return statuses
 
 

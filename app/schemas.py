@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HostOut(BaseModel):
@@ -85,3 +85,28 @@ class SummaryOut(BaseModel):
     per_platform: list[PlatformHostCount]
     severity_buckets: list[SeverityBucket]
     collectors: list[CollectorStatus]
+
+
+class SiteScopeIngest(BaseModel):
+    """Push payload from the SiteScope forwarder.
+
+    ``lines`` are **already-redacted** tab-delimited log lines (the forwarder
+    redacts on the SiteScope box before transmission). The UMD parses and
+    normalizes them, and redacts again as a safety net. A heartbeat with an empty
+    ``lines`` list keeps the collector marked alive between real events.
+    """
+
+    source_instance: str = Field(min_length=1, max_length=64)
+    heartbeat: bool = False
+    lines: list[str] = Field(default_factory=list)
+
+
+class IngestResult(BaseModel):
+    """Result of an ingest request."""
+
+    status: str
+    received: int
+    inserted: int
+    updated: int
+    skipped: int
+    redactions: int

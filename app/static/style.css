@@ -540,6 +540,9 @@ a {
 .badge-nnmi {
   --dot: #00a982;
 }
+.badge-sitescope {
+  --dot: #f59e0b;
+}
 
 .pill {
   display: inline-flex;
