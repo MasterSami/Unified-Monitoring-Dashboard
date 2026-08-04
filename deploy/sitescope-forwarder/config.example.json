@@ -1,0 +1,13 @@
+{
+  "log_path": "D:\\SiteScope\\logs\\HPSiteScopeOperationsManagerIntegration.log",
+  "state_dir": "D:\\Scripts\\umd",
+  "umd_url": "http://127.0.0.1:8000/api/v1/ingest/sitescope",
+  "source_instance": "SIS-Cairo-01",
+  "batch_size": 500,
+  "max_bytes_per_read": 5000000,
+  "http_timeout_sec": 30,
+  "max_retries": 5,
+  "verify_tls": true,
+  "token_env_var": "SITESCOPE_INGEST_TOKEN",
+  "token_file": ""
+}
