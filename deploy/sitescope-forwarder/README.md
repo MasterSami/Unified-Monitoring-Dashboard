@@ -35,7 +35,7 @@ Copy `config.example.json` → `config.json` and set:
 - `log_path` — the SiteScope OM-integration log.
 - `umd_url` — the UMD ingest URL (later a reachable host; localhost only works
   when the forwarder and UMD are on the same machine).
-- `source_instance` — a label for this SiteScope (e.g. `SIS-Cairo-01`).
+- `source_instance` — a label for this SiteScope (e.g. `SiteScope-141`).
 
 The **token is never in config**. Provide it one of two ways:
 - **Env var** (simplest): set `SITESCOPE_INGEST_TOKEN` for the account that runs

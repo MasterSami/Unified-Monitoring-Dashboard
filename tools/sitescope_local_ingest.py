@@ -14,7 +14,7 @@ Usage:
     python tools/sitescope_local_ingest.py --file sample.redacted.tsv --dry-run
     python tools/sitescope_local_ingest.py --file sample.redacted.tsv \
         --url http://127.0.0.1:8000/api/v1/ingest/sitescope \
-        --token "$SITESCOPE_INGEST_TOKEN" --instance SIS-Cairo-01
+        --token "$SITESCOPE_INGEST_TOKEN" --instance SiteScope-141
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _read_lines(path: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--file", required=True, help="redacted .tsv export path")
-    ap.add_argument("--instance", default="SIS-local", help="source_instance label")
+    ap.add_argument("--instance", default="SiteScope-141", help="source_instance label")
     ap.add_argument("--url", default="http://127.0.0.1:8000/api/v1/ingest/sitescope")
     ap.add_argument("--token", default=os.environ.get("SITESCOPE_INGEST_TOKEN", ""))
     ap.add_argument("--batch", type=int, default=500)
