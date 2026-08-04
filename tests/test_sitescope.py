@@ -124,6 +124,33 @@ class TestIdentity:
         assert dedup_key("") == ""
 
 
+# An ACTIVE critical event on a different host (state 'error' stays Critical).
+ACTIVE_FIELDS = list(REAL_FIELDS)
+ACTIVE_FIELDS[0] = "2026/08/04 09:15:00:000"
+ACTIVE_FIELDS[1] = "CRITICAL"
+ACTIVE_FIELDS[3] = "SiteScope:sis-01.example.corp:PAY: Application: PAY-CORE:PAY-CORE_txn: Response Time"
+ACTIVE_FIELDS[4] = "10.0.0.55 ,"
+ACTIVE_FIELDS[5] = "Monitor (PAY-CORE_txn: Response Time) met defined threshold (error) with value (8500)"
+ACTIVE_FIELDS[10] = "10.0.0.55:g:Response Time ms"
+ACTIVE_FIELDS[11] = "PAY-CORE ,"
+
+
+class TestDeriveHosts:
+    def test_status_and_fields(self):
+        from app.sitescope import derive_hosts
+
+        evs = [
+            parse_line(_line(REAL_FIELDS), "SIS-01"),
+            parse_line(_line(ACTIVE_FIELDS), "SIS-01"),
+        ]
+        hosts = {h.hostname: h for h in derive_hosts(evs)}
+        assert set(hosts) == {"RemdMB-APP6", "PAY-CORE"}
+        assert hosts["RemdMB-APP6"].status == "up"        # all events resolved
+        assert hosts["PAY-CORE"].status == "down"          # active Critical
+        assert hosts["PAY-CORE"].ip == "10.0.0.55"
+        assert hosts["RemdMB-APP6"].group_name == "MISOPS"
+
+
 class TestParse:
     def test_parses_real_line(self):
         ev = parse_line(_line(REAL_FIELDS), "SIS-01")

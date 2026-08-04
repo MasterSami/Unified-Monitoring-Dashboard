@@ -145,7 +145,7 @@ def _per_platform(db: Session) -> list[PlatformHostCount]:
         PlatformHostCount(
             platform=p, total=totals.get(p, 0), down=downs.get(p, 0)
         )
-        for p in ("zabbix", "dynatrace", "nnmi")
+        for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
     ]
 
 

@@ -55,6 +55,14 @@ def test_no_credentials_persisted(client):
         assert secret not in blob
 
 
+def test_ingest_creates_hosts(client):
+    client.post(URL, json=BATCH, headers=AUTH)
+    hosts = client.get("/api/v1/hosts", params={"platform": "sitescope"}).json()
+    names = {h["hostname"] for h in hosts}
+    assert "RemdMB-APP6" in names
+    assert all(h["source_platform"] == "sitescope" for h in hosts)
+
+
 def test_heartbeat_records_health_without_events(client):
     r = client.post(
         URL,

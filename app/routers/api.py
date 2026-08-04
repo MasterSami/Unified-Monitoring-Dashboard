@@ -30,7 +30,14 @@ from app.models import (
 )
 from app.normalizer import severity_label
 from app.scheduler import get_collector_statuses, get_service, run_topology_now
-from app.sitescope import NormalizedEvent, ParseError, parse_line, redact
+from app.sitescope import (
+    DerivedHost,
+    NormalizedEvent,
+    ParseError,
+    derive_hosts,
+    parse_line,
+    redact,
+)
 from app.topology import (
     NNMI_L2_COLUMNS,
     UNIFIED_COLUMNS,
@@ -113,6 +120,39 @@ def _upsert_sitescope(db: Session, events: list[NormalizedEvent]) -> tuple[int, 
     return inserted, updated
 
 
+def _upsert_sitescope_hosts(
+    db: Session, instance: str, hosts: list[DerivedHost]
+) -> int:
+    """Upsert derived SiteScope hosts (idempotent, no reconciliation)."""
+    inserted = 0
+    for h in hosts:
+        row = db.scalar(
+            select(Host).where(
+                Host.source_platform == SourcePlatform.sitescope,
+                Host.source_instance == instance,
+                Host.external_id == h.external_id,
+            )
+        )
+        if row is None:
+            row = Host(
+                source_platform=SourcePlatform.sitescope,
+                source_instance=instance,
+                external_id=h.external_id,
+            )
+            db.add(row)
+            inserted += 1
+        row.hostname = h.hostname
+        row.ip = h.ip
+        try:
+            row.status = HostStatus(h.status)
+        except ValueError:
+            row.status = HostStatus.unknown
+        row.group_name = h.group_name
+        row.last_seen = h.last_seen or datetime.now(timezone.utc)
+        row.raw_payload = h.raw_payload
+    return inserted
+
+
 @router.post("/ingest/sitescope", response_model=IngestResult)
 def ingest_sitescope(
     payload: SiteScopeIngest,
@@ -148,6 +188,8 @@ def ingest_sitescope(
             skipped += 1
 
     inserted, updated = _upsert_sitescope(db, events)
+    hosts = derive_hosts(events)
+    host_inserted = _upsert_sitescope_hosts(db, payload.source_instance, hosts)
 
     # Collector-health heartbeat: one run row per ingest, so the dashboard can
     # tell "no alerts" (recent run, 0 events) from "collector dead" (stale run).
@@ -159,7 +201,7 @@ def ingest_sitescope(
             finished_at=datetime.now(timezone.utc),
             status=RunStatus.success,
             items_collected=len(events),
-            hosts_collected=0,
+            hosts_collected=host_inserted,
             alerts_collected=len(events),
         )
     )
@@ -633,7 +675,7 @@ def summary(
             total=total_by_platform.get(plat, 0),
             down=down_by_platform.get(plat, 0),
         )
-        for plat in ("zabbix", "dynatrace", "nnmi")
+        for plat in ("zabbix", "dynatrace", "nnmi", "sitescope")
     ]
 
     # Active alerts by severity.

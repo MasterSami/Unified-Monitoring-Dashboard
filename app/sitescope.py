@@ -259,3 +259,91 @@ def parse_line(line: str, source_instance: str) -> NormalizedEvent:
             "drilldown_url": drilldown,
         },
     )
+
+
+# --- Host derivation --------------------------------------------------------
+# SiteScope monitors *targets*; a Host is one monitored application/node. Status
+# is inferred from the monitors on it, so SiteScope shows up as a full platform
+# (hosts + alerts) alongside Zabbix / Dynatrace.
+
+
+@dataclass
+class DerivedHost:
+    """A monitored target inferred from a set of SiteScope events."""
+
+    external_id: str
+    hostname: str
+    ip: str | None
+    status: str  # up | down | unknown  (matches HostStatus values)
+    group_name: str | None
+    last_seen: datetime | None
+    raw_payload: dict = field(default_factory=dict)
+
+
+def _monitor_group(monitor_path: str) -> str | None:
+    """The SiteScope group folder — the 3rd segment of the monitor path."""
+    parts = monitor_path.split(":")
+    return parts[2].strip() if len(parts) >= 3 and parts[2].strip() else None
+
+
+def derive_hosts(events: list[NormalizedEvent]) -> list[DerivedHost]:
+    """Roll a batch of events up to one host per monitored target.
+
+    Status: ``down`` if any active event is Major/Critical (>=4); ``unknown`` if
+    the target only reports "no data"; otherwise ``up`` (monitored and reporting).
+    """
+    agg: dict[str, dict] = {}
+    for ev in events:
+        key = ev.dedup_key or ev.host_hostname
+        if not key:
+            continue
+        h = agg.get(key)
+        if h is None:
+            h = {
+                "external_id": key,
+                "hostname": ev.host_hostname or key,
+                "ip": None,
+                "worst_active": 0,
+                "active": False,
+                "nodata": False,
+                "last_seen": None,
+                "group": _monitor_group(ev.monitor_name),
+                "monitor_type": ev.raw_payload.get("monitor_type"),
+                "server_fqdn": ev.raw_payload.get("server_fqdn"),
+            }
+            agg[key] = h
+        ip = ev.raw_payload.get("target_ip")
+        if ip and not h["ip"]:
+            h["ip"] = ip
+        if not ev.resolved:
+            h["active"] = True
+            h["worst_active"] = max(h["worst_active"], ev.severity_int)
+        if (ev.state or "").strip().lower() == "no data":
+            h["nodata"] = True
+        if ev.started_at and (h["last_seen"] is None or ev.started_at > h["last_seen"]):
+            h["last_seen"] = ev.started_at
+
+    hosts: list[DerivedHost] = []
+    for h in agg.values():
+        if h["worst_active"] >= 4:
+            status = "down"
+        elif h["nodata"] and not h["active"]:
+            status = "unknown"
+        else:
+            status = "up"
+        hosts.append(
+            DerivedHost(
+                external_id=h["external_id"],
+                hostname=h["hostname"],
+                ip=h["ip"],
+                status=status,
+                group_name=h["group"],
+                last_seen=h["last_seen"],
+                raw_payload={
+                    "monitor_type": h["monitor_type"],
+                    "server_fqdn": h["server_fqdn"],
+                    "source": "sitescope",
+                },
+            )
+        )
+    return hosts

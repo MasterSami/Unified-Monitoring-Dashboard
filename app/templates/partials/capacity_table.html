@@ -58,9 +58,9 @@
         <td class="mono">{{ h.ip or '—' }}</td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>
-        <td>{{ rcell(h.cpu_pct, m.cpu_used_cores, m.cores, 'cores') }}</td>
-        <td>{{ rcell(h.mem_pct, m.mem_used_gb, m.mem_total_gb, 'GB') }}</td>
-        <td>{{ rcell(h.disk_pct, m.disk_used_gb, m.disk_total_gb, 'GB') }}</td>
+        <td>{{ rcell(h.cpu_pct, m.get('cpu_used_cores'), m.get('cores'), 'cores') }}</td>
+        <td>{{ rcell(h.mem_pct, m.get('mem_used_gb'), m.get('mem_total_gb'), 'GB') }}</td>
+        <td>{{ rcell(h.disk_pct, m.get('disk_used_gb'), m.get('disk_total_gb'), 'GB') }}</td>
         <td><span class="pill status-{{ h.status.value }}"><span class="dot"></span>{{ h.status.value }}</span></td>
       </tr>
       {% else %}
