@@ -190,37 +190,42 @@ class ZabbixCollector(BaseCollector):
         return hosts
 
     # --- Capacity metrics ---------------------------------------------------
+    #
+    # Zabbix item keys almost always carry parameters (e.g. ``system.cpu.util[,idle]``
+    # or ``vm.memory.size[pused]``) and vary by template, so an EXACT ``filter``
+    # match misses them and the Capacity view stays empty. Instead we ``startSearch``
+    # on the BASE keys below, then classify each returned item by its base key and
+    # last parameter. Disk is summed across mounted filesystems. Fully best-effort:
+    # any gap just renders "—" and never affects host collection.
+    _SEARCH_BASES = ("system.cpu", "vm.memory", "vfs.fs")
 
-    #: Item keys we read for the Capacity view. CPU-idle is inverted to busy%.
-    _CPU_KEYS = ("system.cpu.util", "system.cpu.util[,idle]", "system.cpu.util[,user]")
-    _MEM_PCT_KEYS = ("vm.memory.utilization", "vm.memory.size[pused]")
-    _MEM_TOTAL_KEYS = ("vm.memory.size[total]",)
-    _MEM_USED_KEYS = ("vm.memory.size[used]",)
-    _CORE_KEYS = ("system.cpu.num",)
+    @staticmethod
+    def _split_key(key: str) -> tuple[str, list[str]]:
+        """Return ``(base_key, [params])`` for a Zabbix item key."""
+        if "[" in key:
+            base, rest = key.split("[", 1)
+            return base, [p.strip() for p in rest.rstrip("]").split(",")]
+        return key, []
 
     def _attach_metrics(self, hosts: list[dict]) -> None:
-        """Best-effort: attach CPU%, memory used/total and cores from items.
+        """Attach CPU%, memory + disk (used/total and %) and cores from items.
 
-        One bulk ``item.get`` for a small set of standard keys, mapped back by
-        hostid. Memory is reported as used/total (GB) as well as a percentage, so
-        the Capacity view can show absolute consumption. Fully contained — any
-        failure just leaves metrics unset ("—") and never affects host collection.
+        One bulk ``item.get`` (``startSearch`` on base keys) so parameterized keys
+        from any template are picked up, then classified by base + last param.
+        Memory and disk are reported as used/total (GB) plus a percentage so the
+        Capacity view can show absolute consumption. Fully contained — any failure
+        just leaves metrics unset ("—") and never affects host collection.
         """
         if not hosts:
             return
-        all_keys = (
-            self._CPU_KEYS
-            + self._MEM_PCT_KEYS
-            + self._MEM_TOTAL_KEYS
-            + self._MEM_USED_KEYS
-            + self._CORE_KEYS
-        )
         try:
             items = self._rpc(
                 "item.get",
                 {
                     "output": ["hostid", "key_", "lastvalue"],
-                    "filter": {"key_": list(all_keys)},
+                    "search": {"key_": list(self._SEARCH_BASES)},
+                    "searchByAny": True,
+                    "startSearch": True,
                     "monitored": True,
                 },
             )
@@ -228,51 +233,91 @@ class ZabbixCollector(BaseCollector):
             self.logger.warning("item.get for metrics failed: %s", exc)
             return
 
-        cpu: dict[str, float] = {}
-        mem_pct: dict[str, float] = {}
-        mem_total: dict[str, float] = {}
-        mem_used: dict[str, float] = {}
-        cores: dict[str, int] = {}
+        def _new() -> dict:
+            return {
+                "cpu": None, "cores": None,
+                "mem_pused": None, "mem_total": None,
+                "mem_used": None, "mem_avail": None,
+                "disk_pused": None, "disk_total": 0.0, "disk_used": 0.0,
+            }
+
+        acc: dict[str, dict] = {}
         for it in items:  # type: ignore[union-attr]
             hostid = str(it.get("hostid"))
-            key = it.get("key_", "")
+            base, params = self._split_key(it.get("key_", ""))
+            mode = params[-1] if params else ""
             try:
                 val = float(it.get("lastvalue"))
             except (TypeError, ValueError):
                 continue
-            if key in self._CPU_KEYS:
-                busy = 100.0 - val if "idle" in key else val
-                cpu[hostid] = max(cpu.get(hostid, 0.0), round(busy, 1))
-            elif key in self._MEM_PCT_KEYS:
-                mem_pct[hostid] = max(mem_pct.get(hostid, 0.0), round(val, 1))
-            elif key in self._MEM_TOTAL_KEYS:
-                mem_total[hostid] = val
-            elif key in self._MEM_USED_KEYS:
-                mem_used[hostid] = val
-            elif key in self._CORE_KEYS:
-                cores[hostid] = int(val)
+            d = acc.setdefault(hostid, _new())
+            if base == "system.cpu.util":
+                busy = 100.0 - val if "idle" in params else val
+                d["cpu"] = busy if d["cpu"] is None else max(d["cpu"], busy)
+            elif base == "system.cpu.num":
+                d["cores"] = int(val)
+            elif base == "vm.memory.utilization":
+                d["mem_pused"] = val
+            elif base == "vm.memory.size":
+                if mode == "pused":
+                    d["mem_pused"] = val
+                elif mode == "pavailable":
+                    d["mem_pused"] = 100.0 - val
+                elif mode == "used":
+                    d["mem_used"] = val
+                elif mode == "available":
+                    d["mem_avail"] = val
+                else:  # "total" or no parameter
+                    d["mem_total"] = val
+            elif base.endswith("fs.size"):  # vfs.fs.size / vfs.fs.dependent.size
+                if mode == "pused":
+                    d["disk_pused"] = val if d["disk_pused"] is None else max(d["disk_pused"], val)
+                elif mode == "pfree":
+                    v = 100.0 - val
+                    d["disk_pused"] = v if d["disk_pused"] is None else max(d["disk_pused"], v)
+                elif mode == "used":
+                    d["disk_used"] += val
+                elif mode in ("total", ""):
+                    d["disk_total"] += val
 
         gb = 1024**3
         for h in hosts:
-            hid = str(h.get("external_id"))
+            d = acc.get(str(h.get("external_id")))
+            if not d:
+                continue
             metrics = h.setdefault("metrics", {})
-            if hid in cpu:
-                h["cpu_pct"] = cpu[hid]
-            if hid in cores:
-                metrics["cores"] = cores[hid]
-                if hid in cpu:
-                    metrics["cpu_used_cores"] = round(cores[hid] * cpu[hid] / 100, 1)
-            total = mem_total.get(hid)
-            used = mem_used.get(hid)
+            # CPU
+            if d["cpu"] is not None:
+                h["cpu_pct"] = round(d["cpu"], 1)
+            if d["cores"]:
+                metrics["cores"] = d["cores"]
+                if d["cpu"] is not None:
+                    metrics["cpu_used_cores"] = round(d["cores"] * d["cpu"] / 100, 1)
+            # Memory — prefer absolute used/total, else derive from a percentage.
+            total, used, avail = d["mem_total"], d["mem_used"], d["mem_avail"]
+            if used is None and avail is not None and total:
+                used = total - avail
             if total:
                 metrics["mem_total_gb"] = round(total / gb, 1)
                 if used is not None:
                     metrics["mem_used_gb"] = round(used / gb, 1)
                     h["mem_pct"] = round(used / total * 100, 1)
-            if "mem_pct" not in h and hid in mem_pct:
-                h["mem_pct"] = mem_pct[hid]
-                if total:
-                    metrics["mem_used_gb"] = round(total / gb * mem_pct[hid] / 100, 1)
+                elif d["mem_pused"] is not None:
+                    h["mem_pct"] = round(d["mem_pused"], 1)
+                    metrics["mem_used_gb"] = round(total / gb * d["mem_pused"] / 100, 1)
+            elif d["mem_pused"] is not None:
+                h["mem_pct"] = round(d["mem_pused"], 1)
+            # Disk — sum across filesystems; prefer absolute, else a percentage.
+            if d["disk_total"] > 0:
+                metrics["disk_total_gb"] = round(d["disk_total"] / gb, 1)
+                if d["disk_used"] > 0:
+                    metrics["disk_used_gb"] = round(d["disk_used"] / gb, 1)
+                    h["disk_pct"] = round(d["disk_used"] / d["disk_total"] * 100, 1)
+                elif d["disk_pused"] is not None:
+                    h["disk_pct"] = round(d["disk_pused"], 1)
+                    metrics["disk_used_gb"] = round(d["disk_total"] / gb * d["disk_pused"] / 100, 1)
+            elif d["disk_pused"] is not None:
+                h["disk_pct"] = round(d["disk_pused"], 1)
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
