@@ -8,7 +8,7 @@ run one or all of them, and derives health from persisted
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import select
@@ -147,7 +147,7 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 last_success_at=last_run.finished_at,
                 status=last_run.status.value,
                 items_collected=last_run.items_collected,
-                hosts_collected=0,
+                hosts_collected=last_run.hosts_collected,
                 alerts_collected=last_run.alerts_collected,
                 error_message=None,
                 notes="push (forwarder)",
@@ -168,6 +168,59 @@ def get_service() -> CollectorService:
     if _service is None:
         _service = CollectorService(get_settings())
     return _service
+
+
+_SITESCOPE_DEMO_JOB_ID = "sitescope_demo_load"
+
+
+def _run_sitescope_demo_job() -> None:
+    """Load a redacted SiteScope .tsv from disk through the shared ingest path.
+
+    Enabled only when ``SITESCOPE_DEMO_FILE`` is set. Lets the whole SiteScope
+    scenario run on a laptop (hosts + alerts, auto-refreshing) with no forwarder
+    and no access to the SiteScope server — the ONLY difference from production
+    is env config. Reads the file read-only; never writes to it.
+    """
+    from app.sitescope_ingest import ingest_lines  # lazy: avoids import cycle
+
+    settings = get_settings()
+    path = settings.sitescope_demo_file
+    instance = settings.sitescope_demo_instance or "SiteScope-141"
+    if not path:
+        return
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
+    except OSError as exc:
+        logger.warning("sitescope demo file unreadable (%s): %s", path, exc)
+        return
+
+    db: Session = SessionLocal()
+    try:
+        started = datetime.now(timezone.utc)
+        counts = ingest_lines(db, instance, lines)
+        db.add(
+            CollectorRun(
+                platform="sitescope",
+                instance=instance,
+                started_at=started,
+                finished_at=datetime.now(timezone.utc),
+                status=RunStatus.success,
+                items_collected=counts.events,
+                hosts_collected=counts.hosts,
+                alerts_collected=counts.events,
+            )
+        )
+        db.commit()
+        logger.info(
+            "sitescope demo: loaded %d line(s) from %s -> %d event(s), %d host(s)",
+            len(lines), path, counts.events, counts.hosts,
+        )
+    except Exception:  # pragma: no cover - demo must never crash the scheduler
+        db.rollback()
+        logger.exception("sitescope demo load failed")
+    finally:
+        db.close()
 
 
 def _run_topology_job() -> None:
@@ -215,6 +268,25 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
             next_run_time=datetime.now(),
         )
         logger.info("topology collection enabled; polling every %d minute(s)", topo_minutes)
+
+    # Optional local SiteScope demo: if SITESCOPE_DEMO_FILE is set, auto-load
+    # that redacted .tsv on startup and refresh it every poll interval, so
+    # SiteScope appears as a full platform with no forwarder / no server access.
+    if settings.sitescope_demo_file:
+        scheduler.add_job(
+            _run_sitescope_demo_job,
+            trigger="interval",
+            minutes=settings.poll_interval_minutes,
+            id=_SITESCOPE_DEMO_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+            next_run_time=datetime.now(),
+        )
+        logger.info(
+            "sitescope demo enabled; loading %s every %d minute(s)",
+            settings.sitescope_demo_file, settings.poll_interval_minutes,
+        )
 
     scheduler.start()
     _scheduler = scheduler

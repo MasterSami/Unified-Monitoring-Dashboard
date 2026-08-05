@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     ingest_max_events: int = 500
     ingest_max_bytes: int = 5_000_000
 
+    # --- SiteScope LOCAL DEMO (env-only, no code changes needed) ------------
+    # Point this at a REDACTED SiteScope .tsv on disk to have UMD auto-load it
+    # on startup and refresh it every poll interval — SiteScope then shows up as
+    # a full platform (hosts + alerts) with no forwarder and no network access
+    # to the SiteScope server. Empty (default) = demo off. Use this to try the
+    # whole scenario on a laptop; switch to the on-box forwarder for production.
+    sitescope_demo_file: str = ""
+    # Instance label the demo data is filed under (shows in the collector list).
+    sitescope_demo_instance: str = "SiteScope-141"
+
     @property
     def enabled_collectors_list(self) -> list[str]:
         """Return the enabled collector names as a normalized list."""

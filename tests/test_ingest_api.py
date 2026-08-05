@@ -77,3 +77,23 @@ def test_heartbeat_records_health_without_events(client):
 def test_payload_cap(client):
     big = {"source_instance": "SIS-01", "lines": [_line(REAL_FIELDS)] * 501}
     assert client.post(URL, json=big, headers=AUTH).status_code == 413
+
+
+def test_demo_ingest_lines_shares_the_push_pipeline(client):
+    """The local-demo path (ingest_lines) creates the same hosts + alerts as the
+    push endpoint — SiteScope shows up as a full platform with no HTTP/forwarder.
+    """
+    from app.db import SessionLocal
+    from app.sitescope_ingest import ingest_lines
+
+    db = SessionLocal()
+    try:
+        counts = ingest_lines(db, "SiteScope-DEMO", [_line(REAL_FIELDS)])
+        db.commit()
+    finally:
+        db.close()
+
+    assert counts.events == 1
+    assert counts.hosts >= 1
+    hosts = client.get("/api/v1/hosts", params={"platform": "sitescope"}).json()
+    assert "RemdMB-APP6" in {h["hostname"] for h in hosts}
