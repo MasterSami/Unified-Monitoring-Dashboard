@@ -189,7 +189,7 @@ def ingest_sitescope(
 
     inserted, updated = _upsert_sitescope(db, events)
     hosts = derive_hosts(events)
-    host_inserted = _upsert_sitescope_hosts(db, payload.source_instance, hosts)
+    _upsert_sitescope_hosts(db, payload.source_instance, hosts)
 
     # Collector-health heartbeat: one run row per ingest, so the dashboard can
     # tell "no alerts" (recent run, 0 events) from "collector dead" (stale run).
@@ -201,7 +201,9 @@ def ingest_sitescope(
             finished_at=datetime.now(timezone.utc),
             status=RunStatus.success,
             items_collected=len(events),
-            hosts_collected=host_inserted,
+            # Distinct hosts seen this batch (not just new inserts) so the
+            # collector row shows the real fleet size, not 0 on repeat runs.
+            hosts_collected=len(hosts),
             alerts_collected=len(events),
         )
     )
