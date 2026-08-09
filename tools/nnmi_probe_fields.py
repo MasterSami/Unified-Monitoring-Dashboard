@@ -34,15 +34,26 @@ _IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
 def _sample(collector: NnmiCollector, path: str, ns: str, operation: str) -> list[dict]:
-    """Fetch one small page (read-only), with the collector's cond fallback."""
-    for field, op, value in (("name", "LIKE", "%"), ("id", "GE", "0")):
+    """Fetch one small page (read-only), trying each filter; skip ones that error.
+
+    Some beans (e.g. IPAddressBean) have no ``name`` attribute and 500 on the
+    name filter, so failures per-condition are swallowed and the next is tried.
+    """
+    last_exc: Exception | None = None
+    for field, op, value in (("id", "GE", "0"), ("name", "LIKE", "%")):
         envelope = _SOAP_TEMPLATE.format(
             ns=ns, operation=operation, offset=0, max_objects=50,
             cond_field=field, cond_op=op, cond_value=value,
         )
-        rows = collector._parse_items(collector._soap_post(path, envelope))
+        try:
+            rows = collector._parse_items(collector._soap_post(path, envelope))
+        except Exception as exc:  # noqa: BLE001 — diagnostic; try next filter
+            last_exc = exc
+            continue
         if rows:
             return rows
+    if last_exc is not None:
+        raise last_exc
     return []
 
 

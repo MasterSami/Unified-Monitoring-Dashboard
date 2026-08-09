@@ -51,13 +51,28 @@ def test_no_ip_anywhere_leaves_none():
     assert hosts[0]["ip"] is None
 
 
+def test_ipaddressbean_failure_never_breaks_host_collection():
+    # A 500 (or any error) from IPAddressBean must not fail host collection —
+    # hosts still come back, just without the enriched IP.
+    from app.collectors.base import CollectorError
+
+    c = _collector([{"id": "9", "name": "B7_EXT_R1", "longName": "B7_EXT_R1.corp"}])
+
+    def boom(*a, **k):
+        raise CollectorError("500 Internal Server Error")
+
+    c._fetch = boom  # type: ignore[assignment]  # IPAddressBean call raises
+    hosts = c.collect_hosts()  # must not raise
+    assert len(hosts) == 1 and hosts[0]["ip"] is None
+
+
 def test_ipaddressbean_join_and_loopback_filter():
     # _fetch_ip_by_node keeps the first non-loopback IPv4 per node.
     from app.collectors.nnmi import NnmiCollector
     from app.config import Settings
     from app.servers import ServerConfig
     c = NnmiCollector(ServerConfig(name="NNMi-13", platform="nnmi", url="http://n"), Settings(mock_mode=False))
-    c._fetch_with_fallback = lambda *a, **k: [  # type: ignore[assignment]
+    c._fetch = lambda *a, **k: [  # type: ignore[assignment]
         {"hostedOnId": "1", "ipValue": "127.0.0.1"},   # loopback -> skipped
         {"hostedOnId": "1", "ipValue": "10.0.0.5"},    # kept
         {"hostedOnId": "1", "ipValue": "10.0.0.6"},    # node already has one

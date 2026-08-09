@@ -242,11 +242,17 @@ class NnmiCollector(BaseCollector):
         collection.
         """
         try:
-            records = self._fetch_with_fallback(
-                "/IPAddressBeanService/IPAddressBean", _IPADDR_NS, "getIPAddresses"
+            # IPAddress has no "name" attribute, so the usual name-LIKE-% filter
+            # 500s; query by id instead. Catch EVERYTHING — this is an optional
+            # enrichment and must never break host collection.
+            records = self._fetch(
+                "/IPAddressBeanService/IPAddressBean",
+                _IPADDR_NS,
+                "getIPAddresses",
+                ("id", "GE", "0"),
             )
-        except CollectorError as exc:
-            self.logger.warning("IPAddress fetch failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — best-effort enrichment
+            self.logger.warning("IPAddress fetch failed (skipped): %s", exc)
             return {}
         by_node: dict[str, str] = {}
         for r in records:
