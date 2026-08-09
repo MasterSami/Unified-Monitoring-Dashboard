@@ -15,16 +15,21 @@ import pytest
 
 INGEST_TOKEN = "test-token-123"
 
+# Configure the environment at IMPORT time — conftest is imported before any
+# test module is collected, so the app's module-level engine binds to this
+# throwaway DB no matter which test file imports app.db first. (Setting these
+# inside the fixture is too late: a test module that imports app at collection
+# time would otherwise bind the engine to the default ./dashboard.db and leak
+# it into the repo, persisting across runs.)
+_TMP_DB = Path(tempfile.mkdtemp()) / "test.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
+os.environ["MOCK_MODE"] = "false"
+os.environ["ENABLED_COLLECTORS"] = ""  # no pull collectors in tests
+os.environ["SITESCOPE_INGEST_TOKEN"] = INGEST_TOKEN
+
 
 @pytest.fixture(scope="session")
 def client():
-    tmp = Path(tempfile.mkdtemp()) / "test.db"
-    os.environ["DATABASE_URL"] = f"sqlite:///{tmp}"
-    os.environ["MOCK_MODE"] = "false"
-    os.environ["ENABLED_COLLECTORS"] = ""  # no pull collectors in tests
-    os.environ["SITESCOPE_INGEST_TOKEN"] = INGEST_TOKEN
-
-    # Import only after the environment is set.
     from app.config import get_settings
 
     get_settings.cache_clear()

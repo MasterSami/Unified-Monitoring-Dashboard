@@ -141,14 +141,19 @@ class ZabbixCollector(BaseCollector):
                 self.notes = f"Proxies 3/3 online: {self.instance}-prx-a, {self.instance}-prx-b, {self.instance}-prx-c"
             return mock_data.mock_zabbix_hosts(self.instance)
 
-        result = self._rpc(
-            "host.get",
-            {
-                "output": ["hostid", "host", "name", "status", "available"],
-                "selectInterfaces": ["ip", "main", "type", "available"],
-                "selectGroups": ["name"],
-            },
-        )
+        host_params = {
+            "output": ["hostid", "host", "name", "status", "available"],
+            "selectInterfaces": ["ip", "main", "type", "available"],
+        }
+        # Zabbix 6.2+ renamed ``selectGroups`` -> ``selectHostGroups`` (the old
+        # name was removed in 7.0). Try the new name first and fall back, so host
+        # groups resolve on every supported version instead of silently blanking.
+        try:
+            result = self._rpc(
+                "host.get", {**host_params, "selectHostGroups": ["name"]}
+            )
+        except CollectorError:
+            result = self._rpc("host.get", {**host_params, "selectGroups": ["name"]})
         hosts: list[dict] = []
         for h in result:  # type: ignore[union-attr]
             ip = None
@@ -171,14 +176,20 @@ class ZabbixCollector(BaseCollector):
                 status = {"1": HostStatus.up, "2": HostStatus.down}.get(
                     str(available), HostStatus.unknown
                 )
-            groups = h.get("groups", [])
+            # Response key is "hostgroups" (selectHostGroups) or "groups"
+            # (selectGroups). Show ALL groups a host belongs to, not just the
+            # first, so nothing appears group-less when it has several.
+            groups = h.get("hostgroups") or h.get("groups") or []
+            group_name = ", ".join(
+                g["name"] for g in groups if g.get("name")
+            ) or None
             hosts.append(
                 {
                     "external_id": h["hostid"],
                     "hostname": h.get("name") or h.get("host"),
                     "ip": ip,
                     "status": status,
-                    "group_name": groups[0]["name"] if groups else None,
+                    "group_name": group_name,
                     "last_seen": datetime.now(timezone.utc),
                     "raw_payload": h,
                 }

@@ -26,15 +26,18 @@ def test_requires_bearer_token(client):
 
 
 def test_ingest_and_idempotency(client):
+    # Dedicated instance so the insert/update counts are independent of any
+    # other test's ingest (the DB fixture is shared and test order is random).
+    batch = {**BATCH, "source_instance": "SIS-IDEM"}
     # First send inserts.
-    r1 = client.post(URL, json=BATCH, headers=AUTH).json()
+    r1 = client.post(URL, json=batch, headers=AUTH).json()
     assert r1["status"] == "ok"
     assert r1["received"] == 2
     assert r1["inserted"] == 2 and r1["updated"] == 0
     after_first = _active_sitescope_count(client)
 
     # Same batch again -> updates in place, no new rows.
-    r2 = client.post(URL, json=BATCH, headers=AUTH).json()
+    r2 = client.post(URL, json=batch, headers=AUTH).json()
     assert r2["inserted"] == 0 and r2["updated"] == 2
     assert _active_sitescope_count(client) == after_first
 
