@@ -34,7 +34,33 @@ def test_ip_from_name_when_node_is_ip_only():
     assert hosts[0]["ip"] == "10.0.0.9"
 
 
-def test_no_ip_available_leaves_none():
-    # NNMi-13 style: DNS name only, no address field.
-    hosts = _collector([{"id": "4", "name": "B7_EXT_R1", "longName": "B7_EXT_R1.corp"}]).collect_hosts()
+def test_ip_from_ipaddressbean_when_node_has_no_address():
+    # NNMi-13 style: DNS name only on the node; IP comes from IPAddressBean,
+    # joined by node id. IPAddressBean is only consulted because the node lacks
+    # a direct address.
+    c = _collector([{"id": "555", "name": "B7_EXT_R1", "longName": "B7_EXT_R1.corp"}])
+    c._fetch_ip_by_node = lambda: {"555": "10.19.70.13"}  # type: ignore[assignment]
+    hosts = c.collect_hosts()
+    assert hosts[0]["ip"] == "10.19.70.13"
+
+
+def test_no_ip_anywhere_leaves_none():
+    c = _collector([{"id": "4", "name": "B7_EXT_R1", "longName": "B7_EXT_R1.corp"}])
+    c._fetch_ip_by_node = lambda: {}  # IPAddressBean has nothing for it
+    hosts = c.collect_hosts()
     assert hosts[0]["ip"] is None
+
+
+def test_ipaddressbean_join_and_loopback_filter():
+    # _fetch_ip_by_node keeps the first non-loopback IPv4 per node.
+    from app.collectors.nnmi import NnmiCollector
+    from app.config import Settings
+    from app.servers import ServerConfig
+    c = NnmiCollector(ServerConfig(name="NNMi-13", platform="nnmi", url="http://n"), Settings(mock_mode=False))
+    c._fetch_with_fallback = lambda *a, **k: [  # type: ignore[assignment]
+        {"hostedOnId": "1", "ipValue": "127.0.0.1"},   # loopback -> skipped
+        {"hostedOnId": "1", "ipValue": "10.0.0.5"},    # kept
+        {"hostedOnId": "1", "ipValue": "10.0.0.6"},    # node already has one
+        {"hostedOnId": "2", "ipValue": "192.168.1.9"},
+    ]
+    assert c._fetch_ip_by_node() == {"1": "10.0.0.5", "2": "192.168.1.9"}

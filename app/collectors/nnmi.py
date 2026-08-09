@@ -39,6 +39,7 @@ _NNMI_STATUS = {
 
 _NODE_NS = "http://node.sdk.nms.ov.hp.com/"
 _INCIDENT_NS = "http://incident.sdk.nms.ov.hp.com/"
+_IPADDR_NS = "http://ipaddress.sdk.nms.ov.hp.com/"
 
 _PAGE_SIZE = 500
 _MAX_PAGES = 40  # safety cap (up to 20k objects/entity)
@@ -215,6 +216,10 @@ class NnmiCollector(BaseCollector):
 
     _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
+    #: IPAddressBean fields: the address value, and the node it's hosted on.
+    _IPADDR_VALUE_FIELDS = ("ipValue", "ipAddress", "address", "value")
+    _IPADDR_NODE_FIELDS = ("hostedOnId", "hostedOnNodeId", "nodeId", "hostedOn")
+
     def _node_ip(self, record: dict) -> str | None:
         """Resolve a node's IP: a dedicated address field, else an IP-only name."""
         ip = self._first(record, self._IP_FIELDS)
@@ -228,6 +233,32 @@ class NnmiCollector(BaseCollector):
                 return val
         return None
 
+    def _fetch_ip_by_node(self) -> dict[str, str]:
+        """Map ``node id -> a management IP`` from IPAddressBean (best-effort).
+
+        Used to fill in nodes that carry no address on the node record itself
+        (e.g. instances that only return a DNS name). One non-loopback IPv4 per
+        node is kept. Any failure returns an empty map and never breaks host
+        collection.
+        """
+        try:
+            records = self._fetch_with_fallback(
+                "/IPAddressBeanService/IPAddressBean", _IPADDR_NS, "getIPAddresses"
+            )
+        except CollectorError as exc:
+            self.logger.warning("IPAddress fetch failed: %s", exc)
+            return {}
+        by_node: dict[str, str] = {}
+        for r in records:
+            node_id = self._first(r, self._IPADDR_NODE_FIELDS)
+            ip = self._first(r, self._IPADDR_VALUE_FIELDS)
+            if not node_id or not ip or node_id in by_node:
+                continue
+            if ip.startswith("127.") or ip == "0.0.0.0" or not self._IPV4_RE.match(ip):
+                continue
+            by_node[node_id] = ip
+        return by_node
+
     # --- Contract -----------------------------------------------------------
 
     def collect_hosts(self) -> list[dict]:
@@ -238,6 +269,8 @@ class NnmiCollector(BaseCollector):
             "/NodeBeanService/NodeBean", _NODE_NS, "getNodes"
         )
         hosts: list[dict] = []
+        # node id -> host dict, for nodes with no address on the node record.
+        missing: dict[str, dict] = {}
         for r in records:
             status_str = (r.get("status") or "UNKNOWN").upper()
             mgmt = (r.get("managementMode") or "").upper()
@@ -245,19 +278,29 @@ class NnmiCollector(BaseCollector):
                 status = HostStatus.disabled
             else:
                 status = _NNMI_STATUS.get(status_str, HostStatus.unknown)
-            hosts.append(
-                {
-                    "external_id": r.get("id") or r.get("uuid") or r.get("name"),
-                    "hostname": r.get("name") or r.get("longName") or r.get("id"),
-                    "ip": self._node_ip(r),
-                    "status": status,
-                    "group_name": r.get("deviceCategory")
-                    or r.get("deviceFamily")
-                    or r.get("systemLocation"),
-                    "last_seen": datetime.now(timezone.utc),
-                    "raw_payload": r,
-                }
-            )
+            host = {
+                "external_id": r.get("id") or r.get("uuid") or r.get("name"),
+                "hostname": r.get("name") or r.get("longName") or r.get("id"),
+                "ip": self._node_ip(r),
+                "status": status,
+                "group_name": r.get("deviceCategory")
+                or r.get("deviceFamily")
+                or r.get("systemLocation"),
+                "last_seen": datetime.now(timezone.utc),
+                "raw_payload": r,
+            }
+            hosts.append(host)
+            if not host["ip"] and r.get("id"):
+                missing[str(r["id"])] = host
+
+        # Only hit IPAddressBean when some nodes lacked a direct address (so
+        # instances whose nodes all carry activeAddr pay no extra call).
+        if missing:
+            ip_by_node = self._fetch_ip_by_node()
+            for node_id, host in missing.items():
+                ip = ip_by_node.get(node_id)
+                if ip:
+                    host["ip"] = ip
         return hosts
 
     def collect_alerts(self) -> list[dict]:

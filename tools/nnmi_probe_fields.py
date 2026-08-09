@@ -21,37 +21,36 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.collectors.nnmi import _NODE_NS, _SOAP_TEMPLATE, NnmiCollector  # noqa: E402
+from app.collectors.nnmi import (  # noqa: E402
+    _IPADDR_NS,
+    _NODE_NS,
+    _SOAP_TEMPLATE,
+    NnmiCollector,
+)
 from app.config import get_settings  # noqa: E402
 from app.servers import load_servers  # noqa: E402
 
 _IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 
-def probe(collector: NnmiCollector) -> None:
-    # One small page of nodes (read-only).
-    envelope = _SOAP_TEMPLATE.format(
-        ns=_NODE_NS, operation="getNodes", offset=0, max_objects=50,
-        cond_field="name", cond_op="LIKE", cond_value="%",
-    )
-    records = collector._parse_items(
-        collector._soap_post("/NodeBeanService/NodeBean", envelope)
-    )
-    if not records:  # fall back to the id-based filter like the collector does
+def _sample(collector: NnmiCollector, path: str, ns: str, operation: str) -> list[dict]:
+    """Fetch one small page (read-only), with the collector's cond fallback."""
+    for field, op, value in (("name", "LIKE", "%"), ("id", "GE", "0")):
         envelope = _SOAP_TEMPLATE.format(
-            ns=_NODE_NS, operation="getNodes", offset=0, max_objects=50,
-            cond_field="id", cond_op="GE", cond_value="0",
+            ns=ns, operation=operation, offset=0, max_objects=50,
+            cond_field=field, cond_op=op, cond_value=value,
         )
-        records = collector._parse_items(
-            collector._soap_post("/NodeBeanService/NodeBean", envelope)
-        )
+        rows = collector._parse_items(collector._soap_post(path, envelope))
+        if rows:
+            return rows
+    return []
 
-    print(f"\n=== {collector.instance} ===")
-    print(f"nodes sampled: {len(records)}")
+
+def _dump_fields(records: list[dict], entity: str) -> None:
+    print(f"\n{entity} sampled: {len(records)}")
     if not records:
-        print("  (no nodes returned)")
+        print("  (none returned)")
         return
-
     fields: dict[str, dict] = defaultdict(lambda: {"count": 0, "sample": "", "iplike": 0})
     for r in records:
         for k, v in r.items():
@@ -61,14 +60,28 @@ def probe(collector: NnmiCollector) -> None:
                 f["sample"] = v
             if v and _IP_RE.search(str(v)):
                 f["iplike"] += 1
-
-    print(f"{'FIELD':26} {'NODES':>6} {'IP?':>4}  SAMPLE")
+    print(f"{'FIELD':26} {'ROWS':>6} {'IP?':>4}  SAMPLE")
     for k in sorted(fields, key=lambda k: (-fields[k]["iplike"], k)):
         f = fields[k]
         flag = "IP" if f["iplike"] else ""
-        sample = f["sample"][:48]
-        print(f"{k:26} {f['count']:>6} {flag:>4}  {sample}")
-    print("\n-> map the collector's IP field to the row(s) flagged 'IP' above.")
+        print(f"{k:26} {f['count']:>6} {flag:>4}  {f['sample'][:48]}")
+
+
+def probe(collector: NnmiCollector) -> None:
+    print(f"\n=== {collector.instance} ===")
+    nodes = _sample(collector, "/NodeBeanService/NodeBean", _NODE_NS, "getNodes")
+    _dump_fields(nodes, "NODES")
+
+    # IPAddressBean is where IPs live for nodes that carry no address on the
+    # node record. Sample it too so the node-id <-> ip join fields are visible.
+    try:
+        ips = _sample(
+            collector, "/IPAddressBeanService/IPAddressBean", _IPADDR_NS, "getIPAddresses"
+        )
+        _dump_fields(ips, "IP ADDRESSES")
+    except Exception as exc:  # noqa: BLE001 — diagnostic
+        print(f"\nIP ADDRESSES sample failed: {exc}")
+    print("\n-> node IP = a node field flagged 'IP', or IPAddressBean value joined by node id.")
 
 
 def main() -> int:
