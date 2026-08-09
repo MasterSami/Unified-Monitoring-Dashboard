@@ -189,6 +189,26 @@ class NnmiCollector(BaseCollector):
                 return rows
         return []
 
+    @staticmethod
+    def _first(record: dict, keys: tuple[str, ...]) -> str | None:
+        """Return the first non-empty value among ``keys`` (case-insensitive)."""
+        lowered = {k.lower(): v for k, v in record.items()}
+        for k in keys:
+            v = (record.get(k) or lowered.get(k.lower()) or "").strip()
+            if v:
+                return v
+        return None
+
+    #: Node fields that may carry the management IP, across NNMi versions.
+    _IP_FIELDS = (
+        "managementAddress",
+        "snmpAddress",
+        "managementIpAddress",
+        "primaryIpAddress",
+        "ipAddress",
+        "address",
+    )
+
     # --- Contract -----------------------------------------------------------
 
     def collect_hosts(self) -> list[dict]:
@@ -210,7 +230,7 @@ class NnmiCollector(BaseCollector):
                 {
                     "external_id": r.get("id") or r.get("uuid") or r.get("name"),
                     "hostname": r.get("name") or r.get("longName") or r.get("id"),
-                    "ip": r.get("managementAddress") or None,
+                    "ip": self._first(r, self._IP_FIELDS),
                     "status": status,
                     "group_name": r.get("deviceCategory")
                     or r.get("deviceFamily")
