@@ -13,6 +13,7 @@ the NNMi SDK web-service contract; the services live at the server root (not the
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from lxml import etree
@@ -200,7 +201,10 @@ class NnmiCollector(BaseCollector):
         return None
 
     #: Node fields that may carry the management IP, across NNMi versions.
+    #: ``activeAddr`` is the node's active management address in current NNMi;
+    #: the rest are older/alternate names kept as fallbacks.
     _IP_FIELDS = (
+        "activeAddr",
         "managementAddress",
         "snmpAddress",
         "managementIpAddress",
@@ -208,6 +212,21 @@ class NnmiCollector(BaseCollector):
         "ipAddress",
         "address",
     )
+
+    _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+
+    def _node_ip(self, record: dict) -> str | None:
+        """Resolve a node's IP: a dedicated address field, else an IP-only name."""
+        ip = self._first(record, self._IP_FIELDS)
+        if ip:
+            return ip
+        # Some nodes are identified only by their address (no DNS name), so the
+        # name/longName is itself the IP.
+        for key in ("longName", "name"):
+            val = (record.get(key) or "").strip()
+            if self._IPV4_RE.match(val):
+                return val
+        return None
 
     # --- Contract -----------------------------------------------------------
 
@@ -230,7 +249,7 @@ class NnmiCollector(BaseCollector):
                 {
                     "external_id": r.get("id") or r.get("uuid") or r.get("name"),
                     "hostname": r.get("name") or r.get("longName") or r.get("id"),
-                    "ip": self._first(r, self._IP_FIELDS),
+                    "ip": self._node_ip(r),
                     "status": status,
                     "group_name": r.get("deviceCategory")
                     or r.get("deviceFamily")
