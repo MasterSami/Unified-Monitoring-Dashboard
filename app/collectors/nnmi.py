@@ -43,6 +43,10 @@ _IPADDR_NS = "http://ipaddress.sdk.nms.ov.hp.com/"
 
 _PAGE_SIZE = 500
 _MAX_PAGES = 40  # safety cap (up to 20k objects/entity)
+# IPAddressBean can be much larger than the node table (many IPs per node), so
+# allow deeper paging when filling in missing node IPs — bounded, and we
+# early-exit as soon as every wanted node has an address.
+_IP_MAX_PAGES = 400
 _TIMEOUT = 120.0
 
 # SOAP request envelope: an AND expression carrying paging constraints and one
@@ -154,17 +158,17 @@ class NnmiCollector(BaseCollector):
                 items.append(record)
         return items
 
-    def _fetch(
+    def _iter_pages(
         self,
         path: str,
         ns: str,
         operation: str,
         cond: tuple[str, str, str],
-    ) -> list[dict]:
-        """Fetch all pages for one entity/condition."""
-        rows: list[dict] = []
+        max_pages: int = _MAX_PAGES,
+    ):
+        """Yield successive pages (lists of item dicts) for one entity/condition."""
         offset = 0
-        for _ in range(_MAX_PAGES):
+        for _ in range(max_pages):
             envelope = _SOAP_TEMPLATE.format(
                 ns=ns,
                 operation=operation,
@@ -175,10 +179,22 @@ class NnmiCollector(BaseCollector):
                 cond_value=cond[2],
             )
             page = self._parse_items(self._soap_post(path, envelope))
-            rows.extend(page)
+            yield page
             if len(page) < _PAGE_SIZE:
-                break
+                return
             offset += _PAGE_SIZE
+
+    def _fetch(
+        self,
+        path: str,
+        ns: str,
+        operation: str,
+        cond: tuple[str, str, str],
+    ) -> list[dict]:
+        """Fetch all pages for one entity/condition."""
+        rows: list[dict] = []
+        for page in self._iter_pages(path, ns, operation, cond):
+            rows.extend(page)
         return rows
 
     def _fetch_with_fallback(
@@ -233,36 +249,43 @@ class NnmiCollector(BaseCollector):
                 return val
         return None
 
-    def _fetch_ip_by_node(self) -> dict[str, str]:
+    def _fetch_ip_by_node(self, wanted: set[str]) -> dict[str, str]:
         """Map ``node id -> a management IP`` from IPAddressBean (best-effort).
 
-        Used to fill in nodes that carry no address on the node record itself
-        (e.g. instances that only return a DNS name). One non-loopback IPv4 per
-        node is kept. Any failure returns an empty map and never breaks host
+        Fills in nodes that carry no address on the node record itself (e.g.
+        instances that only return a DNS name). Only addresses for the ``wanted``
+        node ids are kept, and paging stops as soon as every wanted node has one
+        — so a huge IP table isn't read in full. One non-loopback IPv4 per node.
+        Any failure returns whatever was found so far and never breaks host
         collection.
         """
+        by_node: dict[str, str] = {}
+        if not wanted:
+            return by_node
         try:
             # IPAddress has no "name" attribute, so the usual name-LIKE-% filter
-            # 500s; query by id instead. Catch EVERYTHING — this is an optional
-            # enrichment and must never break host collection.
-            records = self._fetch(
+            # 500s; query by id instead. Catch EVERYTHING — optional enrichment.
+            pages = self._iter_pages(
                 "/IPAddressBeanService/IPAddressBean",
                 _IPADDR_NS,
                 "getIPAddresses",
                 ("id", "GE", "0"),
+                max_pages=_IP_MAX_PAGES,
             )
+            for page in pages:
+                for r in page:
+                    node_id = self._first(r, self._IPADDR_NODE_FIELDS)
+                    if not node_id or node_id not in wanted or node_id in by_node:
+                        continue
+                    ip = self._first(r, self._IPADDR_VALUE_FIELDS)
+                    if not ip or ip.startswith("127.") or ip == "0.0.0.0" \
+                            or not self._IPV4_RE.match(ip):
+                        continue
+                    by_node[node_id] = ip
+                if wanted <= by_node.keys():  # every wanted node found -> stop
+                    break
         except Exception as exc:  # noqa: BLE001 — best-effort enrichment
-            self.logger.warning("IPAddress fetch failed (skipped): %s", exc)
-            return {}
-        by_node: dict[str, str] = {}
-        for r in records:
-            node_id = self._first(r, self._IPADDR_NODE_FIELDS)
-            ip = self._first(r, self._IPADDR_VALUE_FIELDS)
-            if not node_id or not ip or node_id in by_node:
-                continue
-            if ip.startswith("127.") or ip == "0.0.0.0" or not self._IPV4_RE.match(ip):
-                continue
-            by_node[node_id] = ip
+            self.logger.warning("IPAddress fetch failed (partial, skipped): %s", exc)
         return by_node
 
     # --- Contract -----------------------------------------------------------
@@ -302,7 +325,7 @@ class NnmiCollector(BaseCollector):
         # Only hit IPAddressBean when some nodes lacked a direct address (so
         # instances whose nodes all carry activeAddr pay no extra call).
         if missing:
-            ip_by_node = self._fetch_ip_by_node()
+            ip_by_node = self._fetch_ip_by_node(set(missing))
             for node_id, host in missing.items():
                 ip = ip_by_node.get(node_id)
                 if ip:
