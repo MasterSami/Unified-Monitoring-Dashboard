@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unified Monitoring Dashboard — Project Deck</title>
+<style>
+  /* ---------- Tokens: light (bare :root) ---------- */
+  :root {
+    --bg: #eef2f9;
+    --bg-2: #e6ebf5;
+    --surface: #ffffff;
+    --ink: #101a2e;
+    --ink-soft: #33405a;
+    --muted: #5c6b84;
+    --line: #d7deec;
+    --accent: #0e7c8b;
+    --accent-ink: #0b5f6b;
+    --grid: rgba(16,26,46,0.05);
+    --up: #12a150;
+    --warn: #c77d0a;
+    --crit: #d5432f;
+    --z: #e11d48;
+    --d: #7c3aed;
+    --n: #2563eb;
+    --s: #d97706;
+    --shadow: 0 24px 60px -34px rgba(16,26,46,0.45);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #070b14; --bg-2: #0a1120; --surface: #101a2c; --ink: #eaf1fb;
+      --ink-soft: #c2ccdd; --muted: #8b9ab4; --line: #1e2a44; --accent: #22d3ee;
+      --accent-ink: #67e8f9; --grid: rgba(255,255,255,0.045); --up: #34d399;
+      --warn: #fbbf24; --crit: #f87171; --z: #fb7185; --d: #a78bfa; --n: #60a5fa;
+      --s: #fbbf24; --shadow: 0 30px 70px -30px rgba(0,0,0,0.7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #070b14; --bg-2: #0a1120; --surface: #101a2c; --ink: #eaf1fb;
+    --ink-soft: #c2ccdd; --muted: #8b9ab4; --line: #1e2a44; --accent: #22d3ee;
+    --accent-ink: #67e8f9; --grid: rgba(255,255,255,0.045); --up: #34d399;
+    --warn: #fbbf24; --crit: #f87171; --z: #fb7185; --d: #a78bfa; --n: #60a5fa;
+    --s: #fbbf24; --shadow: 0 30px 70px -30px rgba(0,0,0,0.7);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-snap-type: y proximity; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 100% 44px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 44px 100%,
+      radial-gradient(1200px 700px at 85% -10%, var(--bg-2), var(--bg));
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace; }
+
+  /* ---------- Slide frame ---------- */
+  .slide {
+    min-height: 100vh; min-height: 100svh;
+    scroll-snap-align: start;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(28px, 6vw, 92px);
+    max-width: 1180px; margin: 0 auto;
+    position: relative;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 22px;
+  }
+  .eyebrow .n { color: var(--muted); }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--accent);
+           box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse { animation: pulse 2.4s ease-out infinite; }
+    @keyframes pulse { 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent);}
+      70%{box-shadow:0 0 0 12px transparent;} 100%{box-shadow:0 0 0 0 transparent;} }
+  }
+  h1 { font-size: clamp(40px, 8vw, 96px); line-height: 1.02; margin: 0 0 20px;
+       letter-spacing: -0.025em; font-weight: 800; text-wrap: balance; }
+  h2 { font-size: clamp(28px, 5vw, 54px); line-height: 1.08; margin: 0 0 20px;
+       letter-spacing: -0.015em; font-weight: 780; text-wrap: balance; }
+  .lead { font-size: clamp(17px, 2.1vw, 23px); color: var(--ink-soft); max-width: 52ch; margin: 0; }
+  .kicker { color: var(--accent-ink); }
+
+  .rise { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .rise.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .rise { opacity: 1; transform: none; transition: none; } }
+
+  /* ---------- Components ---------- */
+  .cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-top: 34px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+          padding: 22px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 8px; font-size: 18px; font-weight: 720; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .tag { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px;
+         font-family: ui-monospace, Menlo, monospace; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .d-z{background:var(--z)} .d-d{background:var(--d)} .d-n{background:var(--n)} .d-s{background:var(--s)}
+
+  ul.clean { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 14px; max-width: 56ch; }
+  ul.clean li { display: flex; gap: 12px; align-items: flex-start; font-size: 17px; color: var(--ink-soft); }
+  ul.clean li::before { content: "▹"; color: var(--accent); font-weight: 800; margin-top: 1px; }
+
+  .stat-row { display: flex; flex-wrap: wrap; gap: 30px 46px; margin-top: 30px; }
+  .stat b { display: block; font-size: clamp(32px, 5vw, 52px); font-weight: 820; letter-spacing: -0.02em;
+            font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 14px; }
+
+  .silos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-top: 30px; }
+  .silo { border: 1px dashed var(--line); border-radius: 14px; padding: 18px; text-align: center; background: var(--surface); }
+  .silo .scr { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+
+  .flow { display: grid; gap: 14px; margin-top: 30px; }
+  .layer { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px;
+           box-shadow: var(--shadow); }
+  .layer .lab { font-family: ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .14em;
+                text-transform: uppercase; color: var(--accent-ink); margin: 0 0 10px; }
+  .layer .row { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 650;
+          background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .arrow { text-align: center; color: var(--muted); font-size: 22px; line-height: 1; }
+
+  .note { margin-top: 30px; border-inline-start: 3px solid var(--accent); padding: 6px 18px; color: var(--ink-soft);
+          background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 12px 12px 0; max-width: 66ch; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 30px; }
+  @media (max-width: 720px){ .two { grid-template-columns: 1fr; } }
+  .col { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: var(--shadow); }
+  .col h3 { margin: 0 0 14px; font-size: 15px; letter-spacing: .06em; text-transform: uppercase;
+            font-family: ui-monospace, Menlo, monospace; }
+  .col.now h3 { color: var(--up); } .col.next h3 { color: var(--warn); }
+  .col ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+  .col li { display: flex; gap: 10px; font-size: 15.5px; color: var(--ink-soft); }
+  .col.now li::before { content: "✓"; color: var(--up); font-weight: 800; }
+  .col.next li::before { content: "→"; color: var(--warn); font-weight: 800; }
+
+  .rail { position: fixed; inset-inline-start: 18px; top: 50%; transform: translateY(-50%); display: grid; gap: 12px; z-index: 20; }
+  .rail a { width: 9px; height: 9px; border-radius: 50%; background: var(--line); display: block; transition: .3s; }
+  .rail a.on { background: var(--accent); transform: scale(1.5); }
+  .count { position: fixed; inset-inline-end: 22px; bottom: 18px; font-family: ui-monospace, Menlo, monospace;
+           font-size: 12px; color: var(--muted); z-index: 20; }
+  .prog { position: fixed; inset-block-start: 0; inset-inline: 0; height: 3px; background: var(--accent); width: 0;
+          z-index: 30; transition: width .15s linear; }
+  .hint { position: absolute; inset-block-end: 26px; inset-inline-start: clamp(28px,6vw,92px);
+          color: var(--muted); font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
+  @media (prefers-reduced-motion: no-preference){ .hint { animation: bob 1.8s ease-in-out infinite; } @keyframes bob{50%{transform:translateY(6px)}} }
+  .brand { position: fixed; inset-block-start: 16px; inset-inline-end: 22px; font-family: ui-monospace, Menlo, monospace;
+           font-size: 12px; letter-spacing: .12em; color: var(--muted); z-index: 20; }
+</style>
+</head>
+<body>
+
+<div class="prog" id="prog"></div>
+<nav class="rail" id="rail" aria-label="slides"></nav>
+<div class="count" id="count">01 / 11</div>
+<div class="brand">UMD · 2026</div>
+
+<!-- 1 · HERO -->
+<section class="slide" id="s1">
+  <p class="eyebrow rise"><span class="pulse"></span> Unified Monitoring Dashboard</p>
+  <h1 class="rise">One screen —<br><span class="kicker">instead of four consoles.</span></h1>
+  <p class="lead rise">A single platform that unifies Zabbix, Dynatrace, NNMi and SiteScope in one place — hosts, alerts, capacity, and topology.</p>
+  <div class="stat-row rise">
+    <div class="stat"><b>4</b><span>platforms integrated</span></div>
+    <div class="stat"><b>1</b><span>unified data model</span></div>
+    <div class="stat"><b>0</b><span>touch on production servers</span></div>
+  </div>
+  <div class="hint">↓ scroll</div>
+</section>
+
+<!-- 2 · PROBLEM -->
+<section class="slide" id="s2">
+  <p class="eyebrow rise"><span class="n">01</span> · The Problem</p>
+  <h2 class="rise">Monitoring is scattered across silos</h2>
+  <p class="lead rise">A NOC engineer jumps between four separate systems to understand a single incident — each tool has its own console, severity language, and inventory.</p>
+  <div class="silos rise">
+    <div class="silo"><div class="tag"><span class="dot d-z"></span>Zabbix</div><div class="scr">console #1</div></div>
+    <div class="silo"><div class="tag"><span class="dot d-d"></span>Dynatrace</div><div class="scr">console #2</div></div>
+    <div class="silo"><div class="tag"><span class="dot d-n"></span>NNMi</div><div class="scr">console #3</div></div>
+    <div class="silo"><div class="tag"><span class="dot d-s"></span>SiteScope</div><div class="scr">console #4</div></div>
+  </div>
+  <div class="note rise">Different severity language per tool · duplicate hosts across tools · no unified inventory or view.</div>
+</section>
+
+<!-- 3 · IDEA -->
+<section class="slide" id="s3">
+  <p class="eyebrow rise"><span class="n">02</span> · The Idea</p>
+  <h2 class="rise">What if it were all in <span class="kicker">one place</span>?</h2>
+  <p class="lead rise">Instead of opening four screens, open one — see every host and alert across all tools, in one language, while each tool keeps its own native severity.</p>
+  <ul class="clean rise">
+    <li>One view for all hosts and all alerts</li>
+    <li>Correlate across tools (the same server seen in multiple sources)</li>
+    <li>Know each source's health — see the moment a feed stops</li>
+  </ul>
+</section>
+
+<!-- 4 · WHAT IT IS -->
+<section class="slide" id="s4">
+  <p class="eyebrow rise"><span class="n">03</span> · The Solution</p>
+  <h2 class="rise">Unified Monitoring Dashboard</h2>
+  <p class="lead rise">A web app that pulls data from each tool, normalizes it into one shape, and presents it in ready-made views — with multi-instance support per tool.</p>
+  <div class="cards rise">
+    <div class="card"><h3>Unified normalization</h3><p>Every tool maps into the same Host / Alert schema.</p></div>
+    <div class="card"><h3>Multi-instance</h3><p>Zabbix-34/140 · NNMi-12/13/76 · SiteScope-141/34/140.</p></div>
+    <div class="card"><h3>Native severity</h3><p>NNMi stays Critical/Major, Zabbix Disaster/High… each in its own words.</p></div>
+    <div class="card"><h3>Source health</h3><p>Collector health — a stalled feed shows up immediately.</p></div>
+  </div>
+</section>
+
+<!-- 5 · PLATFORMS -->
+<section class="slide" id="s5">
+  <p class="eyebrow rise"><span class="n">04</span> · Integrated Platforms</p>
+  <h2 class="rise">Four today — more coming</h2>
+  <div class="cards rise">
+    <div class="card"><div class="tag"><span class="dot d-z"></span>Zabbix</div><p style="margin-top:10px">Hosts + alerts + capacity (CPU/mem/disk) via the API.</p></div>
+    <div class="card"><div class="tag"><span class="dot d-d"></span>Dynatrace</div><p style="margin-top:10px">Services + alerts + capacity + the service map.</p></div>
+    <div class="card"><div class="tag"><span class="dot d-n"></span>NNMi</div><p style="margin-top:10px">Network devices + incidents + L2 topology (SOAP).</p></div>
+    <div class="card"><div class="tag"><span class="dot d-s"></span>SiteScope</div><p style="margin-top:10px">Hosts + alerts through a safe forwarder (push).</p></div>
+  </div>
+  <div class="note rise">Coming: <b>Huawei DigitalView</b> — through the same normalization model.</div>
+</section>
+
+<!-- 6 · VIEWS -->
+<section class="slide" id="s6">
+  <p class="eyebrow rise"><span class="n">05</span> · The Views</p>
+  <h2 class="rise">What you see in the dashboard</h2>
+  <div class="cards rise">
+    <div class="card"><h3>Overview</h3><p>Summary: hosts by platform, statuses, top alerts.</p></div>
+    <div class="card"><h3>Agents</h3><p>Each host, its status and its alerts — filter by tool and group.</p></div>
+    <div class="card"><h3>Capacity</h3><p>CPU / memory / disk usage — used vs total per server.</p></div>
+    <div class="card"><h3>Alerts</h3><p>Every alert in each tool's own native severity.</p></div>
+    <div class="card"><h3>Topology</h3><p>NNMi network map and Dynatrace services — table and graph.</p></div>
+    <div class="card"><h3>Export</h3><p>CSV / XLSX export (gated by env config).</p></div>
+  </div>
+</section>
+
+<!-- 7 · ARCHITECTURE -->
+<section class="slide" id="s7">
+  <p class="eyebrow rise"><span class="n">06</span> · Architecture</p>
+  <h2 class="rise">How the data flows</h2>
+  <div class="flow rise">
+    <div class="layer">
+      <p class="lab">Sources</p>
+      <div class="row">
+        <span class="chip">Zabbix API</span><span class="chip">Dynatrace API</span>
+        <span class="chip">NNMi SOAP</span><span class="chip">SiteScope forwarder (push)</span>
+      </div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer">
+      <p class="lab">Normalize · Scheduler</p>
+      <div class="row">
+        <span class="chip">Collectors (pull) + Ingest (push)</span>
+        <span class="chip">Unified normalization · idempotent upsert</span>
+      </div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer">
+      <p class="lab">Store → Present</p>
+      <div class="row">
+        <span class="chip">SQLite / PostgreSQL</span>
+        <span class="chip">FastAPI + HTMX</span>
+        <span class="chip">Overview · Agents · Capacity · Alerts · Topology</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 8 · SITESCOPE SAFETY -->
+<section class="slide" id="s8">
+  <p class="eyebrow rise"><span class="n">07</span> · Safety</p>
+  <h2 class="rise">SiteScope: a critical production server — <span class="kicker">zero touch</span></h2>
+  <p class="lead rise">The SiteScope integration is designed so the production server is never affected in any way.</p>
+  <ul class="clean rise">
+    <li><b>Read-only</b> log reads — the service and the Netcool probe keep running normally</li>
+    <li>Credentials are <b>redacted on the box</b> before a single line leaves it</li>
+    <li>No service restart · no config change · no log deletion · no firewall change</li>
+    <li>State-wins-over-severity for dirty data · metric-less events are flagged, not dropped</li>
+  </ul>
+</section>
+
+<!-- 9 · DATA MODEL -->
+<section class="slide" id="s9">
+  <p class="eyebrow rise"><span class="n">08</span> · Data Model</p>
+  <h2 class="rise">Five tables · one shape</h2>
+  <p class="lead rise">No table per tool — a <span class="mono">source_platform</span> column separates them, and a composite unique key makes every upsert idempotent.</p>
+  <div class="cards rise">
+    <div class="card"><h3 class="mono">hosts</h3><p>All servers + capacity metrics.</p></div>
+    <div class="card"><h3 class="mono">alerts</h3><p>All alerts + SiteScope fields.</p></div>
+    <div class="card"><h3 class="mono">collector_runs</h3><p>Per-source health.</p></div>
+    <div class="card"><h3 class="mono">topology_nodes / edges</h3><p>Nodes and links.</p></div>
+  </div>
+  <div class="note rise mono">UNIQUE (source_platform, source_instance, external_id) — the same row updates, never duplicates.</div>
+</section>
+
+<!-- 10 · COVERAGE + ROADMAP -->
+<section class="slide" id="s10">
+  <p class="eyebrow rise"><span class="n">09</span> · Coverage</p>
+  <h2 class="rise">Today · and the road ahead</h2>
+  <div class="two rise">
+    <div class="col now">
+      <h3>Covered today</h3>
+      <ul>
+        <li>Zabbix · Dynatrace · NNMi · SiteScope</li>
+        <li>Hosts + Alerts + Capacity per tool</li>
+        <li>Topology (NNMi L2 + Dynatrace map)</li>
+        <li>Multi-instance + source health + Export</li>
+      </ul>
+    </div>
+    <div class="col next">
+      <h3>The road ahead</h3>
+      <ul>
+        <li>SiteScope API: full inventory + real metrics</li>
+        <li>Huawei DigitalView</li>
+        <li>Live network deployment (forwarder + firewall)</li>
+        <li>Unified alerting &amp; reporting</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · CLOSING -->
+<section class="slide" id="s11">
+  <p class="eyebrow rise"><span class="pulse"></span> Unified Monitoring Dashboard</p>
+  <h1 class="rise">One source<br><span class="kicker">of truth.</span></h1>
+  <p class="lead rise">From four separate consoles… to one screen that brings it all together — safely, with a unified model, and built to extend.</p>
+  <p class="lead rise" style="margin-top:22px; color:var(--muted)">Thank you · Questions?</p>
+</section>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const rail = document.getElementById('rail');
+  const count = document.getElementById('count');
+  const prog = document.getElementById('prog');
+  const pad = n => String(n).padStart(2,'0');
+
+  slides.forEach((s,i)=>{
+    const a = document.createElement('a');
+    a.href = '#'+s.id; a.setAttribute('aria-label','slide '+(i+1));
+    rail.appendChild(a);
+  });
+  const dots = Array.from(rail.children);
+
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        e.target.querySelectorAll('.rise').forEach((el,i)=>{
+          setTimeout(()=>el.classList.add('in'), i*90);
+        });
+        const idx = slides.indexOf(e.target);
+        dots.forEach((d,i)=>d.classList.toggle('on', i===idx));
+        count.textContent = pad(idx+1)+' / '+pad(slides.length);
+      }
+    });
+  }, {threshold: 0.5});
+  slides.forEach(s=>io.observe(s));
+
+  addEventListener('scroll', ()=>{
+    const h = document.documentElement;
+    const p = h.scrollTop / (h.scrollHeight - h.clientHeight || 1);
+    prog.style.width = (p*100)+'%';
+  }, {passive:true});
+</script>
+</body>
+</html>
