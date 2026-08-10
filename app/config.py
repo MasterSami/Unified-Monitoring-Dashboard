@@ -60,15 +60,43 @@ class Settings(BaseSettings):
     ingest_max_events: int = 500
     ingest_max_bytes: int = 5_000_000
 
-    # --- SiteScope LOCAL DEMO (env-only, no code changes needed) ------------
-    # Point this at a REDACTED SiteScope .tsv on disk to have UMD auto-load it
-    # on startup and refresh it every poll interval — SiteScope then shows up as
-    # a full platform (hosts + alerts) with no forwarder and no network access
-    # to the SiteScope server. Empty (default) = demo off. Use this to try the
-    # whole scenario on a laptop; switch to the on-box forwarder for production.
+    # --- SiteScope LOCAL auto-load (env-only, no code changes needed) -------
+    # Point UMD at REDACTED SiteScope .tsv file(s) on disk and it auto-loads them
+    # on startup and re-reads them every poll interval — SiteScope shows up as a
+    # full platform (hosts + alerts). If the file is kept fresh (a scheduled
+    # redact-export on the SiteScope box regenerating it), the data stays LIVE.
+    #
+    # Single file (legacy):
     sitescope_demo_file: str = ""
-    # Instance label the demo data is filed under (shows in the collector list).
     sitescope_demo_instance: str = "SiteScope-141"
+    #
+    # Multiple SiteScope servers at once — a ';'-separated list of
+    # "Instance=Path" entries (Windows paths keep their drive colon):
+    #   SITESCOPE_DEMO_FILES=SiteScope-141=D:\umd\sis141.tsv;SiteScope-140=D:\umd\sis140.tsv;SiteScope-34=D:\umd\sis34.tsv
+    sitescope_demo_files: str = ""
+
+    @property
+    def sitescope_demo_map(self) -> list[tuple[str, str]]:
+        """Parse the demo config into ``[(instance, path), ...]`` (deduped)."""
+        pairs: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def _add(instance: str, path: str) -> None:
+            instance, path = instance.strip(), path.strip()
+            key = instance or path
+            if path and key not in seen:
+                seen.add(key)
+                pairs.append((instance or "SiteScope", path))
+
+        if self.sitescope_demo_file:
+            _add(self.sitescope_demo_instance or "SiteScope-141", self.sitescope_demo_file)
+        for entry in self.sitescope_demo_files.split(";"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            instance, sep, path = entry.partition("=")
+            _add(instance, path) if sep else _add("SiteScope", instance)
+        return pairs
 
     @property
     def enabled_collectors_list(self) -> list[str]:

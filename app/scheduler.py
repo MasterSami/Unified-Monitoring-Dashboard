@@ -173,26 +173,20 @@ def get_service() -> CollectorService:
 _SITESCOPE_DEMO_JOB_ID = "sitescope_demo_load"
 
 
-def _run_sitescope_demo_job() -> None:
-    """Load a redacted SiteScope .tsv from disk through the shared ingest path.
+def _load_sitescope_file(instance: str, path: str) -> None:
+    """Load one redacted SiteScope .tsv through the shared ingest path.
 
-    Enabled only when ``SITESCOPE_DEMO_FILE`` is set. Lets the whole SiteScope
-    scenario run on a laptop (hosts + alerts, auto-refreshing) with no forwarder
-    and no access to the SiteScope server — the ONLY difference from production
-    is env config. Reads the file read-only; never writes to it.
+    Read-only on the file; records a CollectorRun so the instance shows in the
+    collector list. Contained — one bad file never affects the others or the
+    scheduler.
     """
     from app.sitescope_ingest import ingest_lines  # lazy: avoids import cycle
 
-    settings = get_settings()
-    path = settings.sitescope_demo_file
-    instance = settings.sitescope_demo_instance or "SiteScope-141"
-    if not path:
-        return
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             lines = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
     except OSError as exc:
-        logger.warning("sitescope demo file unreadable (%s): %s", path, exc)
+        logger.warning("sitescope file unreadable (%s -> %s): %s", instance, path, exc)
         return
 
     db: Session = SessionLocal()
@@ -213,14 +207,26 @@ def _run_sitescope_demo_job() -> None:
         )
         db.commit()
         logger.info(
-            "sitescope demo: loaded %d line(s) from %s -> %d event(s), %d host(s)",
-            len(lines), path, counts.events, counts.hosts,
+            "sitescope: loaded %d line(s) for %s from %s -> %d event(s), %d host(s)",
+            len(lines), instance, path, counts.events, counts.hosts,
         )
-    except Exception:  # pragma: no cover - demo must never crash the scheduler
+    except Exception:  # pragma: no cover - must never crash the scheduler
         db.rollback()
-        logger.exception("sitescope demo load failed")
+        logger.exception("sitescope load failed for %s", instance)
     finally:
         db.close()
+
+
+def _run_sitescope_demo_job() -> None:
+    """Auto-load every configured SiteScope .tsv (one or many instances).
+
+    Enabled when SITESCOPE_DEMO_FILE / SITESCOPE_DEMO_FILES is set. Lets the whole
+    SiteScope scenario run on a laptop (hosts + alerts, auto-refreshing) with no
+    forwarder — the ONLY difference from production is env config. If the files
+    are kept fresh on disk, the data stays live.
+    """
+    for instance, path in get_settings().sitescope_demo_map:
+        _load_sitescope_file(instance, path)
 
 
 def _run_topology_job() -> None:
@@ -272,7 +278,8 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     # Optional local SiteScope demo: if SITESCOPE_DEMO_FILE is set, auto-load
     # that redacted .tsv on startup and refresh it every poll interval, so
     # SiteScope appears as a full platform with no forwarder / no server access.
-    if settings.sitescope_demo_file:
+    demo_map = settings.sitescope_demo_map
+    if demo_map:
         scheduler.add_job(
             _run_sitescope_demo_job,
             trigger="interval",
@@ -284,8 +291,9 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
             next_run_time=datetime.now(),
         )
         logger.info(
-            "sitescope demo enabled; loading %s every %d minute(s)",
-            settings.sitescope_demo_file, settings.poll_interval_minutes,
+            "sitescope auto-load enabled for %d instance(s): %s (every %d min)",
+            len(demo_map), ", ".join(i for i, _ in demo_map),
+            settings.poll_interval_minutes,
         )
 
     scheduler.start()
