@@ -478,6 +478,98 @@ def export_alerts_xlsx(
     return _xlsx_response(fname, data)
 
 
+def _db_report_rows(db: Session, platform: str) -> list[list]:
+    """Best-effort weekly-report rows from stored host records (one per host).
+
+    Used for Dynatrace (and as a fallback) where per-filesystem/trend data isn't
+    pulled live: fills the same columns from the Host snapshot, N/A where unknown.
+    """
+    from app.zabbix_report import REPORT_COLUMNS  # noqa: F401 (column order)
+
+    stmt = select(Host).where(Host.source_platform == platform).order_by(Host.hostname.asc())
+    rows: list[list] = []
+    for h in db.scalars(stmt):
+        m = h.metrics or {}
+        rows.append([
+            h.hostname, h.ip or "N/A",
+            m.get("cores", 0), h.cpu_pct if h.cpu_pct is not None else 0,
+            m.get("mem_total_gb", 0.0), int(h.mem_pct) if h.mem_pct is not None else 0,
+            m.get("disk_total_gb", 0.0), m.get("disk_used_gb", 0.0),
+            "N/A", "N/A",
+            h.group_name or "N/A", "N/A",
+            "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+        ])
+    return rows
+
+
+@router.get("/capacity_report.xlsx")
+def export_capacity_report_xlsx(
+    platform: str | None = Query(default="all"),
+    instance: str | None = Query(default="all"),
+    days: int = Query(default=7),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Rich capacity export (the weekly-report columns).
+
+    Zabbix rows are pulled LIVE per instance (cores, cpu/mem/disk, per-filesystem,
+    and min/avg/max CPU/RAM trends over the window); Dynatrace is best-effort from
+    the stored snapshot. Export only — the on-screen view is unchanged.
+    """
+    _require_export(settings)
+    from app.export_xlsx import build_workbook
+    from app.routers.pages import parse_dt
+    from app.servers import load_servers
+    from app.zabbix_report import REPORT_COLUMNS, weekly_report_rows
+
+    df, dt = parse_dt(date_from), parse_dt(date_to)
+    if df and dt and dt > df:
+        days = max(1, (dt - df).days or 1)
+
+    rows: list[list] = []
+
+    # --- Zabbix: live report per selected instance ---
+    zbx_instances: list[str] = []
+    if not settings.mock_mode and platform in (None, "all", "zabbix"):
+        if instance and instance != "all":
+            zbx_instances = [instance]
+        else:
+            zbx_instances = [s.name for s in load_servers(settings) if s.platform == "zabbix"]
+    for inst in zbx_instances:
+        collector = get_service().get(inst)
+        if collector is None or getattr(collector, "name", "") != "zabbix":
+            continue
+        try:
+            rows.extend(weekly_report_rows(collector, days))
+        except Exception:  # noqa: BLE001 — one instance failing must not kill the export
+            continue
+
+    # --- Dynatrace: best-effort from the snapshot ---
+    if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
+        rows.extend(_db_report_rows(db, "dynatrace"))
+
+    # Mock/demo (no live Zabbix): fall back to the snapshot for the whole view.
+    if settings.mock_mode and not rows:
+        for pf in ("zabbix", "dynatrace"):
+            rows.extend(_db_report_rows(db, pf))
+
+    period = _period_str(date_from, date_to) if (df or dt) else f"trend window: last {days} days"
+    filters = ", ".join(
+        f"{k}={v}" for k, v in (("platform", platform), ("instance", instance)) if v and v != "all"
+    ) or "none"
+    data = build_workbook(
+        sheet_title="Capacity Report",
+        period=period,
+        filters_summary=filters,
+        columns=REPORT_COLUMNS,
+        rows=rows,
+    )
+    fname = f"SAMIX_capacity_report_{_fname_stamp(date_from)}_{_fname_stamp(date_to)}.xlsx"
+    return _xlsx_response(fname, data)
+
+
 # --- Topology ---------------------------------------------------------------
 
 #: Map the UI "view" name to the platform that owns that kind of graph.

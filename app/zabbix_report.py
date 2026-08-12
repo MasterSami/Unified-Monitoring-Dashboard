@@ -263,3 +263,167 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
     }
     _cache[key] = (time.time() + _cache_ttl(), detail)
     return detail
+
+
+# --- Full "weekly report" export (batch, one row per filesystem) ------------
+
+REPORT_COLUMNS = [
+    "Host Name", "Host IP", "Total Cpu Cores", "Cpu Usage Percentage",
+    "Total Memory", "Memory Usage Percentage", "Total VM Disk Size",
+    "Total VM Used Disk Size", "VM Space For Each Drive",
+    "VM Used Space For Each Drive", "Service", "Owner",
+    "Max Ram Usage", "Min Ram Usage", "Avg Ram Usage",
+    "Max Cpu Usage", "Min Cpu Usage", "Avg Cpu Usage",
+]
+
+_OWNER_TAGS = ["owner", "team", "poc", "responsible", "support group"]
+_OWNER_INV = ["poc_1_email", "poc_1_name", "poc_2_email", "poc_2_name",
+              "contact", "notes", "type_full", "type"]
+_HOST_BATCH = 200
+_TREND_BATCH = 150
+
+
+def _chunks(seq, n):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def _resolve_owner(host: dict) -> str:
+    tags = host.get("tags") or []
+    inv = host.get("inventory") or {}
+    macros = host.get("macros") or []
+    for want in _OWNER_TAGS:
+        vals = [t["value"] for t in tags if t.get("tag", "").lower() == want and t.get("value")]
+        if vals:
+            return ", ".join(vals)
+    if isinstance(inv, dict):
+        for f in _OWNER_INV:
+            if inv.get(f):
+                return inv[f]
+    for m in macros:
+        if m.get("macro", "").strip("{}$ ").upper() in ("OWNER", "TEAM"):
+            return m.get("value", "")
+    return "N/A"
+
+
+def _report_hosts(collector) -> list[dict]:
+    params = {
+        "output": ["hostid", "host", "name", "status"],
+        "selectInterfaces": ["ip", "main"],
+        "selectInventory": "extend",
+        "selectTags": "extend",
+        "selectMacros": ["macro", "value"],
+        "filter": {"status": 0},
+    }
+    for sel in ("selectHostGroups", "selectGroups"):
+        try:
+            p = dict(params)
+            p[sel] = ["name"]
+            hosts = collector._rpc("host.get", p)
+            for h in hosts:
+                h["_groups"] = h.get("hostgroups") or h.get("groups") or []
+            return hosts
+        except Exception:  # noqa: BLE001 — try the older selector
+            if sel == "selectGroups":
+                raise
+    return []
+
+
+def weekly_report_rows(collector, days: int = 7) -> list[list]:
+    """Return the full weekly-report rows (one per filesystem) for a Zabbix
+    instance — the exact columns of the standalone script, via the collector's
+    authenticated _rpc. Heavy (live item/trend pulls); used only on export.
+    """
+    hosts = _report_hosts(collector)
+    hostids = [h["hostid"] for h in hosts]
+
+    items_by_host: dict[str, list] = {}
+    all_items: list[dict] = []
+    for batch in _chunks(hostids, _HOST_BATCH):
+        res = collector._rpc("item.get", {
+            "hostids": batch,
+            "output": ["itemid", "hostid", "key_", "name", "value_type", "units", "lastvalue"],
+            "search": {"key_": _KEY_SEARCH}, "searchByAny": True, "startSearch": True,
+            "filter": {"status": 0}, "webitems": False,
+        })
+        for it in res:
+            items_by_host.setdefault(it["hostid"], []).append(it)
+        all_items.extend(res)
+
+    last = _last_values(collector, all_items)
+
+    per_host, trend_ids = {}, []
+    for h in hosts:
+        c = _classify(items_by_host.get(h["hostid"], []))
+        per_host[h["hostid"]] = c
+        for k in ("cpu_util", "mem_util"):
+            if c[k]:
+                trend_ids.append(c[k]["itemid"])
+    stats: dict = {}
+    for chunk in _chunks(trend_ids, _TREND_BATCH):
+        stats.update(_trends(collector, chunk, days))
+
+    rows: list[list] = []
+    for h in hosts:
+        c = per_host[h["hostid"]]
+        if not (c["cpu_util"] or c["mem_total"] or c["fs"]):
+            continue
+        ip = "N/A"
+        for want in ("1", "0"):
+            for i in h.get("interfaces", []) or []:
+                if i.get("main") == want and i.get("ip"):
+                    ip = i["ip"]
+                    break
+            if ip != "N/A":
+                break
+
+        def lv(it):
+            return last.get(it["itemid"]) if it else None
+
+        cores = lv(c["cpu_num"])
+        cpu_now = lv(c["cpu_util"])
+        mem_tot = lv(c["mem_total"])
+        mem_now = lv(c["mem_util"])
+        if mem_now is not None and c["mem_util_inverted"]:
+            mem_now = 100.0 - mem_now
+        cs = stats.get(c["cpu_util"]["itemid"]) if c["cpu_util"] else None
+        ms = stats.get(c["mem_util"]["itemid"]) if c["mem_util"] else None
+        if ms and c["mem_util_inverted"]:
+            ms = (100 - ms[2], 100 - ms[1], 100 - ms[0])
+
+        fs_rows, tot_sum, used_sum = [], 0.0, 0.0
+        for fsname, slot in sorted(c["fs"].items()):
+            t = lv(slot["total"])
+            u = lv(slot["used"])
+            if t:
+                tot_sum += t
+            if u:
+                used_sum += u
+            fs_rows.append((slot["label"] or fsname, t, u))
+        if not fs_rows:
+            fs_rows = [("N/A", None, None)]
+
+        base = {
+            "Host Name": h.get("name") or h.get("host"),
+            "Host IP": ip,
+            "Total Cpu Cores": int(cores) if cores is not None else 0,
+            "Cpu Usage Percentage": round(cpu_now, 2) if cpu_now is not None else 0,
+            "Total Memory": round(mem_tot / GB, 1) if mem_tot else 0.0,
+            "Memory Usage Percentage": int(round(mem_now)) if mem_now is not None else 0,
+            "Total VM Disk Size": round(tot_sum / GB, 1),
+            "Total VM Used Disk Size": round(used_sum / GB, 1),
+            "Service": str([g["name"] for g in h.get("_groups", [])]),
+            "Owner": _resolve_owner(h),
+            "Max Ram Usage": round(ms[2], 1) if ms else 0,
+            "Min Ram Usage": round(ms[0], 1) if ms else 0,
+            "Avg Ram Usage": round(ms[1], 1) if ms and ms[1] is not None else 0,
+            "Max Cpu Usage": f"{round(cs[2], 1)}%" if cs else "0%",
+            "Min Cpu Usage": f"{round(cs[0], 1)}%" if cs else "0%",
+            "Avg Cpu Usage": f"{round(cs[1])}%" if cs and cs[1] is not None else "0%",
+        }
+        for label, t, u in fs_rows:
+            r = dict(base)
+            r["VM Space For Each Drive"] = f"{label} : {round(t / GB, 1) if t else 0.0}"
+            r["VM Used Space For Each Drive"] = f"{label} : {round(u / GB, 1) if u else 0.0}"
+            rows.append([r[col] for col in REPORT_COLUMNS])
+    return rows
