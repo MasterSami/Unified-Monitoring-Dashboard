@@ -339,6 +339,145 @@ def export_alerts_csv(
     )
 
 
+# --- Branded Excel export ---------------------------------------------------
+
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _fname_stamp(value: str | None) -> str:
+    """A filesystem-safe compact stamp from a datetime-local string (or 'all')."""
+    if not value:
+        return "all"
+    return "".join(c for c in value if c.isalnum())
+
+
+def _period_str(date_from: str | None, date_to: str | None) -> str:
+    return f"{date_from or 'earliest'} → {date_to or 'now'}"
+
+
+def _xlsx_response(name: str, data: bytes) -> Response:
+    return Response(
+        content=data,
+        media_type=_XLSX_MEDIA,
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.get("/capacity.xlsx")
+def export_capacity_xlsx(
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Export the filtered Capacity view as a branded .xlsx (same SQL filters)."""
+    _require_export(settings)
+    from app.export_xlsx import build_workbook
+    from app.routers.pages import _hosts_stmt, parse_dt
+
+    stmt = _hosts_stmt(q, platform, status, instance, group,
+                       parse_dt(date_from), parse_dt(date_to))
+    stmt = stmt.order_by(Host.hostname.asc())
+
+    def rows():
+        for h in db.scalars(stmt):
+            m = h.metrics or {}
+            yield [
+                h.hostname, h.ip or "", h.source_platform.value, h.source_instance,
+                h.group_name or "",
+                "" if h.cpu_pct is None else h.cpu_pct,
+                "" if h.mem_pct is None else h.mem_pct,
+                "" if h.disk_pct is None else h.disk_pct,
+                m.get("cores", ""), m.get("mem_total_gb", ""),
+                h.last_seen, h.status.value,
+            ]
+
+    filters = ", ".join(
+        f"{k}={v}" for k, v in (
+            ("platform", platform), ("instance", instance), ("group", group),
+            ("status", status), ("q", q),
+        ) if v and v != "all"
+    ) or "none"
+    data = build_workbook(
+        sheet_title="Capacity",
+        period=_period_str(date_from, date_to),
+        filters_summary=filters,
+        columns=["Server", "IP", "Platform", "Instance", "Group", "CPU %",
+                 "Memory %", "Disk %", "Cores", "Total Memory (GB)",
+                 "Last Seen", "Status"],
+        rows=rows(),
+    )
+    fname = f"SAMIX_capacity_{_fname_stamp(date_from)}_{_fname_stamp(date_to)}.xlsx"
+    return _xlsx_response(fname, data)
+
+
+@router.get("/alerts.xlsx")
+def export_alerts_xlsx(
+    active: bool = Query(default=True),
+    q: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Export the filtered Alerts view as a branded, severity-colored .xlsx."""
+    _require_export(settings)
+    from app.export_xlsx import build_workbook
+    from app.routers.pages import _alerts_filtered_stmt, parse_dt
+
+    if active:
+        stmt = _alerts_filtered_stmt(q, parse_dt(date_from), parse_dt(date_to))
+    else:
+        stmt = select(Alert)
+        if q:
+            like = f"%{q.lower()}%"
+            stmt = stmt.where(
+                func.lower(Alert.title).like(like)
+                | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
+                | func.lower(func.coalesce(Alert.source_instance, "")).like(like)
+                | func.lower(Alert.source_platform).like(like)
+                | func.lower(Alert.severity_label).like(like)
+            )
+        if parse_dt(date_from) is not None:
+            stmt = stmt.where(Alert.started_at >= parse_dt(date_from))
+        if parse_dt(date_to) is not None:
+            stmt = stmt.where(Alert.started_at <= parse_dt(date_to))
+    stmt = stmt.order_by(
+        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
+    )
+
+    def rows():
+        for a in db.scalars(stmt):
+            # trailing severity_int drives the severity-cell color (not a column)
+            yield [
+                a.severity_label, a.title, a.source_platform.value,
+                a.source_instance or "", a.host_hostname or "", a.started_at,
+                "resolved" if a.resolved else "active", a.severity_int,
+            ]
+
+    filters = ", ".join(
+        f"{k}={v}" for k, v in (
+            ("state", "active" if active else "all"), ("q", q),
+        ) if v
+    ) or "none"
+    data = build_workbook(
+        sheet_title="Alerts",
+        period=_period_str(date_from, date_to),
+        filters_summary=filters,
+        columns=["Severity", "Title", "Platform", "Instance", "Host",
+                 "Started", "State"],
+        rows=rows(),
+        severity_col=0,
+    )
+    fname = f"SAMIX_alerts_{_fname_stamp(date_from)}_{_fname_stamp(date_to)}.xlsx"
+    return _xlsx_response(fname, data)
+
+
 # --- Topology ---------------------------------------------------------------
 
 #: Map the UI "view" name to the platform that owns that kind of graph.

@@ -947,6 +947,31 @@ td.mono {
   box-shadow: var(--shadow);
 }
 
+/* --- Date range filter --------------------------------------------------- */
+.daterange {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dt-input {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color-scheme: light dark;
+}
+.dt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.dt-sep {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
 /* --- Collectors grouped per platform ------------------------------------- */
 .cg {
   border-radius: var(--radius-sm);

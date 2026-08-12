@@ -45,10 +45,10 @@
 <div class="pager">
   <button class="btn" type="button" {{ 'disabled' if page <= 1 }}
     hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML"
-    hx-include="[name='q']" hx-vals='{"page": {{ page - 1 }}}'>← Prev</button>
+    hx-include=".afilter" hx-vals='{"page": {{ page - 1 }}}'>← Prev</button>
   <span class="pager-info">Page {{ page }} of {{ pages }} · {{ total }} total</span>
   <button class="btn" type="button" {{ 'disabled' if page >= pages }}
     hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML"
-    hx-include="[name='q']" hx-vals='{"page": {{ page + 1 }}}'>Next →</button>
+    hx-include=".afilter" hx-vals='{"page": {{ page + 1 }}}'>Next →</button>
 </div>
 {% endif %}

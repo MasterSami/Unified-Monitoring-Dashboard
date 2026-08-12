@@ -45,6 +45,23 @@ def _paginate(page: int | None, total: int) -> tuple[int, int, int]:
     page = max(1, min(page or 1, pages))
     return page, pages, (page - 1) * PAGE_SIZE
 
+
+def parse_dt(value: str | None) -> datetime | None:
+    """Parse an HTML datetime-local / ISO string into UTC-aware datetime.
+
+    Accepts ``YYYY-MM-DDTHH:MM`` (and with seconds). Returns None for empty or
+    unparseable input so callers can treat "no bound" uniformly.
+    """
+    if not value:
+        return None
+    v = value.strip().replace(" ", "T")
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 _STATIC_DIR = _TEMPLATE_DIR.parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
@@ -405,6 +422,8 @@ def _hosts_stmt(
     status: str | None,
     instance: str | None,
     group: str | None = "all",
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ):
     """Build the filtered (unordered, unlimited) host SELECT."""
     stmt = select(Host)
@@ -414,6 +433,10 @@ def _hosts_stmt(
         stmt = stmt.where(Host.source_instance == instance)
     if group and group != "all":
         stmt = stmt.where(Host.group_name == group)
+    if date_from is not None:
+        stmt = stmt.where(Host.last_seen >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(Host.last_seen <= date_to)
     if status == "issues":
         # A problem agent: down or unknown (disabled hosts are intentional).
         stmt = stmt.where(
@@ -442,9 +465,11 @@ def _hosts_query(
     instance: str | None = "all",
     page: int | None = 1,
     group: str | None = "all",
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> tuple[list[Host], int, int, int]:
     """Return (rows, total, page, pages) — one page of the filtered hosts."""
-    stmt = _hosts_stmt(q, platform, status, instance, group)
+    stmt = _hosts_stmt(q, platform, status, instance, group, date_from, date_to)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page, pages, offset = _paginate(page, total)
     sort_cols = {
@@ -468,10 +493,12 @@ def _hosts_query(
     return list(db.scalars(stmt).all()), total, page, pages
 
 
-def _active_alerts(
-    db: Session, q: str | None = None, page: int | None = 1
-) -> tuple[list[Alert], int, int, int]:
-    """Return (rows, total, page, pages) — one page of active alerts."""
+def _alerts_filtered_stmt(
+    q: str | None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+):
+    """Active-alerts SELECT with search + optional started_at range (all in SQL)."""
     stmt = select(Alert).where(Alert.resolved.is_(False))
     if q:
         like = f"%{q.lower()}%"
@@ -482,6 +509,22 @@ def _active_alerts(
             | func.lower(Alert.source_platform).like(like)
             | func.lower(Alert.severity_label).like(like)
         )
+    if date_from is not None:
+        stmt = stmt.where(Alert.started_at >= date_from)
+    if date_to is not None:
+        stmt = stmt.where(Alert.started_at <= date_to)
+    return stmt
+
+
+def _active_alerts(
+    db: Session,
+    q: str | None = None,
+    page: int | None = 1,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+) -> tuple[list[Alert], int, int, int]:
+    """Return (rows, total, page, pages) — one page of active alerts."""
+    stmt = _alerts_filtered_stmt(q, date_from, date_to)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page, pages, offset = _paginate(page, total)
     stmt = (
@@ -573,11 +616,14 @@ def capacity_partial(
     sort: str = "hostname",
     order: str = "asc",
     page: int = 1,
+    date_from: str | None = None,
+    date_to: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Capacity table fragment (search / filter / group / sort / paginate)."""
+    """Capacity table fragment (search / filter / group / sort / date / paginate)."""
+    df, dt = parse_dt(date_from), parse_dt(date_to)
     hosts, total, page, pages = _hosts_query(
-        db, q, platform, status, sort, order, instance, page, group
+        db, q, platform, status, sort, order, instance, page, group, df, dt
     )
     return templates.TemplateResponse(
         "partials/capacity_table.html",
@@ -595,6 +641,8 @@ def capacity_partial(
                 "group": group,
                 "sort": sort,
                 "order": order,
+                "date_from": date_from or "",
+                "date_to": date_to or "",
             },
         },
     )
@@ -926,10 +974,13 @@ def alerts_partial(
     request: Request,
     q: str | None = None,
     page: int = 1,
+    date_from: str | None = None,
+    date_to: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Alerts table fragment (search + paginate + polled every 60s)."""
-    alerts, total, page, pages = _active_alerts(db, q, page)
+    """Alerts table fragment (search + date range + paginate + polled every 60s)."""
+    df, dt = parse_dt(date_from), parse_dt(date_to)
+    alerts, total, page, pages = _active_alerts(db, q, page, df, dt)
     return templates.TemplateResponse(
         "partials/alerts_table.html",
         {
@@ -939,6 +990,7 @@ def alerts_partial(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
+            "current": {"date_from": date_from or "", "date_to": date_to or ""},
         },
     )
 
