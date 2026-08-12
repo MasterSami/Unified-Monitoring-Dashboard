@@ -22,7 +22,7 @@ from app.models import (
     TopologyNode,
 )
 from app.normalizer import severity_label
-from app.scheduler import get_collector_statuses
+from app.scheduler import get_collector_statuses, get_service
 from app.schemas import PlatformHostCount, SeverityBucket
 from app.servers import load_servers
 from app.topology import (
@@ -646,6 +646,35 @@ def capacity_partial(
             },
         },
     )
+
+
+@router.get("/partials/capacity/zabbix-detail", response_class=HTMLResponse)
+def capacity_zabbix_detail_partial(
+    request: Request,
+    instance: str,
+    hostid: str,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Lazily-loaded Zabbix capacity detail for one host (cached per interval).
+
+    Loaded via HTMX only when a Zabbix server is opened, so the detail is never
+    computed for rows the user never clicks.
+    """
+    ctx: dict = {"request": request, "instance": instance, "detail": None, "error": None}
+    collector = get_service().get(instance)
+    if collector is None or getattr(collector, "name", "") != "zabbix":
+        ctx["error"] = f"No Zabbix collector configured for '{instance}'."
+    elif settings.mock_mode:
+        ctx["error"] = "Detailed report needs a live Zabbix connection (MOCK_MODE is on)."
+    else:
+        try:
+            from app.zabbix_report import host_capacity_detail
+
+            ctx["detail"] = host_capacity_detail(collector, hostid)
+        except Exception as exc:  # noqa: BLE001 — surface, never 500 the panel
+            ctx["error"] = f"Could not load detail: {exc}"
+    return templates.TemplateResponse("partials/capacity_zabbix_detail.html", ctx)
 
 
 @router.get("/shared", response_class=HTMLResponse)

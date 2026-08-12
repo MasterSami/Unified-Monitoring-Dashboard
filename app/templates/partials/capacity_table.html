@@ -54,7 +54,14 @@
       {% for h in hosts %}
       {% set m = h.metrics or {} %}
       <tr>
-        <td><strong>{{ h.hostname }}</strong></td>
+        <td><strong>
+          {% if h.source_platform.value == 'zabbix' %}
+          <a href="#" class="cap-open" title="Show detailed capacity report"
+            hx-get="/partials/capacity/zabbix-detail?instance={{ h.source_instance | urlencode }}&hostid={{ h.external_id | urlencode }}"
+            hx-target="#capacity-detail" hx-swap="innerHTML"
+            onclick="return false;">{{ h.hostname }}</a>
+          {% else %}{{ h.hostname }}{% endif %}
+        </strong></td>
         <td class="mono">{{ h.ip or '—' }}</td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>

@@ -1,0 +1,89 @@
+{# Zabbix per-host capacity detail — lazily loaded into #capacity-detail. #}
+{% macro bar(pct) %}
+  {% set w = pct if pct is not none else 0 %}
+  {% set cls = 'ok' if w < 70 else ('warn' if w < 90 else 'hot') %}
+  <div class="res"><div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ w if w <= 100 else 100 }}%"></span></div></div>
+{% endmacro %}
+
+<div class="cap-detail">
+  <div class="cap-detail-head">
+    <div>
+      <span class="cap-detail-title">
+        {% if detail %}{{ detail.host }}{% else %}Zabbix detail{% endif %}
+      </span>
+      {% if detail and detail.ip %}<span class="cap-detail-ip mono">{{ detail.ip }}</span>{% endif %}
+      <span class="badge badge-zabbix"><span class="dot"></span>{{ instance }}</span>
+    </div>
+    <button class="icon-btn" type="button" title="Close"
+      onclick="var d=document.getElementById('capacity-detail'); if(d) d.innerHTML='';">✕</button>
+  </div>
+
+  {% if error %}
+    <div class="empty" style="padding:18px">{{ error }}</div>
+  {% elif detail %}
+    <div class="cap-detail-grid">
+      <div class="cap-metric">
+        <div class="cap-metric-lbl">CPU</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.cpu_pct) ~ '%' if detail.cpu_pct is not none else '—' }}</div>
+        {{ bar(detail.cpu_pct) }}
+        <div class="cap-metric-sub">{{ detail.cores ~ ' cores' if detail.cores is not none else '—' }}</div>
+      </div>
+      <div class="cap-metric">
+        <div class="cap-metric-lbl">Memory</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.mem_pct) ~ '%' if detail.mem_pct is not none else '—' }}</div>
+        {{ bar(detail.mem_pct) }}
+        <div class="cap-metric-sub">{{ detail.mem_total_gb ~ ' GB total' if detail.mem_total_gb is not none else '—' }}</div>
+      </div>
+      <div class="cap-metric">
+        <div class="cap-metric-lbl">Disk</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.disk_pct) ~ '%' if detail.disk_pct is not none else '—' }}</div>
+        {{ bar(detail.disk_pct) }}
+        <div class="cap-metric-sub">
+          {% if detail.disk_used_gb is not none %}{{ detail.disk_used_gb }} / {{ detail.disk_total_gb }} GB{% else %}—{% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if detail.cpu_trend or detail.mem_trend %}
+    <div class="cap-detail-sec">Trends · last {{ detail.days }} days</div>
+    <div class="table-wrap">
+      <table class="cap-trend">
+        <thead><tr><th>Metric</th><th>Min</th><th>Avg</th><th>Max</th></tr></thead>
+        <tbody>
+          {% for name, tr in [('CPU %', detail.cpu_trend), ('Memory %', detail.mem_trend)] %}
+          {% if tr %}
+          <tr>
+            <td>{{ name }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.min) if tr.min is not none else '—' }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.avg) if tr.avg is not none else '—' }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.max) if tr.max is not none else '—' }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if detail.filesystems %}
+    <div class="cap-detail-sec">Filesystems</div>
+    <div class="table-wrap">
+      <table class="cap-fs">
+        <thead><tr><th>Mount</th><th>Used</th><th>Total</th><th style="width:160px">Usage</th></tr></thead>
+        <tbody>
+          {% for fs in detail.filesystems %}
+          <tr>
+            <td class="mono">{{ fs.label }}</td>
+            <td class="mono">{{ fs.used_gb ~ ' GB' if fs.used_gb is not none else '—' }}</td>
+            <td class="mono">{{ fs.total_gb ~ ' GB' if fs.total_gb is not none else '—' }}</td>
+            <td>
+              {% if fs.pct is not none %}{{ bar(fs.pct) }}<span class="res-pct">{{ fs.pct }}%</span>{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  {% endif %}
+</div>

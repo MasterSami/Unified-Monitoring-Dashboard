@@ -947,6 +947,82 @@ td.mono {
   box-shadow: var(--shadow);
 }
 
+/* --- Capacity: Zabbix detail panel --------------------------------------- */
+.cap-open {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.cap-open:hover {
+  text-decoration: underline;
+}
+.cap-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--shadow);
+}
+.cap-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.cap-detail-title {
+  font-weight: 700;
+  font-size: 15px;
+  margin-right: 8px;
+}
+.cap-detail-ip {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 8px;
+}
+.cap-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.cap-metric {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+.cap-metric-lbl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cap-metric-val {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 6px;
+}
+.cap-metric-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.cap-detail-sec {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 16px 0 8px;
+}
+.cap-trend td,
+.cap-fs td {
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- Date range filter --------------------------------------------------- */
 .daterange {
   display: inline-flex;
