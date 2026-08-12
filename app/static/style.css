@@ -947,6 +947,74 @@ td.mono {
   box-shadow: var(--shadow);
 }
 
+/* --- Collectors grouped per platform ------------------------------------- */
+.cg {
+  border-radius: var(--radius-sm);
+}
+.cg + .cg {
+  margin-top: 2px;
+}
+.cg-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  padding: 3px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.cg-head::-webkit-details-marker {
+  display: none;
+}
+.cg-head:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.cg-head .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--unknown);
+  flex-shrink: 0;
+}
+.cg-head.ok .dot {
+  background: var(--up);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--up) 22%, transparent);
+}
+.cg-head.warn .dot {
+  background: var(--sev4, #d9822b);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sev4, #d9822b) 22%, transparent);
+}
+.cg-head.fail .dot {
+  background: var(--down);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--down) 22%, transparent);
+}
+.cg-name {
+  flex: 1;
+  color: var(--text);
+  font-weight: 600;
+}
+.cg-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.cg-caret {
+  color: var(--text-faint);
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+.cg[open] > .cg-head .cg-caret {
+  transform: rotate(90deg);
+}
+.cg-body {
+  padding: 2px 0 4px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .notice {
   margin: 12px 0 0;
   padding: 9px 13px;

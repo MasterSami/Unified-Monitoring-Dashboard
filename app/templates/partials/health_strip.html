@@ -1,25 +1,57 @@
+{# Collectors health — grouped per platform. Each platform is one compact row
+   with a single aggregate status dot; expand (native <details>) to see its
+   instances. Collapsed height is fixed regardless of platform/instance count. #}
+{% set order = ['zabbix', 'nnmi', 'sitescope', 'dynatrace', 'digitalview'] %}
+{% set seen = [] %}
 <div class="health">
   <div class="h-title">Collectors · {{ collectors | length }}</div>
-  {% for c in collectors %}
-    {% if c.status == 'success' %}
-      {% set cls = 'ok' %}
-      {% set tip = c.instance ~ ' — ' ~ c.hosts_collected ~ ' hosts · ' ~ c.alerts_collected ~ ' alerts · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
-      {% set meta = c.last_success_at | relative_time %}
-    {% elif c.status == 'failed' %}
-      {% set cls = 'fail' %}
-      {% set tip = c.instance ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
-      {% set meta = 'failed' %}
-    {% else %}
-      {% set cls = '' %}
-      {% set tip = c.instance ~ ' — no runs yet' %}
-      {% set meta = '—' %}
+
+  {% macro platform_group(pf, items) %}
+    {% set ok = items | selectattr('status', 'equalto', 'success') | list | length %}
+    {% set fail = items | selectattr('status', 'equalto', 'failed') | list | length %}
+    {% set n = items | length %}
+    {% set cls = 'ok' if ok == n else ('fail' if fail == n else 'warn') %}
+    <details class="cg" {% if cls != 'ok' %}open{% endif %}>
+      <summary class="cg-head {{ cls }}">
+        <span class="dot"></span>
+        <span class="cg-name">{{ pf | capitalize }}</span>
+        <span class="cg-count">{{ ok }}/{{ n }}</span>
+        <span class="cg-caret">▸</span>
+      </summary>
+      <div class="cg-body">
+        {% for c in items %}
+          {% if c.status == 'success' %}
+            {% set icls = 'ok' %}
+            {% set tip = c.instance ~ ' — ' ~ c.hosts_collected ~ ' hosts · ' ~ c.alerts_collected ~ ' alerts · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
+            {% set meta = c.last_success_at | relative_time %}
+          {% elif c.status == 'failed' %}
+            {% set icls = 'fail' %}
+            {% set tip = c.instance ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
+            {% set meta = 'failed' %}
+          {% else %}
+            {% set icls = '' %}
+            {% set tip = c.instance ~ ' — no runs yet' %}
+            {% set meta = '—' %}
+          {% endif %}
+          <div class="h-item {{ icls }}" data-tip="{{ tip }}">
+            <span class="dot"></span>
+            <span class="h-name">{{ c.instance }}{% if c.notes and 'OFFLINE' in c.notes %} ⚠{% endif %}</span>
+            <span class="h-meta">{{ meta }}</span>
+          </div>
+        {% endfor %}
+      </div>
+    </details>
+  {% endmacro %}
+
+  {% for pf in order %}
+    {% set items = collectors | selectattr('platform', 'equalto', pf) | list %}
+    {% if items %}{{ platform_group(pf, items) }}{% if seen.append(pf) %}{% endif %}{% endif %}
+  {% endfor %}
+  {# Any platform not in the known order (future collectors) — grouped too. #}
+  {% for pf in collectors | map(attribute='platform') | unique | list %}
+    {% if pf not in seen %}
+      {% set items = collectors | selectattr('platform', 'equalto', pf) | list %}
+      {{ platform_group(pf, items) }}
     {% endif %}
-    <div class="h-item {{ cls }}" data-tip="{{ tip }}">
-      <span class="dot"></span>
-      <span class="h-name">
-        {{ c.instance }}{% if c.notes and 'OFFLINE' in c.notes %} ⚠{% endif %}
-      </span>
-      <span class="h-meta">{{ meta }}</span>
-    </div>
   {% endfor %}
 </div>
