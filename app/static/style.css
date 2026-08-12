@@ -1023,29 +1023,69 @@ td.mono {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Date range filter --------------------------------------------------- */
+/* --- Two-row toolbar ----------------------------------------------------- */
+.toolbar-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.toolbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  flex-wrap: wrap;
+}
+.toolbar-stack .search {
+  flex: 1 1 260px;
+}
+.toolbar .spacer {
+  flex: 1;
+}
+.field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field-lbl {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-left: 2px;
+}
+
+/* --- Date range filter (matches the toolbar select/input styling) -------- */
 .daterange {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
 .dt-input {
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
+  border: none;
+  padding: 5px 4px;
   font-size: 12.5px;
   font-family: inherit;
   color-scheme: light dark;
 }
 .dt-input:focus {
   outline: none;
+}
+.daterange:focus-within {
   border-color: var(--accent);
 }
 .dt-sep {
   color: var(--text-faint);
   font-size: 12px;
+}
+.daterange .btn {
+  padding: 5px 12px;
 }
 
 /* --- Collectors grouped per platform ------------------------------------- */
@@ -1101,13 +1141,20 @@ td.mono {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
-.cg-caret {
-  color: var(--text-faint);
-  font-size: 10px;
-  transition: transform 0.15s ease;
+/* Subtle disclosure chevron drawn in CSS (rotates when open). */
+.cg-head::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid var(--text-faint);
+  border-bottom: 1.5px solid var(--text-faint);
+  transform: rotate(-45deg);
+  transition: transform 0.18s ease;
+  flex-shrink: 0;
 }
-.cg[open] > .cg-head .cg-caret {
-  transform: rotate(90deg);
+.cg[open] > .cg-head::after {
+  transform: rotate(45deg);
 }
 .cg-body {
   padding: 2px 0 4px 16px;

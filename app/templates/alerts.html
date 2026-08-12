@@ -22,13 +22,18 @@
     />
   </div>
 
-  <div class="daterange" title="Started range (UTC)">
-    <input type="datetime-local" name="date_from" class="afilter dt-input" aria-label="From" />
-    <span class="dt-sep">→</span>
-    <input type="datetime-local" name="date_to" class="afilter dt-input" aria-label="To" />
-    <button class="btn" type="button" title="Apply date range"
-      hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML" hx-include=".afilter">Apply</button>
+  <div class="field">
+    <span class="field-lbl">Started (UTC)</span>
+    <div class="daterange">
+      <input type="datetime-local" name="date_from" class="afilter dt-input" aria-label="From" />
+      <span class="dt-sep">→</span>
+      <input type="datetime-local" name="date_to" class="afilter dt-input" aria-label="To" />
+      <button class="btn btn-accent" type="button" title="Apply date range"
+        hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML" hx-include=".afilter">Apply</button>
+    </div>
   </div>
+
+  <div class="spacer"></div>
 
   {% if enable_export %}
   <button class="btn" type="button" onclick="exportAlerts()" title="Export current view to Excel">

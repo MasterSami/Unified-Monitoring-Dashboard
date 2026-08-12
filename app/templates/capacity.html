@@ -4,70 +4,79 @@
 {% block page_sub %}Server resource utilization — pick a server or group to see CPU, memory &amp; disk{% endblock %}
 
 {% block content %}
-<div class="toolbar">
-  <div class="search">
-    <span class="search-icon">⌕</span>
-    <input
-      type="search"
-      name="q"
-      class="cfilter"
-      placeholder="Search hostname, IP, group, or instance…"
-      hx-get="/partials/capacity"
-      hx-trigger="input changed delay:250ms, search"
-      hx-target="#capacity-region"
-      hx-swap="innerHTML"
-      hx-include=".cfilter"
-      autocomplete="off"
-    />
-  </div>
+<div class="toolbar toolbar-stack">
+  <div class="toolbar-row">
+    <div class="search">
+      <span class="search-icon">⌕</span>
+      <input
+        type="search"
+        name="q"
+        class="cfilter"
+        placeholder="Search hostname, IP, group, or instance…"
+        hx-get="/partials/capacity"
+        hx-trigger="input changed delay:250ms, search"
+        hx-target="#capacity-region"
+        hx-swap="innerHTML"
+        hx-include=".cfilter"
+        autocomplete="off"
+      />
+    </div>
 
-  <div class="tabs" role="tablist">
-    {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi', 'sitescope'] %}
-    <button
-      type="button"
-      class="{{ 'active' if p == 'all' else '' }}"
-      data-platform="{{ p }}"
+    <div class="tabs" role="tablist">
+      {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi', 'sitescope'] %}
+      <button
+        type="button"
+        class="{{ 'active' if p == 'all' else '' }}"
+        data-platform="{{ p }}"
+        hx-get="/partials/capacity"
+        hx-target="#capacity-region"
+        hx-swap="innerHTML"
+        hx-include=".cfilter"
+        hx-vals='{"platform": "{{ p }}"}'
+        onclick="selectTab(this)"
+      >
+        {{ 'All' if p == 'all' else p | capitalize }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <select
+      name="instance"
+      class="cfilter select"
       hx-get="/partials/capacity"
+      hx-trigger="change"
       hx-target="#capacity-region"
       hx-swap="innerHTML"
       hx-include=".cfilter"
-      hx-vals='{"platform": "{{ p }}"}'
-      onclick="selectTab(this)"
+      title="Filter by collector instance"
     >
-      {{ 'All' if p == 'all' else p | capitalize }}
+      <option value="all">All instances</option>
+      {% for i in instances %}
+      <option value="{{ i.name }}">{{ i.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="toolbar-row">
+    <div class="field">
+      <span class="field-lbl">Last seen (UTC)</span>
+      <div class="daterange">
+        <input type="datetime-local" name="date_from" class="cfilter dt-input" aria-label="From" />
+        <span class="dt-sep">→</span>
+        <input type="datetime-local" name="date_to" class="cfilter dt-input" aria-label="To" />
+        <button class="btn btn-accent" type="button" title="Apply date range"
+          hx-get="/partials/capacity" hx-target="#capacity-region" hx-swap="innerHTML" hx-include=".cfilter">Apply</button>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    {% if enable_export %}
+    <button class="btn" type="button" onclick="exportCapacity()" title="Export current view to Excel">
+      ⭳ Export Excel
     </button>
-    {% endfor %}
+    {% endif %}
   </div>
-
-  <select
-    name="instance"
-    class="cfilter select"
-    hx-get="/partials/capacity"
-    hx-trigger="change"
-    hx-target="#capacity-region"
-    hx-swap="innerHTML"
-    hx-include=".cfilter"
-    title="Filter by collector instance"
-  >
-    <option value="all">All instances</option>
-    {% for i in instances %}
-    <option value="{{ i.name }}">{{ i.name }}</option>
-    {% endfor %}
-  </select>
-
-  <div class="daterange" title="Last-seen range (UTC)">
-    <input type="datetime-local" name="date_from" class="cfilter dt-input" aria-label="From" />
-    <span class="dt-sep">→</span>
-    <input type="datetime-local" name="date_to" class="cfilter dt-input" aria-label="To" />
-    <button class="btn" type="button" title="Apply date range"
-      hx-get="/partials/capacity" hx-target="#capacity-region" hx-swap="innerHTML" hx-include=".cfilter">Apply</button>
-  </div>
-
-  {% if enable_export %}
-  <button class="btn" type="button" onclick="exportCapacity()" title="Export current view to Excel">
-    ⭳ Export Excel
-  </button>
-  {% endif %}
 
   <!-- Hidden filter mirrors, included on every request. -->
   <input type="hidden" name="platform" value="all" class="cfilter" id="f-platform" />
