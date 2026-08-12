@@ -285,25 +285,50 @@ def _shared_hosts_count(db: Session) -> int:
     return db.scalar(select(func.count()).select_from(_shared_ips_stmt().subquery())) or 0
 
 
-def _shared_host_groups(db: Session, limit: int = PAGE_SIZE) -> tuple[list[dict], int]:
-    """Return (groups, total). Groups the shared-IP devices; loads only those hosts.
+def _shared_ranked_stmt():
+    """Shared IPs ranked by share count desc, hostname asc — all in SQL.
 
-    The same physical device monitored by more than one instance shows up as
-    several :class:`Host` rows with the same IP. Only IPs with 2+ distinct
-    instances are loaded, so this stays cheap on large environments.
+    ``cnt`` = number of distinct instances the device is monitored by. Ordered so
+    the most-shared devices come first (tie-break alphabetically). Paginated with
+    LIMIT/OFFSET so only one page of IPs is ever materialized.
+    """
+    cnt = func.count(distinct(Host.source_instance))
+    return (
+        select(Host.ip.label("ip"), cnt.label("cnt"))
+        .where(Host.ip.isnot(None), Host.ip != "")
+        .group_by(Host.ip)
+        .having(cnt > 1)
+        .order_by(cnt.desc(), func.min(Host.hostname).asc())
+    )
+
+
+def _shared_host_groups(
+    db: Session, page: int = 1
+) -> tuple[list[dict], int, int, int]:
+    """Return (groups, total, page, pages) for the shared-devices page.
+
+    Ranking and pagination happen entirely in SQL; only the current page's hosts
+    are loaded into Python. Group order follows the SQL rank (share count desc,
+    hostname asc).
     """
     total = _shared_hosts_count(db)
-    shared_ips = list(db.scalars(_shared_ips_stmt().limit(limit)).all())
-    if not shared_ips:
-        return [], total
+    page, pages, offset = _paginate(page, total)
 
-    hosts = list(db.scalars(select(Host).where(Host.ip.in_(shared_ips))).all())
+    ranked = db.execute(
+        _shared_ranked_stmt().limit(PAGE_SIZE).offset(offset)
+    ).all()
+    ips = [r.ip for r in ranked]
+    if not ips:
+        return [], total, page, pages
+
+    hosts = list(db.scalars(select(Host).where(Host.ip.in_(ips))).all())
     by_ip: dict[str, list[Host]] = {}
     for h in hosts:
         by_ip.setdefault(str(h.ip), []).append(h)
 
     groups: list[dict] = []
-    for ip, members in by_ip.items():
+    for r in ranked:  # preserve the SQL rank order
+        members = by_ip.get(str(r.ip), [])
         instances = {m.source_instance for m in members}
         if len(instances) < 2:
             continue
@@ -312,15 +337,14 @@ def _shared_host_groups(db: Session, limit: int = PAGE_SIZE) -> tuple[list[dict]
         )
         groups.append(
             {
-                "ip": ip,
+                "ip": r.ip,
                 "hostname": members[0].hostname,
                 "members": members,
                 "instance_count": len(instances),
                 "platforms": sorted({m.source_platform.value for m in members}),
             }
         )
-    groups.sort(key=lambda g: (-g["instance_count"], g["ip"]))
-    return groups, total
+    return groups, total, page, pages
 
 
 def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
@@ -583,7 +607,7 @@ def shared_page(
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
     """Devices monitored by more than one instance (by shared IP)."""
-    groups, total = _shared_host_groups(db)
+    groups, total, page, pages = _shared_host_groups(db, 1)
     return templates.TemplateResponse(
         "shared.html",
         {
@@ -591,8 +615,30 @@ def shared_page(
             "active_page": "shared",
             "groups": groups,
             "total": total,
-            "limit": PAGE_SIZE,
+            "page": page,
+            "pages": pages,
+            "page_size": PAGE_SIZE,
             "collectors": get_collector_statuses(db, settings),
+        },
+    )
+
+
+@router.get("/partials/shared", response_class=HTMLResponse)
+def shared_partial(
+    request: Request,
+    page: int = 1,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Shared-devices list fragment (server-side paginated)."""
+    groups, total, page, pages = _shared_host_groups(db, page)
+    return templates.TemplateResponse(
+        "partials/shared_table.html",
+        {
+            "request": request,
+            "groups": groups,
+            "total": total,
+            "page": page,
+            "pages": pages,
         },
     )
 

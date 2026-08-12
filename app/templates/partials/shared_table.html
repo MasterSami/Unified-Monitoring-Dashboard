@@ -1,0 +1,62 @@
+{# Shared-devices list + compact pager. Rendered standalone via /partials/shared
+   so page changes swap only this fragment. #}
+<div class="count-tag" style="margin-bottom: 12px">
+  <b>{{ total }}</b> device{{ '' if total == 1 else 's' }} monitored on 2+ instances{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+</div>
+
+{% if groups %}
+<div class="shared-list">
+  {% for g in groups %}
+  <div class="shared-card">
+    <div class="shared-head">
+      <span class="ip">{{ g.ip }}</span>
+      <span class="hn">{{ g.hostname }}</span>
+      {% for p in g.platforms %}
+        <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}</span>
+      {% endfor %}
+      <span class="cnt">{{ g.instance_count }} monitors</span>
+    </div>
+    <div class="shared-members">
+      {% for m in g.members %}
+      <div class="member">
+        <span class="pill status-{{ m.status.value }}"><span class="dot"></span>{{ m.status.value }}</span>
+        <span class="mi">{{ m.source_instance }}</span>
+        <span class="mh">{{ m.hostname }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="table-wrap">
+  <div class="empty">
+    <span class="big">🔗</span>
+    No devices are monitored by more than one instance yet.
+    <div style="margin-top:6px;font-size:13px;">Correlation matches hosts that share an IP address across instances.</div>
+  </div>
+</div>
+{% endif %}
+
+{% if pages > 1 %}
+{% set win = 2 %}
+{% set lo = [1, page - win] | max %}
+{% set hi = [pages, page + win] | min %}
+<nav class="pager" aria-label="pagination">
+  {% macro pbtn(label, target, disabled=False, active=False) %}
+    <button class="btn{{ ' active' if active }}" type="button" {{ 'disabled' if disabled }}
+      hx-get="/partials/shared" hx-target="#shared-region" hx-swap="innerHTML"
+      hx-vals='{"page": {{ target }} }'>{{ label }}</button>
+  {% endmacro %}
+  {{ pbtn('« First', 1, page <= 1) }}
+  {{ pbtn('‹ Prev', page - 1, page <= 1) }}
+  {% if lo > 1 %}<span class="pager-gap">…</span>{% endif %}
+  {% for p in range(lo, hi + 1) %}
+    {{ pbtn(p, p, False, p == page) }}
+  {% endfor %}
+  {% if hi < pages %}<span class="pager-gap">…</span>{% endif %}
+  {{ pbtn('Next ›', page + 1, page >= pages) }}
+  {{ pbtn('Last »', pages, page >= pages) }}
+  <span class="pager-info">Page {{ page }} of {{ pages }} · {{ total }} total</span>
+</nav>
+{% endif %}

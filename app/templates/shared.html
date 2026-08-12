@@ -1,49 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Shared Devices · Unified Monitoring{% endblock %}
 {% block page_title %}Shared Devices{% endblock %}
-{% block page_sub %}Devices monitored by more than one instance, correlated by IP{% endblock %}
+{% block page_sub %}Devices monitored by more than one instance, correlated by IP — most-shared first{% endblock %}
 
 {% block content %}
-{% set sev_names = {} %}
-<div class="count-tag" style="margin-bottom: 12px">
-  {% if total > groups | length %}
-    Showing <b>{{ groups | length }}</b> of <b>{{ total }}</b> devices monitored on 2+ instances
-  {% else %}
-    {{ total }} device{{ '' if total == 1 else 's' }} monitored on 2+ instances
-  {% endif %}
+<div id="shared-region" data-refreshable
+  hx-get="/partials/shared" hx-trigger="refresh" hx-target="#shared-region" hx-swap="innerHTML">
+  {% include "partials/shared_table.html" %}
 </div>
-
-{% if groups %}
-<div class="shared-list">
-  {% for g in groups %}
-  <div class="shared-card">
-    <div class="shared-head">
-      <span class="ip">{{ g.ip }}</span>
-      <span class="hn">{{ g.hostname }}</span>
-      {% for p in g.platforms %}
-        <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}</span>
-      {% endfor %}
-      <span class="cnt">{{ g.instance_count }} monitors</span>
-    </div>
-    <div class="shared-members">
-      {% for m in g.members %}
-      <div class="member">
-        <span class="pill status-{{ m.status.value }}"><span class="dot"></span>{{ m.status.value }}</span>
-        <span class="mi">{{ m.source_instance }}</span>
-        <span class="mh">{{ m.hostname }}</span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endfor %}
-</div>
-{% else %}
-<div class="table-wrap">
-  <div class="empty">
-    <span class="big">🔗</span>
-    No devices are monitored by more than one instance yet.
-    <div style="margin-top:6px;font-size:13px;">Correlation matches hosts that share an IP address across instances.</div>
-  </div>
-</div>
-{% endif %}
 {% endblock %}

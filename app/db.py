@@ -70,6 +70,27 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
 }
 
 
+#: Indexes added after the first release. ``CREATE INDEX IF NOT EXISTS`` is
+#: supported by both SQLite and PostgreSQL, so this is safe on every startup.
+#: (index_name, table, "(col, ...)")
+_ADDED_INDEXES: list[tuple[str, str, str]] = [
+    # Shared-devices page: GROUP BY ip + COUNT(DISTINCT source_instance).
+    ("ix_hosts_ip_instance", "hosts", "(ip, source_instance)"),
+    # Alerts date-range filter + severity ordering.
+    ("ix_alerts_started_at", "alerts", "(started_at)"),
+    ("ix_alerts_resolved_sev", "alerts", "(resolved, severity_int)"),
+    # Hosts last_seen range filter on the Capacity page.
+    ("ix_hosts_last_seen", "hosts", "(last_seen)"),
+]
+
+
+def _ensure_indexes() -> None:
+    """Create any missing helper indexes (idempotent)."""
+    with engine.begin() as conn:
+        for name, table, cols in _ADDED_INDEXES:
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS {name} ON {table} {cols}"))
+
+
 def _ensure_columns() -> None:
     """Add any missing columns to existing tables (tiny forward-only migration).
 
@@ -99,3 +120,4 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
+    _ensure_indexes()

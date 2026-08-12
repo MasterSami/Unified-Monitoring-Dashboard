@@ -1146,7 +1146,8 @@ td.mono {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 16px;
 }
 .pager .btn[disabled] {
@@ -1154,10 +1155,21 @@ td.mono {
   cursor: not-allowed;
   pointer-events: none;
 }
+.pager .btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.pager-gap {
+  color: var(--text-muted);
+  padding: 0 2px;
+}
 .pager-info {
   font-size: 13px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  margin-left: 8px;
 }
 
 /* --- Toasts --------------------------------------------------------------- */
