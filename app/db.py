@@ -81,6 +81,9 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     ("ix_alerts_resolved_sev", "alerts", "(resolved, severity_int)"),
     # Hosts last_seen range filter on the Capacity page.
     ("ix_hosts_last_seen", "hosts", "(last_seen)"),
+    # Collector health: latest run / latest success per instance (batched).
+    ("ix_collector_runs_instance_id", "collector_runs", "(instance, id)"),
+    ("ix_collector_runs_status_instance_id", "collector_runs", "(status, instance, id)"),
 ]
 
 

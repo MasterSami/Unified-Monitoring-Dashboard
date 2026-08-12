@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.collectors import BaseCollector, build_collectors
@@ -71,27 +71,43 @@ class CollectorService:
 # --- Status derivation ------------------------------------------------------
 
 
+def _latest_runs_by_instance(
+    db: Session, *, only_success: bool = False
+) -> dict[str, CollectorRun]:
+    """Return {instance -> latest CollectorRun} in ONE query.
+
+    ``id`` is autoincrement, so the max id per instance is that instance's most
+    recent run — cheaper and more portable than a per-row window function.
+    """
+    latest = select(
+        CollectorRun.instance, func.max(CollectorRun.id).label("mid")
+    )
+    if only_success:
+        latest = latest.where(CollectorRun.status == RunStatus.success)
+    latest = latest.group_by(CollectorRun.instance).subquery()
+
+    rows = db.scalars(
+        select(CollectorRun).join(latest, CollectorRun.id == latest.c.mid)
+    ).all()
+    return {r.instance: r for r in rows}
+
+
 def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorStatus]:
-    """Derive current health for every configured instance from run history."""
+    """Derive current health for every configured instance from run history.
+
+    Two batched queries total (latest run + latest success per instance) instead
+    of a pair of queries per instance — the sidebar health panel renders on every
+    page and polls every 60s, so this stays cheap as instance count grows.
+    """
+    last_runs = _latest_runs_by_instance(db)
+    last_success = _latest_runs_by_instance(db, only_success=True)
     statuses: list[CollectorStatus] = []
 
+    configured: set[str] = set()
     for cfg in load_servers(settings):
-        last_run = db.scalar(
-            select(CollectorRun)
-            .where(CollectorRun.instance == cfg.name)
-            .order_by(CollectorRun.started_at.desc())
-            .limit(1)
-        )
-        last_success = db.scalar(
-            select(CollectorRun)
-            .where(
-                CollectorRun.instance == cfg.name,
-                CollectorRun.status == RunStatus.success,
-            )
-            .order_by(CollectorRun.started_at.desc())
-            .limit(1)
-        )
-
+        configured.add(cfg.name)
+        last_run = last_runs.get(cfg.name)
+        succ = last_success.get(cfg.name)
         status = "never" if last_run is None else last_run.status.value
         statuses.append(
             CollectorStatus(
@@ -99,7 +115,7 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 instance=cfg.name,
                 enabled=True,
                 last_run_at=last_run.started_at if last_run else None,
-                last_success_at=last_success.finished_at if last_success else None,
+                last_success_at=succ.finished_at if succ else None,
                 status=status,
                 items_collected=last_run.items_collected if last_run else 0,
                 hosts_collected=last_run.hosts_collected if last_run else 0,
@@ -107,9 +123,7 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
                 error_message=last_run.error_message
                 if last_run and last_run.status == RunStatus.failed
                 else None,
-                notes=last_success.error_message
-                if last_success and last_success.error_message
-                else None,
+                notes=succ.error_message if succ and succ.error_message else None,
                 test_mail=cfg.test_mail,
                 check_proxies=cfg.check_proxies,
             )
@@ -117,26 +131,9 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
 
     # Push-based collectors (e.g. the SiteScope forwarder) aren't in the server
     # inventory — derive their health from the run rows they record on ingest,
-    # so a stale/dead forwarder still shows up in the UI.
-    configured = {cfg.name for cfg in load_servers(settings)}
-    push_instances = db.execute(
-        select(CollectorRun.instance)
-        .where(CollectorRun.platform == "sitescope")
-        .group_by(CollectorRun.instance)
-    ).scalars().all()
-    for instance in push_instances:
-        if instance in configured:
-            continue
-        last_run = db.scalar(
-            select(CollectorRun)
-            .where(
-                CollectorRun.platform == "sitescope",
-                CollectorRun.instance == instance,
-            )
-            .order_by(CollectorRun.started_at.desc())
-            .limit(1)
-        )
-        if last_run is None:
+    # so a stale/dead forwarder still shows up in the UI. Already prefetched.
+    for instance, last_run in last_runs.items():
+        if instance in configured or last_run.platform != "sitescope":
             continue
         statuses.append(
             CollectorStatus(
