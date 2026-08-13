@@ -409,7 +409,7 @@ def export_capacity_xlsx(
         filters_summary=filters,
         columns=["Server", "IP", "Platform", "Instance", "Group", "CPU %",
                  "Memory %", "Disk %", "Cores", "Total Memory (GB)",
-                 "Last Seen", "Status"],
+                 "Last Updated", "Status"],
         rows=rows(),
     )
     fname = f"SAMIX_capacity_{_fname_stamp(date_from)}_{_fname_stamp(date_to)}.xlsx"

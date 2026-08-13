@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}Unified Monitoring Dashboard{% endblock %}</title>
+    <title>{% block title %}SAMI'X{% endblock %}</title>
 
     <!-- No flash of wrong theme: resolve before CSS loads. -->
     <script>
@@ -19,8 +19,11 @@
     </script>
 
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}" />
+    <!-- Favicon: drop your icon at app/static/logo.png to replace the emoji below.
+         (The emoji data-URI is the fallback shown until that file exists.) -->
+    <link rel="icon" href="/static/logo.png" />
     <link
-      rel="icon"
+      rel="alternate icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>"
     />
     <script src="/static/htmx.min.js" defer></script>
@@ -30,9 +33,14 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="logo">📊</span>
+          <!-- Drop your logo at app/static/logo.png; the 📊 emoji shows until then. -->
+          <span class="logo">
+            <img src="/static/logo.png" alt="SAMI'X"
+              onerror="this.style.display='none';this.nextElementSibling.style.display='inline'" />
+            <span class="logo-fallback" style="display:none">📊</span>
+          </span>
           <span>
-            Unified Monitor
+            SAMI'X
             <span class="brand-sub">Ops Dashboard</span>
           </span>
         </div>

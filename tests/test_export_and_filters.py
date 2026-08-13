@@ -31,8 +31,8 @@ def test_build_workbook_structure_and_severity_color():
         severity_col=0,
     )
     ws = openpyxl.load_workbook(io.BytesIO(data)).active
-    assert ws["A1"].value == "SAMIX — Monitoring Data Export"
-    assert ws["A2"].value == "Extracted from SAMIX tool"
+    assert ws["A1"].value == "SAMI'X — Monitoring Data Export"
+    assert ws["A2"].value == "Extracted from SAMI'X tool"
     assert ws["A3"].value.startswith("Period:")
     assert ws.cell(6, 1).value == "Severity"       # header row
     assert ws.freeze_panes == "A7"
@@ -75,5 +75,5 @@ def test_xlsx_endpoints_stream_valid_workbooks(client):
         assert r.headers["content-type"].startswith("application/vnd.openxml")
         assert 'filename="SAMIX_' in r.headers["content-disposition"]
         ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
-        assert ws["A1"].value == "SAMIX — Monitoring Data Export"
+        assert ws["A1"].value == "SAMI'X — Monitoring Data Export"
         assert ws.title == sheet

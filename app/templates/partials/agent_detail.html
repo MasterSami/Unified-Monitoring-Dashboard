@@ -13,7 +13,7 @@
   <dt>IP</dt><dd class="mono">{{ host.ip or '—' }}</dd>
   <dt>Instance</dt><dd>{{ host.source_instance or '—' }}</dd>
   <dt>Group</dt><dd>{{ host.group_name or '—' }}</dd>
-  <dt>Last seen</dt><dd>{{ host.last_seen | relative_time }}</dd>
+  <dt>Last updated</dt><dd title="When this agent last reported data to a collector">{{ host.last_seen | relative_time }}</dd>
   <dt>External ID</dt><dd class="mono">{{ host.external_id }}</dd>
 </dl>
 
@@ -38,12 +38,6 @@
 <div class="ad-noalerts">🎉 No active alerts on this agent.</div>
 {% endif %}
 
-{% if host.raw_payload %}
-<details class="ad-raw">
-  <summary>Raw payload</summary>
-  <pre>{{ host.raw_payload | tojson(indent=2) }}</pre>
-</details>
-{% endif %}
 {% else %}
 <div class="agent-detail-empty">Agent not found (it may have been reconciled away).</div>
 {% endif %}

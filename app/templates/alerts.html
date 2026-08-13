@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="toolbar">
-  <div class="search">
+  <div class="search search-grow">
     <span class="search-icon">⌕</span>
     <input
       type="search"
@@ -22,24 +22,21 @@
     />
   </div>
 
-  <div class="field">
-    <span class="field-lbl">Started (UTC)</span>
-    <div class="daterange">
+  <div class="filter-group">
+    <span class="field-lbl">Time range (UTC)</span>
+    <div class="daterange" title="Show alerts that occurred in this time range">
       <input type="datetime-local" name="date_from" class="afilter dt-input" aria-label="From" />
       <span class="dt-sep">→</span>
       <input type="datetime-local" name="date_to" class="afilter dt-input" aria-label="To" />
-      <button class="btn btn-accent" type="button" title="Apply date range"
+      <button class="btn btn-accent" type="button" title="Apply time range"
         hx-get="/partials/alerts" hx-target="#alerts-region" hx-swap="innerHTML" hx-include=".afilter">Apply</button>
     </div>
+    {% if enable_export %}
+    <button class="btn" type="button" onclick="exportAlerts()" title="Export current view to Excel">
+      ⭳ Export Excel
+    </button>
+    {% endif %}
   </div>
-
-  <div class="spacer"></div>
-
-  {% if enable_export %}
-  <button class="btn" type="button" onclick="exportAlerts()" title="Export current view to Excel">
-    ⭳ Export Excel
-  </button>
-  {% endif %}
 </div>
 
 <script>

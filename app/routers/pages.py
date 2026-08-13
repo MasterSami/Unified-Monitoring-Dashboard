@@ -550,11 +550,27 @@ def overview(
     return templates.TemplateResponse("overview.html", ctx)
 
 
-def _instance_names(settings: Settings) -> list[dict]:
-    """Configured instances (name + platform) for filter dropdowns."""
-    return [
-        {"name": s.name, "platform": s.platform} for s in load_servers(settings)
-    ]
+def _instance_names(settings: Settings, db: Session | None = None) -> list[dict]:
+    """Instances (name + platform) for filter dropdowns.
+
+    Configured pull instances (servers.yaml) plus push instances that only exist
+    in the data (e.g. SiteScope forwarders), so SiteScope shows up in the filter
+    even though it isn't in the server inventory.
+    """
+    out = [{"name": s.name, "platform": s.platform} for s in load_servers(settings)]
+    if db is not None:
+        seen = {i["name"] for i in out}
+        rows = db.execute(
+            select(Host.source_instance, Host.source_platform)
+            .where(Host.source_platform == SourcePlatform.sitescope)
+            .group_by(Host.source_instance, Host.source_platform)
+            .order_by(Host.source_instance)
+        ).all()
+        for name, platform in rows:
+            if name and name not in seen:
+                seen.add(name)
+                out.append({"name": name, "platform": getattr(platform, "value", str(platform))})
+    return out
 
 
 @router.get("/hosts")
@@ -598,7 +614,7 @@ def capacity_page(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
-            "instances": _instance_names(settings),
+            "instances": _instance_names(settings, db),
             "collectors": get_collector_statuses(db, settings),
             "current": dict(_CAPACITY_CURRENT_DEFAULT),
         },
@@ -741,7 +757,7 @@ def agents_page(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
-            "instances": _instance_names(settings),
+            "instances": _instance_names(settings, db),
             "collectors": get_collector_statuses(db, settings),
             "current": {
                 "q": "",

@@ -59,7 +59,7 @@
 
   <div class="toolbar-row">
     <div class="field">
-      <span class="field-lbl">Last seen (UTC)</span>
+      <span class="field-lbl">Report period (UTC)</span>
       <div class="daterange">
         <input type="datetime-local" name="date_from" class="cfilter dt-input" aria-label="From" />
         <span class="dt-sep">→</span>
@@ -113,8 +113,11 @@
     document.querySelectorAll(".cfilter").forEach(function (el) {
       if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
     });
-    // Rich weekly-report export (CPU cores, per-drive disk, RAM/CPU trends, …).
-    window.location = "/api/v1/capacity_report.xlsx?" + params.toString();
+    var pf = (document.getElementById("f-platform") || {}).value;
+    // Dynatrace -> the same table as the UI. Zabbix/All -> the rich weekly report
+    // (CPU cores, per-drive disk, RAM/CPU trends, service, owner).
+    var url = pf === "dynatrace" ? "/api/v1/capacity.xlsx" : "/api/v1/capacity_report.xlsx";
+    window.location = url + "?" + params.toString();
   }
 
   // Prefill the range to the last 24h (UTC), display only — no auto-apply.

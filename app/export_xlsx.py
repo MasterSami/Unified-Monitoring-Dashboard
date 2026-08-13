@@ -1,4 +1,4 @@
-"""Branded .xlsx export for SAMIX (Capacity / Alerts).
+"""Branded .xlsx export for SAMI'X (Capacity / Alerts).
 
 One reusable builder writes a header block, then a styled data table (bold filled
 header, freeze panes, readable dates, severity-colored cells) and returns the
@@ -16,7 +16,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-_TITLE = "SAMIX — Monitoring Data Export"
+_TITLE = "SAMI'X — Monitoring Data Export"
 _HEADER_FILL = "1F4E78"          # table header band
 _TITLE_FONT = Font(bold=True, size=16, color="1F4E78")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -63,7 +63,7 @@ def build_workbook(
     ws.row_dimensions[1].height = 24
 
     ws.merge_cells(f"A2:{last_col}2")
-    ws["A2"].value = "Extracted from SAMIX tool"
+    ws["A2"].value = "Extracted from SAMI'X tool"
     ws["A2"].font = _MUTED
 
     ws.merge_cells(f"A3:{last_col}3")
