@@ -152,6 +152,22 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _same_instant(a: datetime | None, b: datetime | None) -> bool:
+    """True if two datetimes name the same instant.
+
+    Rows loaded from SQLite come back naive (implicitly UTC) while collector
+    values are UTC-aware, so a plain ``==`` never matches — normalize both to
+    aware-UTC first.
+    """
+    if a is None or b is None:
+        return a is b
+
+    def norm(d: datetime) -> datetime:
+        return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d.astimezone(timezone.utc)
+
+    return norm(a) == norm(b)
+
+
 def upsert_hosts(
     db: Session,
     platform: SourcePlatform,
@@ -281,3 +297,68 @@ def upsert_alerts(
 
     db.flush()
     return len(seen_external_ids)
+
+
+def upsert_resolved_alerts(
+    db: Session,
+    platform: SourcePlatform,
+    alerts: list[dict],
+    instance: str = "",
+) -> int:
+    """Backfill RESOLVED alerts pulled from the source tool's history.
+
+    Unlike :func:`upsert_alerts` this never reconciles or un-resolves anything —
+    every row here is inserted/updated as ``resolved=True``. Dedup order:
+
+    1. an existing row with the same ``external_id`` (e.g. a Dynatrace problem
+       that was previously active) is updated in place;
+    2. else, if the item carries ``match_external_id`` (e.g. the Zabbix trigger
+       id behind an event) a resolved row with that id and the same
+       ``started_at`` is treated as the same episode and left as-is;
+    3. else a new resolved row is inserted.
+
+    Returns the number of NEW history rows inserted.
+    """
+    now = _utcnow()
+    existing = {
+        a.external_id: a
+        for a in db.scalars(
+            select(Alert).where(
+                Alert.source_platform == platform,
+                Alert.source_instance == instance,
+            )
+        ).all()
+    }
+    inserted = 0
+    for item in alerts:
+        external_id = str(item["external_id"])
+        row = existing.get(external_id)
+        if row is None:
+            match_id = item.get("match_external_id")
+            if match_id is not None:
+                twin = existing.get(str(match_id))
+                if (
+                    twin is not None
+                    and twin.resolved
+                    and _same_instant(twin.started_at, item.get("started_at"))
+                ):
+                    continue  # same episode already recorded via reconciliation
+            row = Alert(
+                source_platform=platform,
+                source_instance=instance,
+                external_id=external_id,
+            )
+            db.add(row)
+            existing[external_id] = row
+            inserted += 1
+        sev = int(item.get("severity_int", 1))
+        row.severity_int = sev
+        row.severity_label = item.get("severity_label") or severity_label(sev)
+        row.host_hostname = item.get("host_hostname")
+        row.title = item.get("title", "")
+        row.started_at = item.get("started_at")
+        row.resolved = True
+        row.raw_payload = item.get("raw_payload", {})
+        row.updated_at = now
+    db.flush()
+    return inserted

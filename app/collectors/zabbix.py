@@ -27,6 +27,13 @@ from app.normalizer import normalize_zabbix_severity, zabbix_severity_label
 from app.servers import ServerConfig
 
 
+def _to_float_or_none(v: object) -> float | None:
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 class ZabbixCollector(BaseCollector):
     """Collects hosts, triggers, and proxy health from one Zabbix instance."""
 
@@ -202,133 +209,156 @@ class ZabbixCollector(BaseCollector):
 
     # --- Capacity metrics ---------------------------------------------------
     #
-    # Zabbix item keys almost always carry parameters (e.g. ``system.cpu.util[,idle]``
-    # or ``vm.memory.size[pused]``) and vary by template, so an EXACT ``filter``
-    # match misses them and the Capacity view stays empty. Instead we ``startSearch``
-    # on the BASE keys below, then classify each returned item by its base key and
-    # last parameter. Disk is summed across mounted filesystems. Fully best-effort:
-    # any gap just renders "—" and never affects host collection.
-    _SEARCH_BASES = ("system.cpu", "vm.memory", "vfs.fs")
-
-    @staticmethod
-    def _split_key(key: str) -> tuple[str, list[str]]:
-        """Return ``(base_key, [params])`` for a Zabbix item key."""
-        if "[" in key:
-            base, rest = key.split("[", 1)
-            return base, [p.strip() for p in rest.rstrip("]").split(",")]
-        return key, []
+    # Uses the SAME item classification as the weekly report (app.zabbix_report):
+    # quote-aware key parsing, ranked cpu/mem item selection, per-filesystem
+    # total/used, and a history.get fallback when lastvalue is empty. Items are
+    # fetched in host batches so huge instances can't blow up one giant item.get
+    # (which previously failed silently and left CPU/disk blank in the UI while
+    # the export — which already batched — showed everything). Fully best-effort.
+    _METRIC_HOST_BATCH = 200
 
     def _attach_metrics(self, hosts: list[dict]) -> None:
-        """Attach CPU%, memory + disk (used/total and %) and cores from items.
+        """Attach CPU%, memory + disk (used/total GB and %) and cores from items.
 
-        One bulk ``item.get`` (``startSearch`` on base keys) so parameterized keys
-        from any template are picked up, then classified by base + last param.
-        Memory and disk are reported as used/total (GB) plus a percentage so the
-        Capacity view can show absolute consumption. Fully contained — any failure
-        just leaves metrics unset ("—") and never affects host collection.
+        Mirrors the weekly report's logic exactly, so whatever appears in the
+        Excel report also appears in the Capacity view. Any failure just leaves
+        metrics unset ("—") and never affects host collection.
         """
         if not hosts:
             return
-        try:
-            items = self._rpc(
-                "item.get",
-                {
-                    "output": ["hostid", "key_", "lastvalue"],
-                    "search": {"key_": list(self._SEARCH_BASES)},
-                    "searchByAny": True,
-                    "startSearch": True,
-                    "monitored": True,
-                },
-            )
-        except CollectorError as exc:
-            self.logger.warning("item.get for metrics failed: %s", exc)
-            return
+        from app.zabbix_report import GB, _classify, _last_values, _KEY_SEARCH
 
-        def _new() -> dict:
-            return {
-                "cpu": None, "cores": None,
-                "mem_pused": None, "mem_total": None,
-                "mem_used": None, "mem_avail": None,
-                "disk_pused": None, "disk_total": 0.0, "disk_used": 0.0,
+        hostids = [str(h["external_id"]) for h in hosts]
+        by_host: dict[str, list[dict]] = {}
+        for i in range(0, len(hostids), self._METRIC_HOST_BATCH):
+            batch = hostids[i : i + self._METRIC_HOST_BATCH]
+            try:
+                items = self._rpc(
+                    "item.get",
+                    {
+                        "hostids": batch,
+                        "output": [
+                            "itemid", "hostid", "key_", "name",
+                            "value_type", "lastvalue",
+                        ],
+                        "search": {"key_": list(_KEY_SEARCH)},
+                        "searchByAny": True,
+                        "startSearch": True,
+                        "filter": {"status": 0},
+                        "webitems": False,
+                    },
+                )
+            except CollectorError as exc:
+                self.logger.warning("item.get for metrics failed: %s", exc)
+                continue
+            for it in items:  # type: ignore[union-attr]
+                by_host.setdefault(str(it.get("hostid")), []).append(it)
+
+        if not by_host:
+            return
+        all_items = [it for lst in by_host.values() for it in lst]
+        try:
+            last = _last_values(self, all_items)
+        except Exception as exc:  # noqa: BLE001 — lastvalue-only is still useful
+            self.logger.warning("history fallback for metrics failed: %s", exc)
+            last = {
+                it["itemid"]: v
+                for it in all_items
+                if (v := _to_float_or_none(it.get("lastvalue"))) is not None
             }
 
-        acc: dict[str, dict] = {}
-        for it in items:  # type: ignore[union-attr]
-            hostid = str(it.get("hostid"))
-            base, params = self._split_key(it.get("key_", ""))
-            mode = params[-1] if params else ""
-            try:
-                val = float(it.get("lastvalue"))
-            except (TypeError, ValueError):
-                continue
-            d = acc.setdefault(hostid, _new())
-            if base == "system.cpu.util":
-                busy = 100.0 - val if "idle" in params else val
-                d["cpu"] = busy if d["cpu"] is None else max(d["cpu"], busy)
-            elif base == "system.cpu.num":
-                d["cores"] = int(val)
-            elif base == "vm.memory.utilization":
-                d["mem_pused"] = val
-            elif base == "vm.memory.size":
-                if mode == "pused":
-                    d["mem_pused"] = val
-                elif mode == "pavailable":
-                    d["mem_pused"] = 100.0 - val
-                elif mode == "used":
-                    d["mem_used"] = val
-                elif mode == "available":
-                    d["mem_avail"] = val
-                else:  # "total" or no parameter
-                    d["mem_total"] = val
-            elif base.endswith("fs.size"):  # vfs.fs.size / vfs.fs.dependent.size
-                if mode == "pused":
-                    d["disk_pused"] = val if d["disk_pused"] is None else max(d["disk_pused"], val)
-                elif mode == "pfree":
-                    v = 100.0 - val
-                    d["disk_pused"] = v if d["disk_pused"] is None else max(d["disk_pused"], v)
-                elif mode == "used":
-                    d["disk_used"] += val
-                elif mode in ("total", ""):
-                    d["disk_total"] += val
+        from app.zabbix_report import key_params
 
-        gb = 1024**3
         for h in hosts:
-            d = acc.get(str(h.get("external_id")))
-            if not d:
+            items = by_host.get(str(h.get("external_id")))
+            if not items:
                 continue
+            c = _classify(items)
+
+            def lv(it):
+                return last.get(it.get("itemid")) if it else None
+
+            def first_val(pred):
+                """Last value of the first item whose lowercase key matches."""
+                for it in items:
+                    if pred(it.get("key_", "").lower()):
+                        v = last.get(it.get("itemid"))
+                        if v is not None:
+                            return v
+                return None
+
             metrics = h.setdefault("metrics", {})
-            # CPU
-            if d["cpu"] is not None:
-                h["cpu_pct"] = round(d["cpu"], 1)
-            if d["cores"]:
-                metrics["cores"] = d["cores"]
-                if d["cpu"] is not None:
-                    metrics["cpu_used_cores"] = round(d["cores"] * d["cpu"] / 100, 1)
-            # Memory — prefer absolute used/total, else derive from a percentage.
-            total, used, avail = d["mem_total"], d["mem_used"], d["mem_avail"]
-            if used is None and avail is not None and total:
-                used = total - avail
-            if total:
-                metrics["mem_total_gb"] = round(total / gb, 1)
-                if used is not None:
-                    metrics["mem_used_gb"] = round(used / gb, 1)
-                    h["mem_pct"] = round(used / total * 100, 1)
-                elif d["mem_pused"] is not None:
-                    h["mem_pct"] = round(d["mem_pused"], 1)
-                    metrics["mem_used_gb"] = round(total / gb * d["mem_pused"] / 100, 1)
-            elif d["mem_pused"] is not None:
-                h["mem_pct"] = round(d["mem_pused"], 1)
-            # Disk — sum across filesystems; prefer absolute, else a percentage.
-            if d["disk_total"] > 0:
-                metrics["disk_total_gb"] = round(d["disk_total"] / gb, 1)
-                if d["disk_used"] > 0:
-                    metrics["disk_used_gb"] = round(d["disk_used"] / gb, 1)
-                    h["disk_pct"] = round(d["disk_used"] / d["disk_total"] * 100, 1)
-                elif d["disk_pused"] is not None:
-                    h["disk_pct"] = round(d["disk_pused"], 1)
-                    metrics["disk_used_gb"] = round(d["disk_total"] / gb * d["disk_pused"] / 100, 1)
-            elif d["disk_pused"] is not None:
-                h["disk_pct"] = round(d["disk_pused"], 1)
+            cores = lv(c["cpu_num"])
+            cpu_now = lv(c["cpu_util"])
+            if cpu_now is None:
+                # Idle-only template: busy = 100 − idle.
+                idle = first_val(
+                    lambda k: k.startswith("system.cpu.util[") and ",idle" in k
+                )
+                if idle is not None:
+                    cpu_now = 100.0 - idle
+            if cpu_now is not None:
+                h["cpu_pct"] = round(cpu_now, 1)
+            if cores:
+                metrics["cores"] = int(cores)
+                if cpu_now is not None:
+                    metrics["cpu_used_cores"] = round(int(cores) * cpu_now / 100, 1)
+
+            mem_tot = lv(c["mem_total"])
+            mem_now = lv(c["mem_util"])
+            if mem_now is not None and c["mem_util_inverted"]:
+                mem_now = 100.0 - mem_now
+            mem_used = None
+            if mem_tot and mem_now is None:
+                # Absolute-only template: used, or total − available.
+                mem_used = first_val(lambda k: k == "vm.memory.size[used]")
+                if mem_used is None:
+                    avail = first_val(lambda k: k == "vm.memory.size[available]")
+                    if avail is not None:
+                        mem_used = mem_tot - avail
+                if mem_used is not None:
+                    mem_now = mem_used / mem_tot * 100
+            if mem_tot:
+                metrics["mem_total_gb"] = round(mem_tot / GB, 1)
+                if mem_now is not None:
+                    h["mem_pct"] = round(mem_now, 1)
+                    metrics["mem_used_gb"] = round(
+                        (mem_used if mem_used is not None
+                         else mem_tot * mem_now / 100) / GB, 1
+                    )
+            elif mem_now is not None:
+                h["mem_pct"] = round(mem_now, 1)
+
+            tot_sum, used_sum = 0.0, 0.0
+            for _fsname, slot in c["fs"].items():
+                t = lv(slot["total"])
+                u = lv(slot["used"])
+                if t:
+                    tot_sum += t
+                if u:
+                    used_sum += u
+            if tot_sum > 0:
+                metrics["disk_total_gb"] = round(tot_sum / GB, 1)
+                metrics["disk_used_gb"] = round(used_sum / GB, 1)
+                h["disk_pct"] = round(used_sum / tot_sum * 100, 1)
+            else:
+                # Percentage-only template: worst filesystem's pused / 100−pfree.
+                worst = None
+                for it in items:
+                    k = it.get("key_", "").lower()
+                    if not (k.startswith("vfs.fs.size[")
+                            or k.startswith("vfs.fs.dependent.size[")):
+                        continue
+                    p = key_params(it.get("key_", ""))
+                    mode = p[1].lower() if len(p) > 1 else ""
+                    v = last.get(it.get("itemid"))
+                    if v is None:
+                        continue
+                    pct = v if mode == "pused" else (100.0 - v if mode == "pfree" else None)
+                    if pct is not None:
+                        worst = pct if worst is None else max(worst, pct)
+                if worst is not None:
+                    h["disk_pct"] = round(worst, 1)
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
@@ -365,6 +395,60 @@ class ZabbixCollector(BaseCollector):
                     "title": t.get("description", ""),
                     "started_at": started,
                     "raw_payload": t,
+                }
+            )
+        return alerts
+
+    def collect_resolved_alerts(self) -> list[dict]:
+        """Resolved problems from event history (last ALERT_HISTORY_DAYS days).
+
+        ``event.get`` problem events (source 0 / object 0, value 1) that carry a
+        recovery event (``r_eventid`` != 0) — i.e. problems that started AND
+        resolved inside the window, regardless of when the dashboard was
+        deployed. ``match_external_id`` carries the trigger id so episodes
+        already recorded by live reconciliation aren't duplicated.
+        """
+        if self.settings.mock_mode:
+            return []
+        days = max(1, int(self.settings.alert_history_days))
+        time_from = int(datetime.now(timezone.utc).timestamp()) - days * 86400
+        result = self._rpc(
+            "event.get",
+            {
+                "output": ["eventid", "objectid", "name", "severity",
+                           "clock", "r_eventid"],
+                "source": 0,          # trigger events
+                "object": 0,
+                "value": 1,           # PROBLEM events
+                "time_from": time_from,
+                "selectHosts": ["host", "name"],
+                "sortfield": "clock",
+                "sortorder": "DESC",
+                "limit": 5000,
+            },
+        )
+        alerts: list[dict] = []
+        for ev in result:  # type: ignore[union-attr]
+            if str(ev.get("r_eventid") or "0") == "0":
+                continue  # still active — the live path owns it
+            hosts = ev.get("hosts", [])
+            hostname = (
+                (hosts[0].get("name") or hosts[0].get("host")) if hosts else None
+            )
+            started = None
+            if ev.get("clock"):
+                started = datetime.fromtimestamp(int(ev["clock"]), tz=timezone.utc)
+            sev = ev.get("severity", 0)
+            alerts.append(
+                {
+                    "external_id": f"ev-{ev['eventid']}",
+                    "match_external_id": ev.get("objectid"),
+                    "host_hostname": hostname,
+                    "severity_int": normalize_zabbix_severity(sev),
+                    "severity_label": zabbix_severity_label(sev),
+                    "title": ev.get("name", ""),
+                    "started_at": started,
+                    "raw_payload": ev,
                 }
             )
         return alerts

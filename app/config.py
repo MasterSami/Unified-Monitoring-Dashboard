@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Rows per page in the hosts / alerts tables.
     page_size: int = 300
 
+    # How far back (days) collectors backfill RESOLVED alerts from the source
+    # tools (Zabbix event history, Dynatrace closed problems) so the Alerts
+    # "Resolved" view is real history, not just what resolved since deploy.
+    alert_history_days: int = 30
+
     # Show the CSV "Export" buttons (and enable the .csv endpoints).
     # Set to false to hide/disable export across the whole UI and API.
     enable_export: bool = True

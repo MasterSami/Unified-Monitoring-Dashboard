@@ -383,3 +383,56 @@ class DynatraceCollector(BaseCollector):
                     }
                 )
         return alerts
+
+    def collect_resolved_alerts(self) -> list[dict]:
+        """Closed problems from the last ALERT_HISTORY_DAYS days (Problems v2).
+
+        Same problemId as the live path, so a problem that was previously active
+        is updated in place (marked resolved) rather than duplicated. A 403
+        (no problems.read) degrades to an empty list, like collect_alerts.
+        """
+        if self.settings.mock_mode:
+            return []
+        days = max(1, int(self.settings.alert_history_days))
+        url = f"{self._base}/api/v2/problems"
+        params: dict[str, str] = {
+            "problemSelector": 'status("CLOSED")',
+            "from": f"now-{days}d",
+            "pageSize": "500",
+        }
+        alerts: list[dict] = []
+        with self._client(headers=self._headers()) as client:
+            while True:
+                resp = self._request_with_retries(client, "GET", url, params=params)
+                if resp.status_code == 403:
+                    return []
+                resp.raise_for_status()
+                data = resp.json()
+                for p in data.get("problems", []):
+                    affected = p.get("affectedEntities", [])
+                    hostname = affected[0].get("name") if affected else None
+                    started = None
+                    if p.get("startTime"):
+                        started = datetime.fromtimestamp(
+                            int(p["startTime"]) / 1000, tz=timezone.utc
+                        )
+                    alerts.append(
+                        {
+                            "external_id": p.get("problemId"),
+                            "host_hostname": hostname,
+                            "severity_int": normalize_dynatrace_severity(
+                                p.get("severityLevel")
+                            ),
+                            "severity_label": dynatrace_severity_label(
+                                p.get("severityLevel")
+                            ),
+                            "title": p.get("title", ""),
+                            "started_at": started,
+                            "raw_payload": p,
+                        }
+                    )
+                next_key = data.get("nextPageKey")
+                if not next_key:
+                    break
+                params = {"nextPageKey": next_key}
+        return alerts

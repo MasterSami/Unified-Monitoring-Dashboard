@@ -375,13 +375,17 @@ def export_capacity_xlsx(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    """Export the filtered Capacity view as a branded .xlsx (same SQL filters)."""
+    """Export the filtered Capacity view as a branded .xlsx (same SQL filters).
+
+    The date range is period metadata for the sheet header only — it must NOT
+    filter hosts by last_seen, or an export window ending before the latest
+    collection produces an empty sheet (capacity is a current snapshot).
+    """
     _require_export(settings)
     from app.export_xlsx import build_workbook
-    from app.routers.pages import _hosts_stmt, parse_dt
+    from app.routers.pages import _hosts_stmt
 
-    stmt = _hosts_stmt(q, platform, status, instance, group,
-                       parse_dt(date_from), parse_dt(date_to))
+    stmt = _hosts_stmt(q, platform, status, instance, group)
     stmt = stmt.order_by(Host.hostname.asc())
 
     def rows():

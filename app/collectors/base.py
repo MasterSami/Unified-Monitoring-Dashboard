@@ -109,6 +109,16 @@ class BaseCollector(abc.ABC):
     def collect_alerts(self) -> list[dict]:
         """Return normalized alert dicts. Must raise on unrecoverable failure."""
 
+    def collect_resolved_alerts(self) -> list[dict]:
+        """Return RESOLVED alerts from the source tool's history (best-effort).
+
+        Default: none. Collectors that can query historical/closed alerts
+        (Zabbix events, Dynatrace closed problems) override this so the Alerts
+        "Resolved" view holds real history, not just what happened to resolve
+        while the dashboard was running. Failures here must never break a run.
+        """
+        return []
+
     # --- Orchestration ------------------------------------------------------
 
     def run(self, db: Session) -> CollectorRun:
@@ -127,6 +137,22 @@ class BaseCollector(abc.ABC):
 
             host_count = upsert_hosts(db, self.platform, hosts, self.instance)
             alert_count = upsert_alerts(db, self.platform, alerts, self.instance)
+
+            # Resolved-alert history backfill — best-effort, never fails a run.
+            try:
+                resolved = self.collect_resolved_alerts()
+                if resolved:
+                    from app.normalizer import upsert_resolved_alerts
+
+                    added = upsert_resolved_alerts(
+                        db, self.platform, resolved, self.instance
+                    )
+                    if added:
+                        self.logger.info(
+                            "backfilled %d resolved alerts from history", added
+                        )
+            except Exception as exc:  # noqa: BLE001 — history is optional
+                self.logger.warning("resolved-alert backfill failed: %s", exc)
 
             run = CollectorRun(
                 platform=self.name,
