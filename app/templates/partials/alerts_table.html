@@ -1,5 +1,7 @@
+{% set st = current.state if current and current.state else 'active' %}
+{% set st_label = 'resolved' if st == 'resolved' else ('active' if st == 'active' else '') %}
 <div class="count-tag" style="margin-bottom: 8px">
-  <b>{{ total }}</b> active alert{{ '' if total == 1 else 's' }}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+  <b>{{ total }}</b> {{ st_label }}{{ ' ' if st_label }}alert{{ '' if total == 1 else 's' }}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
 </div>
 
 <div class="table-wrap">
@@ -12,6 +14,7 @@
         <th style="width: 130px">Instance</th>
         <th style="width: 150px">Host</th>
         <th style="width: 100px">Started</th>
+        <th style="width: 100px">State</th>
       </tr>
     </thead>
     <tbody>
@@ -31,10 +34,19 @@
         <td style="color: var(--text-muted); font-size: 12px;">{{ a.source_instance or '—' }}</td>
         <td class="mono">{{ a.host_hostname or '—' }}</td>
         <td class="mono">{{ a.started_at | relative_time }}</td>
+        <td>
+          {% if a.resolved %}
+          <span class="pill status-ok" title="Resolved {{ a.updated_at | relative_time }}">
+            <span class="dot"></span>resolved
+          </span>
+          {% else %}
+          <span class="pill status-down"><span class="dot"></span>active</span>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="6"><div class="empty"><span class="big">🎉</span>No active alerts.</div></td>
+        <td colspan="7"><div class="empty"><span class="big">🎉</span>No {{ st_label }}{{ ' ' if st_label }}alerts.</div></td>
       </tr>
       {% endfor %}
     </tbody>

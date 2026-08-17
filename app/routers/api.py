@@ -418,35 +418,29 @@ def export_capacity_xlsx(
 
 @router.get("/alerts.xlsx")
 def export_alerts_xlsx(
-    active: bool = Query(default=True),
+    state: str = Query(default="active"),
+    active: bool | None = Query(default=None),
     q: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
-    """Export the filtered Alerts view as a branded, severity-colored .xlsx."""
+    """Export the filtered Alerts view as a branded, severity-colored .xlsx.
+
+    ``state`` is active/resolved/all. ``active`` is kept for backward compat:
+    ``active=false`` maps to ``all`` when ``state`` isn't given explicitly.
+    """
     _require_export(settings)
     from app.export_xlsx import build_workbook
     from app.routers.pages import _alerts_filtered_stmt, parse_dt
 
-    if active:
-        stmt = _alerts_filtered_stmt(q, parse_dt(date_from), parse_dt(date_to))
-    else:
-        stmt = select(Alert)
-        if q:
-            like = f"%{q.lower()}%"
-            stmt = stmt.where(
-                func.lower(Alert.title).like(like)
-                | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
-                | func.lower(func.coalesce(Alert.source_instance, "")).like(like)
-                | func.lower(Alert.source_platform).like(like)
-                | func.lower(Alert.severity_label).like(like)
-            )
-        if parse_dt(date_from) is not None:
-            stmt = stmt.where(Alert.started_at >= parse_dt(date_from))
-        if parse_dt(date_to) is not None:
-            stmt = stmt.where(Alert.started_at <= parse_dt(date_to))
+    if active is False and state == "active":
+        state = "all"
+    if state not in ("active", "resolved", "all"):
+        state = "active"
+
+    stmt = _alerts_filtered_stmt(q, parse_dt(date_from), parse_dt(date_to), state)
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
@@ -461,9 +455,7 @@ def export_alerts_xlsx(
             ]
 
     filters = ", ".join(
-        f"{k}={v}" for k, v in (
-            ("state", "active" if active else "all"), ("q", q),
-        ) if v
+        f"{k}={v}" for k, v in (("state", state), ("q", q)) if v
     ) or "none"
     data = build_workbook(
         sheet_title="Alerts",

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Alerts · Unified Monitoring{% endblock %}
 {% block page_title %}Active Alerts{% endblock %}
-{% block page_sub %}Unresolved across all platforms, most severe first · auto-refreshes every 60s{% endblock %}
+{% block page_sub %}Across all platforms, most severe first · switch Active / Resolved / All · auto-refreshes every 60s{% endblock %}
 
 {% block content %}
 <div class="toolbar">
@@ -22,6 +22,25 @@
     />
   </div>
 
+  <div class="tabs" role="tablist" title="Active = unresolved · Resolved = history · All = both">
+    {% set cur_state = current.state if current and current.state else 'active' %}
+    {% for s in ['active', 'resolved', 'all'] %}
+    <button
+      type="button"
+      class="{{ 'active' if s == cur_state else '' }}"
+      data-state="{{ s }}"
+      hx-get="/partials/alerts"
+      hx-target="#alerts-region"
+      hx-swap="innerHTML"
+      hx-include=".afilter"
+      hx-vals='{"state": "{{ s }}"}'
+      onclick="selectState(this)"
+    >
+      {{ s | capitalize }}
+    </button>
+    {% endfor %}
+  </div>
+
   <div class="filter-group">
     <span class="field-lbl">Time range (UTC)</span>
     <div class="daterange" title="Show alerts that occurred in this time range">
@@ -37,11 +56,24 @@
     </button>
     {% endif %}
   </div>
+
+  <!-- Lifecycle state mirror, included on every request. -->
+  <input type="hidden" name="state" value="{{ current.state if current and current.state else 'active' }}"
+    class="afilter" id="a-state" />
 </div>
 
 <script>
+  function selectState(btn) {
+    btn.parentElement.querySelectorAll("button").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    btn.classList.add("active");
+    var mirror = document.getElementById("a-state");
+    if (mirror) mirror.value = btn.dataset.state;
+  }
+
   function exportAlerts() {
-    var params = new URLSearchParams({ active: "true" });
+    var params = new URLSearchParams();
     document.querySelectorAll(".afilter").forEach(function (el) {
       if (el.name && el.value) params.set(el.name, el.value);
     });

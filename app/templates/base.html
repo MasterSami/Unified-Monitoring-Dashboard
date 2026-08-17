@@ -19,9 +19,10 @@
     </script>
 
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}" />
-    <!-- Favicon: drop your icon at app/static/logo.png to replace the emoji below.
-         (The emoji data-URI is the fallback shown until that file exists.) -->
-    <link rel="icon" href="/static/logo.png" />
+    <!-- Favicon: drop your icon at app/static/logo.svg (preferred) or logo.png.
+         The emoji data-URI is the fallback shown until that file exists. -->
+    <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+    <link rel="icon" type="image/png" href="/static/logo.png" />
     <link
       rel="alternate icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>"
@@ -33,10 +34,10 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <!-- Drop your logo at app/static/logo.png; the 📊 emoji shows until then. -->
+          <!-- Drop your logo at app/static/logo.svg (or logo.png); 📊 shows until then. -->
           <span class="logo">
-            <img src="/static/logo.png" alt="SAMI'X"
-              onerror="this.style.display='none';this.nextElementSibling.style.display='inline'" />
+            <img src="/static/logo.svg" alt="SAMI'X"
+              onerror="if(this.src.indexOf('logo.svg')>-1){this.src='/static/logo.png';}else{this.style.display='none';this.nextElementSibling.style.display='inline';}" />
             <span class="logo-fallback" style="display:none">📊</span>
           </span>
           <span>

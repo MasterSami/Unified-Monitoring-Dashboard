@@ -497,9 +497,19 @@ def _alerts_filtered_stmt(
     q: str | None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    state: str = "active",
 ):
-    """Active-alerts SELECT with search + optional started_at range (all in SQL)."""
-    stmt = select(Alert).where(Alert.resolved.is_(False))
+    """Alerts SELECT with search + optional started_at range (all in SQL).
+
+    ``state`` selects the lifecycle bucket: ``active`` (unresolved, the default),
+    ``resolved`` (history), or ``all`` (both — useful for historical exports).
+    """
+    stmt = select(Alert)
+    if state == "active":
+        stmt = stmt.where(Alert.resolved.is_(False))
+    elif state == "resolved":
+        stmt = stmt.where(Alert.resolved.is_(True))
+    # state == "all" -> no lifecycle filter
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(
@@ -522,9 +532,10 @@ def _active_alerts(
     page: int | None = 1,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    state: str = "active",
 ) -> tuple[list[Alert], int, int, int]:
-    """Return (rows, total, page, pages) — one page of active alerts."""
-    stmt = _alerts_filtered_stmt(q, date_from, date_to)
+    """Return (rows, total, page, pages) — one page of alerts for ``state``."""
+    stmt = _alerts_filtered_stmt(q, date_from, date_to, state)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     page, pages, offset = _paginate(page, total)
     stmt = (
@@ -636,10 +647,16 @@ def capacity_partial(
     date_to: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Capacity table fragment (search / filter / group / sort / date / paginate)."""
-    df, dt = parse_dt(date_from), parse_dt(date_to)
+    """Capacity table fragment (search / filter / group / sort / paginate).
+
+    The date range is intentionally NOT applied to the live table: capacity is a
+    current snapshot, and filtering hosts by ``last_seen`` would silently hide
+    every server the moment the window didn't line up (which made the table
+    "vanish" when switching platform tabs). The range drives the Excel export's
+    trend window only — see ``exportCapacity()`` and ``/api/v1/capacity_report``.
+    """
     hosts, total, page, pages = _hosts_query(
-        db, q, platform, status, sort, order, instance, page, group, df, dt
+        db, q, platform, status, sort, order, instance, page, group
     )
     return templates.TemplateResponse(
         "partials/capacity_table.html",
@@ -945,8 +962,8 @@ def alerts_page(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Active alerts table page."""
-    alerts, total, page, pages = _active_alerts(db, None, 1)
+    """Alerts table page (defaults to the active/unresolved bucket)."""
+    alerts, total, page, pages = _active_alerts(db, None, 1, state="active")
     return templates.TemplateResponse(
         "alerts.html",
         {
@@ -957,6 +974,7 @@ def alerts_page(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
+            "current": {"date_from": "", "date_to": "", "state": "active"},
             "collectors": get_collector_statuses(db, settings),
         },
     )
@@ -1021,11 +1039,12 @@ def alerts_partial(
     page: int = 1,
     date_from: str | None = None,
     date_to: str | None = None,
+    state: str = "active",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Alerts table fragment (search + date range + paginate + polled every 60s)."""
+    """Alerts table fragment (search + state + date range + paginate)."""
     df, dt = parse_dt(date_from), parse_dt(date_to)
-    alerts, total, page, pages = _active_alerts(db, q, page, df, dt)
+    alerts, total, page, pages = _active_alerts(db, q, page, df, dt, state)
     return templates.TemplateResponse(
         "partials/alerts_table.html",
         {
@@ -1035,7 +1054,11 @@ def alerts_partial(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
-            "current": {"date_from": date_from or "", "date_to": date_to or ""},
+            "current": {
+                "date_from": date_from or "",
+                "date_to": date_to or "",
+                "state": state,
+            },
         },
     )
 

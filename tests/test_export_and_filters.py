@@ -67,6 +67,32 @@ def test_alerts_date_range_filters_in_sql(client):
         db.close()
 
 
+def test_alerts_state_filter_active_resolved_all(client):
+    inst = "SIS-STATE-TEST"
+    db = SessionLocal()
+    try:
+        db.add(Alert(external_id="s-open", source_platform=SourcePlatform.zabbix,
+                     source_instance=inst, severity_int=5, severity_label="Disaster",
+                     title="open one", started_at=NOW, resolved=False))
+        db.add(Alert(external_id="s-done", source_platform=SourcePlatform.zabbix,
+                     source_instance=inst, severity_int=3, severity_label="Average",
+                     title="closed one", started_at=NOW, resolved=True))
+        db.commit()
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        active, *_ = _active_alerts(db, inst, 1, state="active")
+        resolved, *_ = _active_alerts(db, inst, 1, state="resolved")
+        every, *_ = _active_alerts(db, inst, 1, state="all")
+        assert {a.title for a in active} == {"open one"}
+        assert {a.title for a in resolved} == {"closed one"}
+        assert {a.title for a in every} == {"open one", "closed one"}
+    finally:
+        db.close()
+
+
 def test_xlsx_endpoints_stream_valid_workbooks(client):
     for url, sheet in [("/api/v1/capacity.xlsx", "Capacity"),
                        ("/api/v1/alerts.xlsx?active=true", "Alerts")]:

@@ -59,20 +59,18 @@
 
   <div class="toolbar-row">
     <div class="field">
-      <span class="field-lbl">Report period (UTC)</span>
-      <div class="daterange">
-        <input type="datetime-local" name="date_from" class="cfilter dt-input" aria-label="From" />
+      <span class="field-lbl">Export period (UTC) · affects the Excel report only</span>
+      <div class="daterange" title="Sets the trend window for the Excel export. The table below always shows the current snapshot.">
+        <input type="datetime-local" name="date_from" class="dt-input" aria-label="From" />
         <span class="dt-sep">→</span>
-        <input type="datetime-local" name="date_to" class="cfilter dt-input" aria-label="To" />
-        <button class="btn btn-accent" type="button" title="Apply date range"
-          hx-get="/partials/capacity" hx-target="#capacity-region" hx-swap="innerHTML" hx-include=".cfilter">Apply</button>
+        <input type="datetime-local" name="date_to" class="dt-input" aria-label="To" />
       </div>
     </div>
 
     <div class="spacer"></div>
 
     {% if enable_export %}
-    <button class="btn" type="button" onclick="exportCapacity()" title="Export current view to Excel">
+    <button class="btn" type="button" onclick="exportCapacity()" title="Export to Excel for the period above">
       ⭳ Export Excel
     </button>
     {% endif %}
@@ -112,6 +110,11 @@
     var params = new URLSearchParams();
     document.querySelectorAll(".cfilter").forEach(function (el) {
       if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
+    });
+    // Date range lives outside .cfilter (it must not filter the table) — add it
+    // here so the export still gets its trend window.
+    document.querySelectorAll("[name=date_from],[name=date_to]").forEach(function (el) {
+      if (el.value) params.set(el.name, el.value);
     });
     var pf = (document.getElementById("f-platform") || {}).value;
     // Dynatrace -> the same table as the UI. Zabbix/All -> the rich weekly report
