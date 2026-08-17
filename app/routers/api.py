@@ -494,6 +494,60 @@ def _db_report_rows(db: Session, platform: str) -> list[list]:
     return rows
 
 
+def _dynatrace_report_rows(db: Session, settings: Settings) -> list[list]:
+    """Weekly-report rows for Dynatrace hosts, one row per partition.
+
+    Host-level fields come from the stored snapshot; per-partition disk usage
+    (C:, D:, /…) is pulled live from any configured Dynatrace collector so the
+    "VM Space / VM Used Space For Each Drive" columns match the Zabbix report.
+    Best-effort: if the live breakdown is unavailable, each host gets a single
+    row with the summed disk total.
+    """
+    from app.servers import load_servers
+
+    breakdown: dict[str, list] = {}
+    if not settings.mock_mode:
+        for s in load_servers(settings):
+            if getattr(s, "platform", "") != "dynatrace":
+                continue
+            collector = get_service().get(s.name)
+            if collector is None or getattr(collector, "name", "") != "dynatrace":
+                continue
+            try:
+                for hid, disks in collector.disk_breakdown().items():
+                    breakdown.setdefault(hid, []).extend(disks)
+            except Exception:  # noqa: BLE001 — one instance failing is non-fatal
+                continue
+
+    rows: list[list] = []
+    stmt = (
+        select(Host)
+        .where(Host.source_platform == "dynatrace")
+        .order_by(Host.hostname.asc())
+    )
+    for h in db.scalars(stmt):
+        m = h.metrics or {}
+        base = [
+            h.hostname, h.ip or "N/A",
+            m.get("cores", 0), h.cpu_pct if h.cpu_pct is not None else 0,
+            m.get("mem_total_gb", 0.0), int(h.mem_pct) if h.mem_pct is not None else 0,
+            m.get("disk_total_gb", 0.0), m.get("disk_used_gb", 0.0),
+            "N/A", "N/A",                       # per-drive (cols 8, 9) — filled below
+            h.group_name or "N/A", "N/A",
+            "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
+        ]
+        disks = breakdown.get(h.external_id)
+        if disks:
+            for label, total_gb, used_gb in sorted(disks):
+                r = list(base)
+                r[8] = f"{label} : {total_gb}"
+                r[9] = f"{label} : {used_gb}"
+                rows.append(r)
+        else:
+            rows.append(list(base))
+    return rows
+
+
 @router.get("/capacity_report.xlsx")
 def export_capacity_report_xlsx(
     platform: str | None = Query(default="all"),
@@ -538,9 +592,9 @@ def export_capacity_report_xlsx(
         except Exception:  # noqa: BLE001 — one instance failing must not kill the export
             continue
 
-    # --- Dynatrace: best-effort from the snapshot ---
+    # --- Dynatrace: snapshot host-level + live per-partition disk ---
     if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
-        rows.extend(_db_report_rows(db, "dynatrace"))
+        rows.extend(_dynatrace_report_rows(db, settings))
 
     # Mock/demo (no live Zabbix): fall back to the snapshot for the whole view.
     if settings.mock_mode and not rows:
