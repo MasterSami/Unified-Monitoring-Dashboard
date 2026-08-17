@@ -131,10 +131,15 @@ a {
   font-size: 16px;
   overflow: hidden;
 }
+/* When a real logo image loads, drop the gradient box so the artwork shows
+   on its own (no clashing background behind a logo that has its own). */
+.brand .logo:has(img) {
+  background: transparent;
+}
 .brand .logo img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 .brand .brand-sub {
