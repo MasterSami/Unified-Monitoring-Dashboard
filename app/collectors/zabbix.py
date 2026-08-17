@@ -412,9 +412,19 @@ class ZabbixCollector(BaseCollector):
             return []
         days = max(1, int(self.settings.alert_history_days))
         time_from = int(datetime.now(timezone.utc).timestamp()) - days * 86400
-        result = self._rpc(
-            "event.get",
-            {
+
+        # Busy instances can have far more than one page of events in the
+        # window, and a single limited call sorted newest-first silently drops
+        # the older ones. Page backwards through the window (newest -> oldest)
+        # by moving time_till to the oldest clock seen, until exhausted.
+        page_size = 5000
+        max_events = 60000  # hard bound per run; the window re-scans next run
+        alerts: list[dict] = []
+        seen_ids: set[str] = set()
+        time_till: int | None = None
+        scanned = 0
+        while scanned < max_events:
+            params: dict = {
                 "output": ["eventid", "objectid", "name", "severity",
                            "clock", "r_eventid"],
                 "source": 0,          # trigger events
@@ -424,32 +434,54 @@ class ZabbixCollector(BaseCollector):
                 "selectHosts": ["host", "name"],
                 "sortfield": "clock",
                 "sortorder": "DESC",
-                "limit": 5000,
-            },
-        )
-        alerts: list[dict] = []
-        for ev in result:  # type: ignore[union-attr]
-            if str(ev.get("r_eventid") or "0") == "0":
-                continue  # still active — the live path owns it
-            hosts = ev.get("hosts", [])
-            hostname = (
-                (hosts[0].get("name") or hosts[0].get("host")) if hosts else None
-            )
-            started = None
-            if ev.get("clock"):
-                started = datetime.fromtimestamp(int(ev["clock"]), tz=timezone.utc)
-            sev = ev.get("severity", 0)
-            alerts.append(
-                {
-                    "external_id": f"ev-{ev['eventid']}",
-                    "match_external_id": ev.get("objectid"),
-                    "host_hostname": hostname,
-                    "severity_int": normalize_zabbix_severity(sev),
-                    "severity_label": zabbix_severity_label(sev),
-                    "title": ev.get("name", ""),
-                    "started_at": started,
-                    "raw_payload": ev,
-                }
+                "limit": page_size,
+            }
+            if time_till is not None:
+                params["time_till"] = time_till
+            result = self._rpc("event.get", params)
+            new_in_page = 0
+            oldest: int | None = None
+            for ev in result:  # type: ignore[union-attr]
+                eid = str(ev.get("eventid"))
+                clock = int(ev.get("clock") or 0)
+                oldest = clock if oldest is None else min(oldest, clock)
+                if eid in seen_ids:
+                    continue
+                seen_ids.add(eid)
+                new_in_page += 1
+                if str(ev.get("r_eventid") or "0") == "0":
+                    continue  # still active — the live path owns it
+                hosts = ev.get("hosts", [])
+                hostname = (
+                    (hosts[0].get("name") or hosts[0].get("host")) if hosts else None
+                )
+                started = (
+                    datetime.fromtimestamp(clock, tz=timezone.utc) if clock else None
+                )
+                sev = ev.get("severity", 0)
+                alerts.append(
+                    {
+                        "external_id": f"ev-{eid}",
+                        "match_external_id": ev.get("objectid"),
+                        "host_hostname": hostname,
+                        "severity_int": normalize_zabbix_severity(sev),
+                        "severity_label": zabbix_severity_label(sev),
+                        "title": ev.get("name", ""),
+                        "started_at": started,
+                        "raw_payload": ev,
+                    }
+                )
+            scanned += new_in_page
+            if len(result) < page_size or new_in_page == 0 or oldest is None:  # type: ignore[arg-type]
+                break
+            # Next page: everything at or before the oldest clock seen (ties are
+            # deduplicated via seen_ids above).
+            time_till = oldest
+        if scanned >= max_events:
+            self.logger.warning(
+                "resolved-alert backfill hit the %d-event cap for the %dd window; "
+                "older events will be picked up on subsequent runs",
+                max_events, days,
             )
         return alerts
 

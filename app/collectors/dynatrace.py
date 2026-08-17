@@ -242,59 +242,33 @@ class DynatraceCollector(BaseCollector):
 
         Returns ``{host_id: [(drive_label, total_gb, used_gb), ...]}`` so the
         capacity report can list each partition (C:, D:, /…) on its own row —
-        mirroring the Zabbix weekly report. Fully best-effort: returns ``{}`` on
-        any error or missing scope, and the export falls back to the summed disk
-        total. Not called in mock mode.
+        mirroring the Zabbix weekly report.
+
+        One metrics query split by BOTH host and disk gives the host↔disk
+        mapping directly from the data-point dimensions (no reliance on entity
+        relationship shapes); disk display names come from a separate DISK
+        entities lookup and fall back to the raw disk id. Fully best-effort:
+        returns ``{}`` on any error or missing scope, and the export falls back
+        to the summed disk total. Not called in mock mode.
         """
         if self.settings.mock_mode:
             return {}
 
-        # 1) DISK entity -> (display name, owning host id).
-        disks: dict[str, tuple[str, str]] = {}
-        try:
-            url = f"{self._base}/api/v2/entities"
-            params: dict[str, str] | None = {
-                "entitySelector": 'type("DISK")',
-                "fields": "fromRelationships,toRelationships",
-                "pageSize": "500",
-            }
-            with self._client(headers=self._headers()) as client:
-                while url:
-                    resp = self._request_with_retries(client, "GET", url, params=params)
-                    if resp.status_code == 403:
-                        return {}
-                    resp.raise_for_status()
-                    data = resp.json()
-                    for e in data.get("entities", []):
-                        did = e.get("entityId")
-                        host_id = _first_host_rel(e)
-                        if did and host_id:
-                            disks[did] = (e.get("displayName") or did, host_id)
-                    nxt = data.get("nextPageKey")
-                    if nxt:
-                        params = {"nextPageKey": nxt}
-                    else:
-                        url = ""
-        except Exception as exc:  # noqa: BLE001 — contained; breakdown is optional
-            self.logger.warning("Dynatrace disk entities query failed: %s", exc)
-            return {}
-        if not disks:
-            return {}
-
-        # 2) Per-disk used/avail bytes (split by disk).
-        used: dict[str, float] = {}
-        avail: dict[str, float] = {}
+        # 1) Per-(host, disk) used/avail bytes. Dimensions come back in splitBy
+        #    order: [host_id, disk_id].
+        used: dict[tuple[str, str], float] = {}
+        avail: dict[tuple[str, str], float] = {}
         selector = ",".join(
             (
-                'builtin:host.disk.used:splitBy("dt.entity.disk")',
-                'builtin:host.disk.avail:splitBy("dt.entity.disk")',
+                'builtin:host.disk.used:splitBy("dt.entity.host","dt.entity.disk")',
+                'builtin:host.disk.avail:splitBy("dt.entity.host","dt.entity.disk")',
             )
         )
         try:
             url = f"{self._base}/api/v2/metrics/query"
-            params = {
+            params: dict[str, str] = {
                 "metricSelector": selector,
-                "from": "now-30m",
+                "from": "now-2h",
                 "resolution": "Inf",
                 "pageSize": "5000",
             }
@@ -302,6 +276,9 @@ class DynatraceCollector(BaseCollector):
                 while True:
                     resp = self._request_with_retries(client, "GET", url, params=params)
                     if resp.status_code == 403:
+                        self.logger.warning(
+                            "Dynatrace disk metrics 403 — token lacks metrics.read"
+                        )
                         return {}
                     resp.raise_for_status()
                     payload = resp.json()
@@ -309,15 +286,17 @@ class DynatraceCollector(BaseCollector):
                         mid = series.get("metricId", "")
                         for pt in series.get("data", []):
                             dims = pt.get("dimensions", [])
-                            did = dims[0] if dims else None
+                            if len(dims) < 2:
+                                continue
+                            hid, did = dims[0], dims[1]
                             vals = [v for v in pt.get("values", []) if v is not None]
-                            if not did or not vals:
+                            if not hid or not did or not vals:
                                 continue
                             val = float(vals[-1])
                             if "disk.used" in mid:
-                                used[did] = used.get(did, 0.0) + val
+                                used[(hid, did)] = val
                             elif "disk.avail" in mid:
-                                avail[did] = avail.get(did, 0.0) + val
+                                avail[(hid, did)] = val
                     nxt = payload.get("nextPageKey")
                     if not nxt:
                         break
@@ -325,19 +304,49 @@ class DynatraceCollector(BaseCollector):
         except Exception as exc:  # noqa: BLE001 — contained; breakdown is optional
             self.logger.warning("Dynatrace disk metrics query failed: %s", exc)
             return {}
+        if not used and not avail:
+            self.logger.warning("Dynatrace disk metrics returned no data points")
+            return {}
 
-        # 3) Join per disk, roll up under its host.
+        # 2) Disk id -> display name (best-effort; raw id if unavailable).
+        names: dict[str, str] = {}
+        try:
+            url = f"{self._base}/api/v2/entities"
+            eparams: dict[str, str] = {
+                "entitySelector": 'type("DISK")',
+                "pageSize": "500",
+            }
+            with self._client(headers=self._headers()) as client:
+                while url:
+                    resp = self._request_with_retries(client, "GET", url, params=eparams)
+                    if resp.status_code == 403:
+                        break
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for e in data.get("entities", []):
+                        if e.get("entityId"):
+                            names[e["entityId"]] = e.get("displayName") or e["entityId"]
+                    nxt = data.get("nextPageKey")
+                    if nxt:
+                        eparams = {"nextPageKey": nxt}
+                    else:
+                        url = ""
+        except Exception as exc:  # noqa: BLE001 — names are cosmetic
+            self.logger.warning("Dynatrace disk entities query failed: %s", exc)
+
+        # 3) Join per (host, disk).
         out: dict[str, list[tuple[str, float, float]]] = {}
-        for did, (name, host_id) in disks.items():
-            u, a = used.get(did), avail.get(did)
-            if u is None and a is None:
+        for key in set(used) | set(avail):
+            hid, did = key
+            u = used.get(key, 0.0)
+            total = u + avail.get(key, 0.0)
+            if total <= 0:
                 continue
-            total = (u or 0.0) + (a or 0.0)
-            out.setdefault(host_id, []).append(
-                (name, round(total / _GB, 1), round((u or 0.0) / _GB, 1))
+            out.setdefault(hid, []).append(
+                (names.get(did, did), round(total / _GB, 1), round(u / _GB, 1))
             )
-        for host_id in out:
-            out[host_id].sort()
+        for hid in out:
+            out[hid].sort()
         return out
 
     def collect_alerts(self) -> list[dict]:

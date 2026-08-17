@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import distinct, func, select
@@ -588,6 +588,59 @@ def _instance_names(settings: Settings, db: Session | None = None) -> list[dict]
 def hosts_page() -> RedirectResponse:
     """Legacy path — the Hosts view is now the Capacity view."""
     return RedirectResponse(url="/capacity", status_code=307)
+
+
+# --- Favicon ----------------------------------------------------------------
+
+#: name -> (mtime, svg) — regenerated when the logo file changes.
+_FAVICON_CACHE: dict[str, tuple[float, str]] = {}
+
+_FAVICON_FALLBACK = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<rect width="64" height="64" rx="14" fill="#ffffff"/>'
+    '<text x="32" y="44" font-size="34" text-anchor="middle">📊</text></svg>'
+)
+
+
+@router.get("/favicon.svg", include_in_schema=False)
+def favicon_svg() -> Response:
+    """Browser-tab icon: the logo on a white rounded card.
+
+    Dark browser tab bars swallow logos with dark/transparent backgrounds, so
+    the raw file is wrapped in a white rounded rect. The logo is inlined as a
+    data URI (external references don't load in SVG favicons) and picked up
+    from app/static/logo.svg or logo.png — drop a new file there and the icon
+    updates on its own; no code change needed.
+    """
+    import base64
+
+    static = Path(__file__).resolve().parent.parent / "static"
+    for name, mime in (("logo.svg", "image/svg+xml"), ("logo.png", "image/png")):
+        path = static / name
+        if not path.is_file():
+            continue
+        mtime = path.stat().st_mtime
+        cached = _FAVICON_CACHE.get(name)
+        if cached is None or cached[0] != mtime:
+            b64 = base64.b64encode(path.read_bytes()).decode()
+            svg = (
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+                '<rect width="64" height="64" rx="14" fill="#ffffff"/>'
+                f'<image x="5" y="5" width="54" height="54" '
+                f'href="data:{mime};base64,{b64}" '
+                'preserveAspectRatio="xMidYMid meet"/></svg>'
+            )
+            _FAVICON_CACHE[name] = (mtime, svg)
+        return Response(
+            _FAVICON_CACHE[name][1],
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "max-age=300"},
+        )
+    return Response(
+        _FAVICON_FALLBACK,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "max-age=300"},
+    )
 
 
 _CAPACITY_CURRENT_DEFAULT = {

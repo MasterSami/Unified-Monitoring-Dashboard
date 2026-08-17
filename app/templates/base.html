@@ -19,14 +19,10 @@
     </script>
 
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}" />
-    <!-- Favicon: drop your icon at app/static/logo.svg (preferred) or logo.png.
-         The emoji data-URI is the fallback shown until that file exists. -->
-    <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
-    <link rel="icon" type="image/png" href="/static/logo.png" />
-    <link
-      rel="alternate icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>"
-    />
+    <!-- Favicon: served by /favicon.svg, which wraps app/static/logo.svg (or
+         logo.png) on a white rounded card so it stays visible on dark tab bars.
+         Drop a new logo file there and the icon updates by itself. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="/static/htmx.min.js" defer></script>
     <script src="/static/theme.js?v={{ asset_version }}" defer></script>
   </head>

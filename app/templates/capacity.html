@@ -70,6 +70,11 @@
     <div class="spacer"></div>
 
     {% if enable_export %}
+    <label class="chk" id="dedup-wrap" style="display: none"
+      title="Zabbix is the primary tool — skip Dynatrace servers that Zabbix already monitors (matched by IP or hostname)">
+      <input type="checkbox" id="dedup-zbx" />
+      Exclude servers already in Zabbix
+    </label>
     <button class="btn" type="button" onclick="exportCapacity()" title="Export to Excel for the period above">
       ⭳ Export Excel
     </button>
@@ -104,6 +109,9 @@
     });
     btn.classList.add("active");
     document.getElementById("f-platform").value = btn.dataset.platform;
+    // The Zabbix-dedup option only makes sense for a Dynatrace export.
+    var wrap = document.getElementById("dedup-wrap");
+    if (wrap) wrap.style.display = btn.dataset.platform === "dynatrace" ? "" : "none";
   }
 
   function exportCapacity() {
@@ -117,8 +125,10 @@
       if (el.value) params.set(el.name, el.value);
     });
     var pf = (document.getElementById("f-platform") || {}).value;
-    // Dynatrace -> the same table as the UI. Zabbix/All -> the rich weekly report
-    // (CPU cores, per-drive disk, RAM/CPU trends, service, owner).
+    var dedup = document.getElementById("dedup-zbx");
+    if (pf === "dynatrace" && dedup && dedup.checked) params.set("dedup_zabbix", "true");
+    // Dynatrace -> the same table as the UI (+ per-partition disk column).
+    // Zabbix/All -> the rich weekly report (cores, per-drive disk, trends, owner).
     var url = pf === "dynatrace" ? "/api/v1/capacity.xlsx" : "/api/v1/capacity_report.xlsx";
     window.location = url + "?" + params.toString();
   }

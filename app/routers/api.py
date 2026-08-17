@@ -363,6 +363,52 @@ def _xlsx_response(name: str, data: bytes) -> Response:
     )
 
 
+def _zabbix_identity(db: Session) -> tuple[set[str], set[str]]:
+    """(IPs, lowercased hostnames) of every Zabbix-monitored host.
+
+    Used to drop duplicates from Dynatrace exports: Zabbix is the primary tool,
+    so a Dynatrace host with the same IP or hostname is already covered.
+    """
+    ips: set[str] = set()
+    names: set[str] = set()
+    for ip, hostname in db.execute(
+        select(Host.ip, Host.hostname).where(Host.source_platform == "zabbix")
+    ):
+        if ip:
+            ips.add(ip)
+        if hostname:
+            names.add(hostname.strip().lower())
+    return ips, names
+
+
+def _in_zabbix(h: Host, zbx_ips: set[str], zbx_names: set[str]) -> bool:
+    return bool(
+        (h.ip and h.ip in zbx_ips)
+        or (h.hostname and h.hostname.strip().lower() in zbx_names)
+    )
+
+
+def _live_disk_breakdown(settings: Settings) -> dict[str, list]:
+    """Per-partition disk for all configured Dynatrace instances (best-effort)."""
+    from app.servers import load_servers
+
+    breakdown: dict[str, list] = {}
+    if settings.mock_mode:
+        return breakdown
+    for s in load_servers(settings):
+        if getattr(s, "platform", "") != "dynatrace":
+            continue
+        collector = get_service().get(s.name)
+        if collector is None or getattr(collector, "name", "") != "dynatrace":
+            continue
+        try:
+            for hid, disks in collector.disk_breakdown().items():
+                breakdown.setdefault(hid, []).extend(disks)
+        except Exception:  # noqa: BLE001 — one instance failing is non-fatal
+            continue
+    return breakdown
+
+
 @router.get("/capacity.xlsx")
 def export_capacity_xlsx(
     platform: str | None = Query(default=None),
@@ -372,6 +418,7 @@ def export_capacity_xlsx(
     q: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
+    dedup_zabbix: bool = Query(default=False),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -380,6 +427,10 @@ def export_capacity_xlsx(
     The date range is period metadata for the sheet header only — it must NOT
     filter hosts by last_seen, or an export window ending before the latest
     collection produces an empty sheet (capacity is a current snapshot).
+
+    Dynatrace extras: a per-partition disk column (live from the Metrics API),
+    and ``dedup_zabbix=true`` drops hosts already monitored by Zabbix (matched
+    by IP or hostname) since Zabbix is the primary tool.
     """
     _require_export(settings)
     from app.export_xlsx import build_workbook
@@ -388,10 +439,18 @@ def export_capacity_xlsx(
     stmt = _hosts_stmt(q, platform, status, instance, group)
     stmt = stmt.order_by(Host.hostname.asc())
 
+    is_dynatrace = platform == "dynatrace"
+    disks_by_host = _live_disk_breakdown(settings) if is_dynatrace else {}
+    zbx_ips, zbx_names = (
+        _zabbix_identity(db) if (is_dynatrace and dedup_zabbix) else (set(), set())
+    )
+
     def rows():
         for h in db.scalars(stmt):
+            if is_dynatrace and dedup_zabbix and _in_zabbix(h, zbx_ips, zbx_names):
+                continue
             m = h.metrics or {}
-            yield [
+            row = [
                 h.hostname, h.ip or "", h.source_platform.value, h.source_instance,
                 h.group_name or "",
                 "" if h.cpu_pct is None else h.cpu_pct,
@@ -400,20 +459,33 @@ def export_capacity_xlsx(
                 m.get("cores", ""), m.get("mem_total_gb", ""),
                 h.last_seen, h.status.value,
             ]
+            if is_dynatrace:
+                disks = disks_by_host.get(h.external_id) or []
+                row.append(
+                    " | ".join(
+                        f"{label}: {used} / {total} GB" for label, total, used in disks
+                    )
+                )
+            yield row
+
+    columns = ["Server", "IP", "Platform", "Instance", "Group", "CPU %",
+               "Memory %", "Disk %", "Cores", "Total Memory (GB)",
+               "Last Updated", "Status"]
+    if is_dynatrace:
+        columns.append("Disks (used / total GB)")
 
     filters = ", ".join(
         f"{k}={v}" for k, v in (
             ("platform", platform), ("instance", instance), ("group", group),
             ("status", status), ("q", q),
+            ("exclude Zabbix dups", "yes" if dedup_zabbix else ""),
         ) if v and v != "all"
     ) or "none"
     data = build_workbook(
         sheet_title="Capacity",
         period=_period_str(date_from, date_to),
         filters_summary=filters,
-        columns=["Server", "IP", "Platform", "Instance", "Group", "CPU %",
-                 "Memory %", "Disk %", "Cores", "Total Memory (GB)",
-                 "Last Updated", "Status"],
+        columns=columns,
         rows=rows(),
     )
     fname = f"SAMIX_capacity_{_fname_stamp(date_from)}_{_fname_stamp(date_to)}.xlsx"
@@ -498,30 +570,20 @@ def _db_report_rows(db: Session, platform: str) -> list[list]:
     return rows
 
 
-def _dynatrace_report_rows(db: Session, settings: Settings) -> list[list]:
+def _dynatrace_report_rows(
+    db: Session, settings: Settings, dedup_zabbix: bool = False
+) -> list[list]:
     """Weekly-report rows for Dynatrace hosts, one row per partition.
 
     Host-level fields come from the stored snapshot; per-partition disk usage
     (C:, D:, /…) is pulled live from any configured Dynatrace collector so the
     "VM Space / VM Used Space For Each Drive" columns match the Zabbix report.
     Best-effort: if the live breakdown is unavailable, each host gets a single
-    row with the summed disk total.
+    row with the summed disk total. ``dedup_zabbix`` drops hosts already
+    monitored by Zabbix (matched by IP or hostname).
     """
-    from app.servers import load_servers
-
-    breakdown: dict[str, list] = {}
-    if not settings.mock_mode:
-        for s in load_servers(settings):
-            if getattr(s, "platform", "") != "dynatrace":
-                continue
-            collector = get_service().get(s.name)
-            if collector is None or getattr(collector, "name", "") != "dynatrace":
-                continue
-            try:
-                for hid, disks in collector.disk_breakdown().items():
-                    breakdown.setdefault(hid, []).extend(disks)
-            except Exception:  # noqa: BLE001 — one instance failing is non-fatal
-                continue
+    breakdown = _live_disk_breakdown(settings)
+    zbx_ips, zbx_names = _zabbix_identity(db) if dedup_zabbix else (set(), set())
 
     rows: list[list] = []
     stmt = (
@@ -530,6 +592,8 @@ def _dynatrace_report_rows(db: Session, settings: Settings) -> list[list]:
         .order_by(Host.hostname.asc())
     )
     for h in db.scalars(stmt):
+        if dedup_zabbix and _in_zabbix(h, zbx_ips, zbx_names):
+            continue
         m = h.metrics or {}
         base = [
             h.hostname, h.ip or "N/A",
@@ -559,6 +623,7 @@ def export_capacity_report_xlsx(
     days: int = Query(default=7),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
+    dedup_zabbix: bool = Query(default=False),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -598,7 +663,7 @@ def export_capacity_report_xlsx(
 
     # --- Dynatrace: snapshot host-level + live per-partition disk ---
     if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
-        rows.extend(_dynatrace_report_rows(db, settings))
+        rows.extend(_dynatrace_report_rows(db, settings, dedup_zabbix))
 
     # Mock/demo (no live Zabbix): fall back to the snapshot for the whole view.
     if settings.mock_mode and not rows:

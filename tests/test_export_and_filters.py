@@ -93,6 +93,40 @@ def test_alerts_state_filter_active_resolved_all(client):
         db.close()
 
 
+def test_dynatrace_export_dedups_zabbix_and_has_disk_column(client):
+    from app.models import Host, HostStatus
+
+    db = SessionLocal()
+    try:
+        for eid, pf, name, ip in [
+            ("dz-z1", SourcePlatform.zabbix, "dz-shared", "10.99.0.1"),
+            ("dz-d1", SourcePlatform.dynatrace, "dz-shared-dt", "10.99.0.1"),
+            ("dz-d2", SourcePlatform.dynatrace, "dz-only-dt", "10.99.0.2"),
+        ]:
+            db.add(Host(external_id=eid, source_platform=pf, source_instance="DZT",
+                        hostname=name, ip=ip, status=HostStatus.up))
+        db.commit()
+    finally:
+        db.close()
+
+    def sheet(url):
+        r = client.get(url)
+        assert r.status_code == 200
+        ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+        hdr = [ws.cell(6, i + 1).value for i in range(ws.max_column)]
+        names = {ws.cell(r, 1).value for r in range(7, ws.max_row + 1)
+                 if ws.cell(r, 1).value}
+        return hdr, names
+
+    hdr, names = sheet("/api/v1/capacity.xlsx?platform=dynatrace&q=dz-")
+    assert hdr[-1] == "Disks (used / total GB)"
+    assert {"dz-shared-dt", "dz-only-dt"} <= names
+
+    _, names = sheet("/api/v1/capacity.xlsx?platform=dynatrace&q=dz-&dedup_zabbix=true")
+    assert "dz-only-dt" in names
+    assert "dz-shared-dt" not in names  # same IP as the Zabbix host -> dropped
+
+
 def test_xlsx_endpoints_stream_valid_workbooks(client):
     for url, sheet in [("/api/v1/capacity.xlsx", "Capacity"),
                        ("/api/v1/alerts.xlsx?active=true", "Alerts")]:
