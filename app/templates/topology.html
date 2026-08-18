@@ -91,7 +91,10 @@
 <div class="card">
   <div class="card-head">
     <h3>{{ meta.label }} — {{ instance }}</h3>
-    <span class="hint">drag to pan · scroll to zoom · drag a node to reposition</span>
+    <span class="hint">click a node to focus its direct connections · click empty space to reset</span>
+  </div>
+  <div id="topo-focus-hint" class="topo-focus-hint" aria-live="polite">
+    All connections are visible. Select a node to isolate its direct neighbours.
   </div>
   <div id="cy" class="topo-graph"
        data-url="/api/v1/topology/graph?view={{ view }}&instance={{ instance | urlencode }}"></div>
@@ -274,11 +277,14 @@
             '<div class="empty" style="padding:60px;">No graph elements for this instance.</div>';
           return;
         }
-        cytoscape({
+        var cy = cytoscape({
           container: el,
           elements: els,
           wheelSensitivity: 0.25,
-          layout: { name: "cose", animate: false, padding: 30, nodeRepulsion: 9000, idealEdgeLength: 90 },
+          // Dense production maps can have thousands of nodes.  Small, quiet
+          // nodes and a low-cost layout are far more usable than permanent
+          // labels competing with every edge.
+          layout: { name: "cose", animate: false, padding: 40, nodeRepulsion: 5600, idealEdgeLength: 72, gravity: 0.22 },
           style: [
             {
               selector: "node",
@@ -286,22 +292,23 @@
                 "background-color": function (ele) { return nodeColor(function (k) { return ele.data(k); }); },
                 label: "data(label)",
                 color: COLORS.text,
-                "font-size": "10px",
+                "font-size": "11px",
                 "font-weight": "600",
                 "text-valign": "bottom",
-                "text-margin-y": "4px",
+                "text-margin-y": "6px",
                 "text-wrap": "ellipsis",
-                "text-max-width": "110px",
-                width: 26,
-                height: 26,
-                "border-width": 2,
+                "text-max-width": "150px",
+                width: 16,
+                height: 16,
+                "border-width": 1.5,
                 "border-color": COLORS.surface,
+                "text-opacity": 0,
               },
             },
             {
               selector: "edge",
               style: {
-                width: 1.6,
+                width: 1,
                 "line-color": COLORS.edge,
                 "curve-style": "bezier",
                 "target-arrow-color": COLORS.edge,
@@ -313,14 +320,47 @@
                   return ele.data("label") === "Via Middleware" ? "dashed" : "solid";
                 },
                 "arrow-scale": 0.9,
-                opacity: 0.85,
+                opacity: 0.52,
               },
             },
             {
-              selector: "node:selected",
-              style: { "border-color": COLORS.service, "border-width": 3 },
+              selector: ".topo-related",
+              style: { width: 21, height: 21, "border-color": COLORS.surface, "border-width": 2, "text-opacity": 0 },
+            },
+            {
+              selector: ".topo-selected",
+              style: { width: 28, height: 28, "border-color": COLORS.service, "border-width": 4, "text-opacity": 1, "z-index": 10 },
+            },
+            {
+              selector: ".topo-muted",
+              style: { opacity: 0.1, "text-opacity": 0 },
+            },
+            {
+              selector: "edge.topo-related",
+              style: { width: 2.5, opacity: 1, "line-color": COLORS.service, "target-arrow-color": COLORS.service },
             },
           ],
+        });
+        var focusHint = document.getElementById("topo-focus-hint");
+        function resetFocus() {
+          cy.elements().removeClass("topo-muted topo-related topo-selected");
+          if (focusHint) focusHint.textContent = "All connections are visible. Select a node to isolate its direct neighbours.";
+        }
+        cy.on("tap", "node", function (event) {
+          var node = event.target;
+          var neighbourhood = node.closedNeighborhood();
+          var neighbourCount = node.neighborhood("node").length;
+          cy.elements().addClass("topo-muted");
+          neighbourhood.removeClass("topo-muted").addClass("topo-related");
+          node.removeClass("topo-related").addClass("topo-selected");
+          cy.fit(neighbourhood, 80);
+          if (focusHint) {
+            focusHint.textContent = node.data("label") + " — " + neighbourCount +
+              (neighbourCount === 1 ? " direct connection" : " direct connections") + ". Click empty space to reset.";
+          }
+        });
+        cy.on("tap", function (event) {
+          if (event.target === cy) resetFocus();
         });
       })
       .catch(function () {
@@ -331,3 +371,4 @@
 </script>
 {% endif %}
 {% endblock %}
+
