@@ -1583,13 +1583,21 @@ td.mono {
   cursor: pointer;
 }
 .topo-graph {
-  height: 620px;
+  height: 560px;
   width: 100%;
   background:
     radial-gradient(circle at 1px 1px, var(--surface-3) 1px, transparent 0);
   background-size: 22px 22px;
   border-bottom-left-radius: var(--radius);
   border-bottom-right-radius: var(--radius);
+}
+.topo-focus-hint {
+  min-height: 34px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--surface-2);
 }
 .topo-legend {
   display: flex;
@@ -1664,3 +1672,4 @@ td.mono {
   font-size: 11px;
 }
 .res-na { color: var(--text-faint); }
+
