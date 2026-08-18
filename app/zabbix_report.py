@@ -27,6 +27,11 @@ _KEY_SEARCH = [
     "vfs.fs.size[", "vfs.fs.dependent.size[",
 ]
 
+_METRIC_NAME_SEARCH = [
+    "CPU cores", "CPU usage in percent", "CPU utilization", "CPU usage",
+    "Total memory", "Used memory", "Memory utilization", "Memory usage",
+]
+
 
 def _to_float(v):
     try:
@@ -78,24 +83,29 @@ def _fs_label(item: dict) -> str:
 def _classify(items: list[dict]) -> dict:
     """One host's items -> the cpu/mem items and per-filesystem total/used items."""
     res = {"cpu_num": None, "cpu_util": None, "mem_total": None,
-           "mem_util": None, "mem_util_inverted": False, "fs": {}}
+           "mem_used": None, "mem_util": None, "mem_util_inverted": False,
+           "fs": {}}
     cpu_rank = mem_rank = 99
     for it in items:
         low = it["key_"].lower()
         name_low = (it.get("name") or "").lower()
-        if low.startswith("system.cpu.num") and res["cpu_num"] is None:
+        if (low.startswith("system.cpu.num") or name_low == "cpu cores") and res["cpu_num"] is None:
             res["cpu_num"] = it
         rank = None
         if low == "system.cpu.util":
             rank = 0
         elif low.startswith("system.cpu.util[") and ",idle" not in low:
             rank = 1
+        elif name_low == "cpu usage in percent":
+            rank = 2
         elif name_low in ("cpu utilization", "cpu utilisation", "cpu usage"):
             rank = 3
         if rank is not None and rank < cpu_rank:
             cpu_rank, res["cpu_util"] = rank, it
-        if low == "vm.memory.size[total]":
+        if low == "vm.memory.size[total]" or name_low == "total memory":
             res["mem_total"] = it
+        if name_low == "used memory" and res["mem_used"] is None:
+            res["mem_used"] = it
         mrank, inv = None, False
         if low in ("vm.memory.utilization", "vm.memory.util"):
             mrank = 0
@@ -205,7 +215,10 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
     items = collector._rpc("item.get", {
         "hostids": [hostid],
         "output": ["itemid", "hostid", "key_", "name", "value_type", "units", "lastvalue"],
-        "search": {"key_": _KEY_SEARCH}, "searchByAny": True, "startSearch": True,
+        "search": {
+            "key_": _KEY_SEARCH,
+            "name": _METRIC_NAME_SEARCH,
+        }, "searchByAny": True, "startSearch": True,
         "filter": {"status": 0}, "webitems": False,
     })
     c = _classify(items)
@@ -220,8 +233,11 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
     cpu_now = lv(c["cpu_util"])
     mem_tot = lv(c["mem_total"])
     mem_now = lv(c["mem_util"])
+    mem_used = lv(c["mem_used"])
     if mem_now is not None and c["mem_util_inverted"]:
         mem_now = 100.0 - mem_now
+    if mem_tot and mem_now is None and mem_used is not None:
+        mem_now = mem_used / mem_tot * 100
 
     def trend(it, inv=False):
         s = stats.get(it["itemid"]) if it else None
@@ -343,7 +359,10 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
         res = collector._rpc("item.get", {
             "hostids": batch,
             "output": ["itemid", "hostid", "key_", "name", "value_type", "units", "lastvalue"],
-            "search": {"key_": _KEY_SEARCH}, "searchByAny": True, "startSearch": True,
+            "search": {
+                "key_": _KEY_SEARCH,
+                "name": _METRIC_NAME_SEARCH,
+            }, "searchByAny": True, "startSearch": True,
             "filter": {"status": 0}, "webitems": False,
         })
         for it in res:
@@ -384,8 +403,11 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
         cpu_now = lv(c["cpu_util"])
         mem_tot = lv(c["mem_total"])
         mem_now = lv(c["mem_util"])
+        mem_used = lv(c["mem_used"])
         if mem_now is not None and c["mem_util_inverted"]:
             mem_now = 100.0 - mem_now
+        if mem_tot and mem_now is None and mem_used is not None:
+            mem_now = mem_used / mem_tot * 100
         cs = stats.get(c["cpu_util"]["itemid"]) if c["cpu_util"] else None
         ms = stats.get(c["mem_util"]["itemid"]) if c["mem_util"] else None
         if ms and c["mem_util_inverted"]:
@@ -427,3 +449,4 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
             r["VM Used Space For Each Drive"] = f"{label} : {round(u / GB, 1) if u else 0.0}"
             rows.append([r[col] for col in REPORT_COLUMNS])
     return rows
+
