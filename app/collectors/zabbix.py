@@ -226,7 +226,9 @@ class ZabbixCollector(BaseCollector):
         """
         if not hosts:
             return
-        from app.zabbix_report import GB, _classify, _last_values, _KEY_SEARCH
+        from app.zabbix_report import (
+            GB, _classify, _last_values, _KEY_SEARCH, _METRIC_NAME_SEARCH,
+        )
 
         hostids = [str(h["external_id"]) for h in hosts]
         by_host: dict[str, list[dict]] = {}
@@ -238,10 +240,13 @@ class ZabbixCollector(BaseCollector):
                     {
                         "hostids": batch,
                         "output": [
-                            "itemid", "hostid", "key_", "name",
+                            "itemid", "hostid", "key_", "name", "units",
                             "value_type", "lastvalue",
                         ],
-                        "search": {"key_": list(_KEY_SEARCH)},
+                        "search": {
+                            "key_": list(_KEY_SEARCH),
+                            "name": list(_METRIC_NAME_SEARCH),
+                        },
                         "searchByAny": True,
                         "startSearch": True,
                         "filter": {"status": 0},
@@ -308,10 +313,11 @@ class ZabbixCollector(BaseCollector):
             mem_now = lv(c["mem_util"])
             if mem_now is not None and c["mem_util_inverted"]:
                 mem_now = 100.0 - mem_now
-            mem_used = None
+            mem_used = lv(c["mem_used"])
             if mem_tot and mem_now is None:
                 # Absolute-only template: used, or total − available.
-                mem_used = first_val(lambda k: k == "vm.memory.size[used]")
+                if mem_used is None:
+                    mem_used = first_val(lambda k: k == "vm.memory.size[used]")
                 if mem_used is None:
                     avail = first_val(lambda k: k == "vm.memory.size[available]")
                     if avail is not None:
@@ -601,3 +607,4 @@ class ZabbixCollector(BaseCollector):
                 "ok": False,
                 "message": f"SMTP send failed via {server}:{port} — {exc}",
             }
+
