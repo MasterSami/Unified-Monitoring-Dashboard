@@ -221,8 +221,18 @@ def upsert_hosts(
             row.mem_pct = item.get("mem_pct")
         if "disk_pct" in item:
             row.disk_pct = item.get("disk_pct")
-        if item.get("metrics") is not None:
-            row.metrics = item["metrics"]
+        # A host can be ``unknown`` at the availability layer while Zabbix
+        # still has (and continues to show) its historical item values.  A
+        # transient empty metric pass must not erase the last good Capacity
+        # snapshot in that case.  Only replace the JSON metrics when the
+        # collector actually supplied a capacity value; initialize a new row
+        # to an empty mapping as before.
+        has_capacity_update = (
+            any(key in item for key in ("cpu_pct", "mem_pct", "disk_pct"))
+            or bool(item.get("metrics"))
+        )
+        if has_capacity_update:
+            row.metrics = item.get("metrics") or {}
         elif row.metrics is None:
             row.metrics = {}
         row.raw_payload = item.get("raw_payload", {})
@@ -362,3 +372,4 @@ def upsert_resolved_alerts(
         row.updated_at = now
     db.flush()
     return inserted
+
