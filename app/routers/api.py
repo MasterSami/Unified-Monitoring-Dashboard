@@ -546,7 +546,9 @@ def export_alerts_xlsx(
     return _xlsx_response(fname, data)
 
 
-def _db_report_rows(db: Session, platform: str) -> list[list]:
+def _db_report_rows(
+    db: Session, platform: str, instance: str | None = None
+) -> list[list]:
     """Best-effort weekly-report rows from stored host records (one per host).
 
     Used for Dynatrace (and as a fallback) where per-filesystem/trend data isn't
@@ -554,7 +556,10 @@ def _db_report_rows(db: Session, platform: str) -> list[list]:
     """
     from app.zabbix_report import REPORT_COLUMNS  # noqa: F401 (column order)
 
-    stmt = select(Host).where(Host.source_platform == platform).order_by(Host.hostname.asc())
+    stmt = select(Host).where(Host.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(Host.source_instance == instance)
+    stmt = stmt.order_by(Host.hostname.asc())
     rows: list[list] = []
     for h in db.scalars(stmt):
         m = h.metrics or {}
@@ -655,11 +660,24 @@ def export_capacity_report_xlsx(
     for inst in zbx_instances:
         collector = get_service().get(inst)
         if collector is None or getattr(collector, "name", "") != "zabbix":
-            continue
-        try:
-            rows.extend(weekly_report_rows(collector, days))
-        except Exception:  # noqa: BLE001 — one instance failing must not kill the export
-            continue
+            live_rows: list[list] = []
+        else:
+            try:
+                live_rows = weekly_report_rows(collector, days)
+            except Exception:  # noqa: BLE001 — one instance failing is non-fatal
+                live_rows = []
+        rows.extend(live_rows)
+
+        # ``unknown`` is an availability state, not proof that Zabbix has no
+        # capacity data.  The live report can omit such a host when an API
+        # query is incomplete; preserve a usable row from the last collected
+        # Host snapshot instead of producing an empty Excel sheet.
+        live_hostnames = {str(row[0]).casefold() for row in live_rows if row}
+        rows.extend(
+            row
+            for row in _db_report_rows(db, "zabbix", inst)
+            if str(row[0]).casefold() not in live_hostnames
+        )
 
     # --- Dynatrace: snapshot host-level + live per-partition disk ---
     if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
@@ -1003,3 +1021,4 @@ def test_mail(
         )
     result = collector.send_test_mail(recipient)  # type: ignore[attr-defined]
     return {"instance": instance, "to": recipient, **result}
+
