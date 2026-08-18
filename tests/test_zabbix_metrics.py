@@ -77,6 +77,24 @@ def test_percentage_only_keys_still_populate():
     assert h["disk_pct"] == 72.0
 
 
+def test_custom_named_items_attach_for_unknown_availability_hosts():
+    """Friendly template names must work even when availability is unknown."""
+    items = [
+        _item("1", "40", "custom.cpu.cores", "56", "CPU cores"),
+        _item("2", "40", "custom.cpu.percent", "43.67", "CPU usage in percent"),
+        _item("3", "40", "custom.memory.total", str(1536 * GB), "Total memory"),
+        _item("4", "40", "custom.memory.used", str(773.07 * GB), "Used memory"),
+    ]
+    hosts = [{"external_id": "40", "status": "unknown", "metrics": {}}]
+    _collector(items)._attach_metrics(hosts)
+    h = hosts[0]
+    assert h["cpu_pct"] == 43.7
+    assert h["metrics"]["cores"] == 56
+    assert h["metrics"]["mem_total_gb"] == 1536.0
+    assert h["metrics"]["mem_used_gb"] == 773.1
+    assert h["mem_pct"] == round(773.07 / 1536 * 100, 1)
+
+
 def test_ranked_cpu_prefers_non_idle_and_disk_prefers_absolute():
     # Both idle and direct CPU present -> the direct (report-ranked) one wins;
     # absolute disk sums win over a stray pused item.
@@ -100,3 +118,4 @@ def test_host_without_items_is_left_untouched():
     _collector([])._attach_metrics(hosts)
     assert "cpu_pct" not in hosts[0]
     assert hosts[0]["metrics"] == {}
+
