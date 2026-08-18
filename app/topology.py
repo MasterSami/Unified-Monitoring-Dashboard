@@ -57,11 +57,12 @@ def collect_nnmi_topology(config: ServerConfig, settings: Settings) -> tuple[lis
     node_records = collector._fetch_with_fallback(
         "/NodeBeanService/NodeBean", _NODE_NS, "getNodes"
     )
-    l2_records = collector._fetch(
-        "/L2ConnectionBeanService/L2ConnectionBean",
-        _L2_NS,
-        "getL2Connections",
-        ("name", "LIKE", "%"),
+    # Some NNMi versions return an empty page for ``name LIKE %`` on the
+    # L2ConnectionBean endpoint.  The standalone export uses ``id GE 0`` as a
+    # fallback, so use the collector's equivalent helper here as well.  Without
+    # it the Nodes page can populate while the L2 table remains empty.
+    l2_records = collector._fetch_with_fallback(
+        "/L2ConnectionBeanService/L2ConnectionBean", _L2_NS, "getL2Connections"
     )
 
     nodes: list[dict] = []
@@ -71,7 +72,10 @@ def collect_nnmi_topology(config: ServerConfig, settings: Settings) -> tuple[lis
         if not ext:
             continue
         name = r.get("name") or r.get("longName") or ext
-        name_to_id[name] = str(ext)
+        # L2 endpoint names are strings embedded in ``name`` and can differ
+        # from NodeBean only by letter case.  Keep this lookup normalized to
+        # avoid showing duplicate synthetic nodes in an otherwise valid graph.
+        name_to_id[name.strip().casefold()] = str(ext)
         nodes.append(
             {
                 "external_id": str(ext),
@@ -97,11 +101,12 @@ def collect_nnmi_topology(config: ServerConfig, settings: Settings) -> tuple[lis
 
     def _node_id(device_name: str) -> str:
         """Resolve a device name to a node id, synthesizing one if unknown."""
-        if device_name in name_to_id:
-            return name_to_id[device_name]
-        if device_name not in synth:
+        key = device_name.strip().casefold()
+        if key in name_to_id:
+            return name_to_id[key]
+        if key not in synth:
             nid = f"syn:{device_name}"
-            synth[device_name] = nid
+            synth[key] = nid
             nodes.append(
                 {
                     "external_id": nid,
@@ -112,10 +117,12 @@ def collect_nnmi_topology(config: ServerConfig, settings: Settings) -> tuple[lis
                     "attributes": {"synthesized": True},
                 }
             )
-        return synth[device_name]
+        return synth[key]
 
     for i, l2 in enumerate(l2_records):
-        conn_name = l2.get("name") or ""
+        # ``name`` normally contains ``NodeA[ifA],NodeB[ifB]``.  Keep an ID
+        # fallback as a visible table value for malformed NNMi records.
+        conn_name = l2.get("name") or str(l2.get("id") or f"L2 connection {i + 1}")
         endpoints = [ep.strip() for ep in conn_name.split(",") if ep.strip()]
         # "Device[Interface]" -> device name is the part before "[".
         device_names = [ep.split("[", 1)[0].strip() for ep in endpoints]
@@ -129,6 +136,12 @@ def collect_nnmi_topology(config: ServerConfig, settings: Settings) -> tuple[lis
         }
         for j, ep in enumerate(endpoints[:4], start=1):
             attrs[f"endpoint{j}"] = ep
+        # Do not lose an L2 record merely because NNMi returned an incomplete
+        # endpoint label.  A placeholder keeps it visible in the L2 table and
+        # makes the data problem obvious in the graph instead of silently
+        # dropping the connection.
+        while len(node_ids) < 2:
+            node_ids.append(_node_id(f"Unknown endpoint ({base_id}) #{len(node_ids) + 1}"))
         # Chain consecutive endpoints so multi-access segments still connect.
         for a, b in zip(node_ids, node_ids[1:]):
             edges.append(
@@ -849,3 +862,4 @@ def _mock_service_map(instance: str) -> tuple[list, list]:
             },
         })
     return nodes, edges
+
