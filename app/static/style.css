@@ -1088,19 +1088,22 @@ td.mono {
 .btn-escalate {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
+  padding: 4px 12px;
   font-size: 12px;
   font-weight: 600;
   border-radius: 7px;
   text-decoration: none;
-  color: #fff;
-  background: linear-gradient(135deg, #e8590c, #f08c00);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
   white-space: nowrap;
-  transition: filter 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
+/* Hover: dark blue, matching the SAMI'X logo family. */
 .btn-escalate:hover {
-  filter: brightness(1.08);
+  color: #fff;
+  background: #312e81;
+  border-color: #312e81;
 }
 .muted-dash {
   color: var(--text-faint);

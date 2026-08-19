@@ -237,9 +237,22 @@ class ZabbixCollector(BaseCollector):
         """
         if not hosts:
             return
-        from app.zabbix_report import (
-            GB, _classify, _last_values, _KEY_SEARCH, _METRIC_NAME_SEARCH,
-        )
+        # Import defensively: a mismatched app/zabbix_report.py (e.g. a partial
+        # file update where this collector is newer than the report module) must
+        # NOT kill host collection — degrade to "no metrics" instead of raising
+        # out of collect_hosts and marking the whole instance failed.
+        try:
+            from app.zabbix_report import (
+                GB, _classify, _last_values, _KEY_SEARCH, _METRIC_NAME_SEARCH,
+            )
+        except ImportError as exc:
+            self.logger.warning(
+                "capacity metrics skipped — app/zabbix_report.py is out of sync "
+                "with this collector (%s). Update that file too.", exc
+            )
+            note = "Capacity metrics unavailable (zabbix_report.py out of date)"
+            self.notes = f"{self.notes} · {note}" if self.notes else note
+            return
 
         hostids = [str(h["external_id"]) for h in hosts]
         by_host: dict[str, list[dict]] = {}
