@@ -1085,6 +1085,26 @@ td.mono {
   height: 14px;
   cursor: pointer;
 }
+.btn-escalate {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 7px;
+  text-decoration: none;
+  color: #fff;
+  background: linear-gradient(135deg, #e8590c, #f08c00);
+  white-space: nowrap;
+  transition: filter 0.15s ease;
+}
+.btn-escalate:hover {
+  filter: brightness(1.08);
+}
+.muted-dash {
+  color: var(--text-faint);
+}
 .field-lbl {
   font-size: 10px;
   font-weight: 700;

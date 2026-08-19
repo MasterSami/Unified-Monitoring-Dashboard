@@ -15,6 +15,7 @@
         <th style="width: 150px">Host</th>
         <th style="width: 100px">Started</th>
         <th style="width: 100px">State</th>
+        <th style="width: 120px">Action</th>
       </tr>
     </thead>
     <tbody>
@@ -43,10 +44,20 @@
           <span class="pill status-down"><span class="dot"></span>active</span>
           {% endif %}
         </td>
+        <td>
+          {% if not a.resolved %}
+          <a class="btn btn-escalate" href="{{ a.escalate_href }}"
+             title="{% if a.owner_email %}Open Outlook to escalate to {{ a.owner }} ({{ a.owner_email }}){% elif a.owner %}Owner: {{ a.owner }} — no email on file; Outlook opens with an empty recipient{% else %}No owner on file for this host; Outlook opens with an empty recipient{% endif %}">
+            ⤴ Escalate
+          </a>
+          {% else %}
+          <span class="muted-dash">—</span>
+          {% endif %}
+        </td>
       </tr>
       {% else %}
       <tr>
-        <td colspan="7"><div class="empty"><span class="big">🎉</span>No {{ st_label }}{{ ' ' if st_label }}alerts.</div></td>
+        <td colspan="8"><div class="empty"><span class="big">🎉</span>No {{ st_label }}{{ ' ' if st_label }}alerts.</div></td>
       </tr>
       {% endfor %}
     </tbody>

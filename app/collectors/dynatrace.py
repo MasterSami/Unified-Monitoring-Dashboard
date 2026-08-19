@@ -15,6 +15,7 @@ from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import dynatrace_severity_label, normalize_dynatrace_severity
+from app.owners import owner_from_tags
 from app.servers import ServerConfig
 
 _PROBLEMS_UNAVAILABLE = "unavailable — token lacks problems.read scope"
@@ -112,6 +113,7 @@ class DynatraceCollector(BaseCollector):
                     cores = props.get("cpuCores") or props.get("logicalCpuCores")
                     if isinstance(cores, (int, float)) and cores > 0:
                         metrics["cores"] = int(cores)
+                    owner, owner_email = owner_from_tags(e.get("tags"))
                     hosts.append(
                         {
                             "external_id": e.get("entityId"),
@@ -125,6 +127,8 @@ class DynatraceCollector(BaseCollector):
                             # blank for hosts that aren't in a host group.
                             "group_name": _host_group(props, e.get("tags"))
                             or props.get("osType"),
+                            "owner": owner,
+                            "owner_email": owner_email,
                             "last_seen": datetime.now(timezone.utc),
                             "metrics": metrics,
                             "raw_payload": e,

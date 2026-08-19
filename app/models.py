@@ -84,6 +84,9 @@ class Host(Base):
         index=True,
     )
     group_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Responsible person/team for this server, and their email (for Escalate).
+    owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    owner_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_seen: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

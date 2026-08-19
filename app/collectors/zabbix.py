@@ -24,6 +24,7 @@ from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_zabbix_severity, zabbix_severity_label
+from app.owners import resolve_owner
 from app.servers import ServerConfig
 
 
@@ -151,6 +152,9 @@ class ZabbixCollector(BaseCollector):
         host_params = {
             "output": ["hostid", "host", "name", "status", "available"],
             "selectInterfaces": ["ip", "main", "type", "available"],
+            # Owner resolution (for alert Escalate): host tags + inventory.
+            "selectTags": ["tag", "value"],
+            "selectInventory": ["contact", "alias"],
         }
         # Zabbix 6.2+ renamed ``selectGroups`` -> ``selectHostGroups`` (the old
         # name was removed in 7.0). Try the new name first and fall back, so host
@@ -190,6 +194,11 @@ class ZabbixCollector(BaseCollector):
             group_name = ", ".join(
                 g["name"] for g in groups if g.get("name")
             ) or None
+            # Inventory is a dict when populated, or an empty list when not.
+            inv = h.get("inventory")
+            owner, owner_email = resolve_owner(
+                h.get("tags"), inv if isinstance(inv, dict) else None
+            )
             hosts.append(
                 {
                     "external_id": h["hostid"],
@@ -197,6 +206,8 @@ class ZabbixCollector(BaseCollector):
                     "ip": ip,
                     "status": status,
                     "group_name": group_name,
+                    "owner": owner,
+                    "owner_email": owner_email,
                     "last_seen": datetime.now(timezone.utc),
                     "raw_payload": h,
                 }

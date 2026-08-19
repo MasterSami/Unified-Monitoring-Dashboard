@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -18,7 +18,8 @@ settings = get_settings()
 # SQLite needs a special connect arg when used across threads (the scheduler
 # runs in a background thread). PostgreSQL ignores this branch entirely.
 _connect_args: dict[str, object] = {}
-if settings.database_url.startswith("sqlite"):
+_is_sqlite = settings.database_url.startswith("sqlite")
+if _is_sqlite:
     _connect_args = {"check_same_thread": False}
 
 engine = create_engine(
@@ -28,6 +29,31 @@ engine = create_engine(
     pool_pre_ping=True,
     connect_args=_connect_args,
 )
+
+
+if _is_sqlite:
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        """Make SQLite safe for a web app + a background collector thread.
+
+        Default SQLite journaling takes a database-wide write lock and readers
+        get an immediate ``database is locked`` error (surfacing as HTTP 500)
+        whenever a collection run is writing — which our longer, write-heavy
+        runs (event history backfill, per-host metrics, disk breakdown) made
+        frequent. WAL lets readers and the writer run concurrently, and a
+        ``busy_timeout`` makes the rare writer-vs-writer case wait briefly
+        instead of failing. ``synchronous=NORMAL`` is the WAL-recommended,
+        crash-safe durability level.
+        """
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=8000")  # ms
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA foreign_keys=ON")
+        finally:
+            cur.close()
 
 SessionLocal = sessionmaker(
     bind=engine,
@@ -60,6 +86,8 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "mem_pct": "FLOAT",
         "disk_pct": "FLOAT",
         "metrics": "JSON",
+        "owner": "VARCHAR(255)",
+        "owner_email": "VARCHAR(255)",
     },
     "alerts": {
         "state": "VARCHAR(64)",

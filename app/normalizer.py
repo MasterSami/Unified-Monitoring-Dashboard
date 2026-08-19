@@ -212,6 +212,12 @@ def upsert_hosts(
         row.ip = item.get("ip")
         row.status = item.get("status", HostStatus.unknown)
         row.group_name = item.get("group_name")
+        # Owner: only overwrite when this run resolved one, so a collector that
+        # can't resolve owners never wipes a previously-known owner.
+        if item.get("owner") is not None:
+            row.owner = item.get("owner")
+        if item.get("owner_email") is not None:
+            row.owner_email = item.get("owner_email")
         row.last_seen = item.get("last_seen") or now
         # Capacity metrics: only overwrite when this run provided them, so a
         # collector that doesn't emit metrics never wipes previously-known ones.

@@ -543,7 +543,77 @@ def _active_alerts(
         .offset(offset)
         .limit(PAGE_SIZE)
     )
-    return list(db.scalars(stmt).all()), total, page, pages
+    rows = list(db.scalars(stmt).all())
+    _attach_escalation(db, rows)
+    return rows, total, page, pages
+
+
+def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
+    """Annotate each alert with its host owner + a ready-to-send mail link.
+
+    Sets transient (non-persisted) attributes used by the Alerts template:
+    ``owner``, ``owner_email`` and ``escalate_href`` (a ``mailto:`` that opens
+    Outlook with a pre-filled FYA mail to the owner). Only active alerts get a
+    link — a resolved alert has nothing to escalate.
+    """
+    from urllib.parse import quote
+
+    for a in alerts:  # safe defaults so the template never hits an Undefined
+        a.owner = None
+        a.owner_email = None
+        a.escalate_href = None
+    wanted = {
+        (a.host_hostname or "").strip().lower() for a in alerts if a.host_hostname
+    }
+    lookup: dict[str, tuple[str | None, str | None]] = {}
+    if wanted:
+        for hn, owner, email in db.execute(
+            select(Host.hostname, Host.owner, Host.owner_email).where(
+                func.lower(Host.hostname).in_(wanted)
+            )
+        ):
+            key = (hn or "").strip().lower()
+            # Prefer a row that actually carries owner info if several match.
+            if key not in lookup or (owner or email):
+                lookup[key] = (owner, email)
+
+    settings = get_settings()
+    for a in alerts:
+        if a.host_hostname:
+            a.owner, a.owner_email = lookup.get(
+                a.host_hostname.strip().lower(), (None, None)
+            )
+        if not a.resolved:
+            a.escalate_href = _escalate_mailto(a, quote, settings)
+
+
+def _escalate_mailto(alert: Alert, quote, settings: Settings) -> str:
+    """Build a ``mailto:`` that drafts an FYA escalation to the host owner."""
+    host = alert.host_hostname or "the affected server"
+    platform = getattr(alert.source_platform, "value", str(alert.source_platform))
+    started = (
+        alert.started_at.strftime("%Y-%m-%d %H:%M UTC") if alert.started_at else "—"
+    )
+    subject = f"[Escalation] {alert.title} — {host}"
+    owner_line = f"Dears ({alert.owner})," if alert.owner else "Dears,"
+    body = (
+        f"{owner_line}\n\n"
+        "FYA — the following alert is currently active and requires your "
+        "attention:\n\n"
+        f"Server:   {host}\n"
+        f"Problem:  {alert.title}\n"
+        f"Severity: {alert.severity_label}\n"
+        f"Started:  {started}\n"
+        f"Source:   {platform}"
+        f"{f' ({alert.source_instance})' if alert.source_instance else ''}\n\n"
+        "Kindly investigate and resolve at your earliest convenience.\n\n"
+        "Best regards,"
+    )
+    params = f"subject={quote(subject)}&body={quote(body)}"
+    cc = getattr(settings, "escalation_cc", "") or ""
+    if cc:
+        params += f"&cc={quote(cc)}"
+    return f"mailto:{quote(alert.owner_email or '')}?{params}"
 
 
 # --- Full pages -------------------------------------------------------------

@@ -13,6 +13,7 @@
   <dt>IP</dt><dd class="mono">{{ host.ip or '—' }}</dd>
   <dt>Instance</dt><dd>{{ host.source_instance or '—' }}</dd>
   <dt>Group</dt><dd>{{ host.group_name or '—' }}</dd>
+  <dt>Owner</dt><dd>{{ host.owner or '—' }}{% if host.owner_email %} <span class="mono">&lt;{{ host.owner_email }}&gt;</span>{% endif %}</dd>
   <dt>Last updated</dt><dd title="When this agent last reported data to a collector">{{ host.last_seen | relative_time }}</dd>
   <dt>External ID</dt><dd class="mono">{{ host.external_id }}</dd>
 </dl>

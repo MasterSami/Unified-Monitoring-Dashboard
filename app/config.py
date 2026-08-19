@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Default recipient for the Zabbix "send test mail" action.
     test_mail_to: str = ""
 
+    # Optional CC added to every alert "Escalate" mail (comma-separated).
+    escalation_cc: str = ""
+
     # Rows per page in the hosts / alerts tables.
     page_size: int = 300
 
