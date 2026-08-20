@@ -566,10 +566,24 @@ def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
         a.owner = None
         a.owner_email = None
         a.escalate_href = None
+
+    # Resolve owners by the HOST external id first (reliable — Dynatrace problems
+    # name a service, not the host), then by hostname as a fallback.
+    by_ext_id: dict[str, tuple[str | None, str | None]] = {}
+    ext_ids = {a.host_external_id for a in alerts if a.host_external_id}
+    if ext_ids:
+        for ext, owner, email in db.execute(
+            select(Host.external_id, Host.owner, Host.owner_email).where(
+                Host.external_id.in_(ext_ids)
+            )
+        ):
+            if ext not in by_ext_id or (owner or email):
+                by_ext_id[ext] = (owner, email)
+
+    by_name: dict[str, tuple[str | None, str | None]] = {}
     wanted = {
         (a.host_hostname or "").strip().lower() for a in alerts if a.host_hostname
     }
-    lookup: dict[str, tuple[str | None, str | None]] = {}
     if wanted:
         for hn, owner, email in db.execute(
             select(Host.hostname, Host.owner, Host.owner_email).where(
@@ -577,16 +591,17 @@ def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
             )
         ):
             key = (hn or "").strip().lower()
-            # Prefer a row that actually carries owner info if several match.
-            if key not in lookup or (owner or email):
-                lookup[key] = (owner, email)
+            if key not in by_name or (owner or email):
+                by_name[key] = (owner, email)
 
     settings = get_settings()
     for a in alerts:
-        if a.host_hostname:
-            a.owner, a.owner_email = lookup.get(
-                a.host_hostname.strip().lower(), (None, None)
-            )
+        owner = email = None
+        if a.host_external_id and a.host_external_id in by_ext_id:
+            owner, email = by_ext_id[a.host_external_id]
+        if not (owner or email) and a.host_hostname:
+            owner, email = by_name.get(a.host_hostname.strip().lower(), (None, None))
+        a.owner, a.owner_email = owner, email
         # Only active Zabbix/Dynatrace alerts with a resolved owner get a link.
         if (
             not a.resolved

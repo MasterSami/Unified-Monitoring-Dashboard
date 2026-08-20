@@ -299,6 +299,7 @@ def upsert_alerts(
         # Prefer the source tool's own label; fall back to the unified label.
         row.severity_label = item.get("severity_label") or severity_label(sev)
         row.host_hostname = item.get("host_hostname")
+        row.host_external_id = item.get("host_external_id")
         row.title = item.get("title", "")
         row.started_at = item.get("started_at")
         row.resolved = False

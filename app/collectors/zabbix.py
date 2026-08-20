@@ -398,7 +398,7 @@ class ZabbixCollector(BaseCollector):
             "trigger.get",
             {
                 "output": ["triggerid", "description", "priority", "lastchange"],
-                "selectHosts": ["host", "name"],
+                "selectHosts": ["hostid", "host", "name"],
                 "only_true": True,
                 "filter": {"value": 1},  # 1 = PROBLEM
                 "sortfield": "lastchange",
@@ -408,9 +408,8 @@ class ZabbixCollector(BaseCollector):
         alerts: list[dict] = []
         for t in result:  # type: ignore[union-attr]
             hosts = t.get("hosts", [])
-            hostname = (
-                (hosts[0].get("name") or hosts[0].get("host")) if hosts else None
-            )
+            host0 = hosts[0] if hosts else {}
+            hostname = host0.get("name") or host0.get("host")
             started = None
             if t.get("lastchange"):
                 started = datetime.fromtimestamp(
@@ -420,6 +419,7 @@ class ZabbixCollector(BaseCollector):
                 {
                     "external_id": t["triggerid"],
                     "host_hostname": hostname,
+                    "host_external_id": host0.get("hostid"),
                     "severity_int": normalize_zabbix_severity(t.get("priority", 0)),
                     "severity_label": zabbix_severity_label(t.get("priority", 0)),
                     "title": t.get("description", ""),

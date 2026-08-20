@@ -23,6 +23,59 @@ def test_dynatrace_owner_resolution_chain():
     assert dynatrace_owner({}) == (None, None)
 
 
+def test_affected_host_prefers_host_entity():
+    from app.collectors.dynatrace import DynatraceCollector as DC
+
+    # A service problem that also lists the underlying host -> host wins.
+    prob = {"affectedEntities": [
+        {"entityId": {"id": "SERVICE-1", "type": "SERVICE"}, "name": "IIS"},
+        {"entityId": {"id": "HOST-ABC", "type": "HOST"}, "name": "web-prod-1"},
+    ]}
+    assert DC._affected_host(prob) == ("HOST-ABC", "web-prod-1")
+    # Pure service problem -> no host id, keep the service name.
+    prob = {"affectedEntities": [{"entityId": {"id": "SERVICE-9", "type": "SERVICE"}, "name": "maximo"}]}
+    assert DC._affected_host(prob) == (None, "maximo")
+
+
+def test_dynatrace_service_alert_resolves_owner_via_host_id(client):
+    from datetime import datetime, timezone
+
+    from app.db import SessionLocal
+    from app.models import Alert, Host, HostStatus, SourcePlatform
+    from app.routers.pages import _active_alerts
+
+    now = datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc)
+    db = SessionLocal()
+    try:
+        # Host is keyed by its Dynatrace entity id; it has an owner.
+        db.add(Host(external_id="HOST-DWH14", source_platform=SourcePlatform.dynatrace,
+                    source_instance="Dynatrace-IT", hostname="DWH-CVM-PROD14",
+                    ip="10.19.99.15", status=HostStatus.up,
+                    owner="Payments", owner_email="pay@corp.com"))
+        # Alert's host_hostname is a decorated/service string, but it carries the
+        # HOST entity id -> owner still resolves.
+        db.add(Alert(external_id="P-77", source_platform=SourcePlatform.dynatrace,
+                     source_instance="Dynatrace-IT",
+                     host_hostname="host: DWH-CVM-PROD14 IP: 10.19.99.15 OS: RHEL",
+                     host_external_id="HOST-DWH14", severity_int=4,
+                     severity_label="Availability", title="Host unavailable",
+                     started_at=now, resolved=False))
+        db.commit()
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        rows, *_ = _active_alerts(db, "P-77", 1, state="active")
+        # search by title since hostname is decorated
+        rows, *_ = _active_alerts(db, "Host unavailable", 1, state="active")
+        a = next(r for r in rows if r.external_id == "P-77")
+        assert a.owner == "Payments" and a.owner_email == "pay@corp.com"
+        assert a.escalate_href.startswith("mailto:pay%40corp.com?")
+    finally:
+        db.close()
+
+
 def test_nnmi_alerts_never_get_escalate_link(client):
     from datetime import datetime, timezone
 

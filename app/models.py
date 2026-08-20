@@ -127,6 +127,10 @@ class Alert(Base):
     #: Name of the specific instance this came from (e.g. "Zabbix-34").
     source_instance: Mapped[str] = mapped_column(String(64), default="", index=True)
     host_hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: External id of the underlying HOST (Zabbix hostid / Dynatrace HOST-…),
+    #: used to resolve the server owner for Escalate even when host_hostname is
+    #: a service/entity name that doesn't match a Host row.
+    host_external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     severity_int: Mapped[int] = mapped_column(Integer, default=1, index=True)
     severity_label: Mapped[str] = mapped_column(String(32), default="info")
     title: Mapped[str] = mapped_column(String(512), default="")

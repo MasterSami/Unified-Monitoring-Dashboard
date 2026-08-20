@@ -340,6 +340,34 @@ class DynatraceCollector(BaseCollector):
             out[hid].sort()
         return out
 
+    @staticmethod
+    def _affected_host(problem: dict) -> tuple[str | None, str | None]:
+        """(host_entity_id, display_name) for a problem's underlying HOST.
+
+        Dynatrace problems usually affect SERVICE/APPLICATION entities, whose
+        name won't match any Host row. Scan affected + impacted entities for a
+        HOST-type one so the server owner can be resolved by entity id; fall
+        back to the first affected entity's name (no host id) otherwise.
+        """
+        host_id: str | None = None
+        host_name: str | None = None
+        for bucket in ("affectedEntities", "impactedEntities"):
+            for e in problem.get(bucket) or []:
+                if not isinstance(e, dict):
+                    continue
+                eid = e.get("entityId") or {}
+                ent_id = eid.get("id") if isinstance(eid, dict) else eid
+                ent_type = eid.get("type") if isinstance(eid, dict) else None
+                is_host = (ent_type == "HOST") or (
+                    isinstance(ent_id, str) and ent_id.startswith("HOST-")
+                )
+                if is_host and ent_id:
+                    return ent_id, e.get("name")
+            if host_id:
+                break
+        first = (problem.get("affectedEntities") or [{}])[0]
+        return None, first.get("name")
+
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
             return mock_data.mock_dynatrace_alerts(self.instance)
@@ -360,8 +388,7 @@ class DynatraceCollector(BaseCollector):
             resp.raise_for_status()
             data = resp.json()
             for p in data.get("problems", []):
-                affected = p.get("affectedEntities", [])
-                hostname = affected[0].get("name") if affected else None
+                host_id, hostname = self._affected_host(p)
                 started = None
                 if p.get("startTime"):
                     started = datetime.fromtimestamp(
@@ -371,6 +398,7 @@ class DynatraceCollector(BaseCollector):
                     {
                         "external_id": p.get("problemId"),
                         "host_hostname": hostname,
+                        "host_external_id": host_id,
                         "severity_int": normalize_dynatrace_severity(
                             p.get("severityLevel")
                         ),

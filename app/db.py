@@ -94,6 +94,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "dedup_key": "VARCHAR(255)",
         "metric_missing": "BOOLEAN",
         "monitor_name": "VARCHAR(512)",
+        "host_external_id": "VARCHAR(128)",
     },
 }
 
