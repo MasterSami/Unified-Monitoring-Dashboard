@@ -107,6 +107,10 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # Alerts date-range filter + severity ordering.
     ("ix_alerts_started_at", "alerts", "(started_at)"),
     ("ix_alerts_resolved_sev", "alerts", "(resolved, severity_int)"),
+    # Alerts list: filter by resolved, order by severity desc, started desc.
+    ("ix_alerts_resolved_sev_started", "alerts", "(resolved, severity_int, started_at)"),
+    # Owner lookup for Escalate: hosts by hostname.
+    ("ix_hosts_hostname", "hosts", "(hostname)"),
     # Hosts last_seen range filter on the Capacity page.
     ("ix_hosts_last_seen", "hosts", "(last_seen)"),
     # Collector health: latest run / latest success per instance (batched).

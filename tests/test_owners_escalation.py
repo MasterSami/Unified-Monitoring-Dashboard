@@ -2,7 +2,56 @@
 
 from __future__ import annotations
 
-from app.owners import extract_email, owner_from_tags, resolve_owner
+from app.owners import dynatrace_owner, extract_email, owner_from_tags, resolve_owner
+
+
+def test_dynatrace_owner_resolution_chain():
+    # 1) exact-key owner tag with a value (+ email extraction)
+    ent = {"tags": [{"key": "Owner", "value": "NOC Team <noc@corp.com>"}]}
+    assert dynatrace_owner(ent) == ("NOC Team <noc@corp.com>", "noc@corp.com")
+    # a near-miss key ("teamwork") must NOT match "team"
+    ent = {"tags": [{"key": "teamwork", "value": "x"}],
+           "managementZones": [{"name": "Payments"}]}
+    assert dynatrace_owner(ent) == ("Payments", None)  # falls through to MZ
+    # 2) stringRepresentation "owner:someone"
+    ent = {"tags": [{"key": "owner", "stringRepresentation": "owner:alice"}]}
+    assert dynatrace_owner(ent) == ("alice", None)
+    # 4) host group as the weakest proxy
+    ent = {"properties": {"hostGroupName": "PROD-DB"}}
+    assert dynatrace_owner(ent) == ("PROD-DB", None)
+    # nothing at all
+    assert dynatrace_owner({}) == (None, None)
+
+
+def test_nnmi_alerts_never_get_escalate_link(client):
+    from datetime import datetime, timezone
+
+    from app.db import SessionLocal
+    from app.models import Alert, Host, HostStatus, SourcePlatform
+    from app.routers.pages import _active_alerts
+
+    now = datetime(2026, 8, 12, 9, 0, tzinfo=timezone.utc)
+    db = SessionLocal()
+    try:
+        # An NNMi host that even has an owner recorded...
+        db.add(Host(external_id="nn1", source_platform=SourcePlatform.nnmi,
+                    source_instance="NNMi-76", hostname="TEWAF01", ip="10.1.1.1",
+                    status=HostStatus.down, owner="net-team", owner_email="net@corp.com"))
+        db.add(Alert(external_id="nn-a", source_platform=SourcePlatform.nnmi,
+                     source_instance="NNMi-76", host_hostname="TEWAF01", severity_int=5,
+                     severity_label="Critical", title="AddressNotResponding",
+                     started_at=now, resolved=False))
+        db.commit()
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        rows, *_ = _active_alerts(db, "TEWAF01", 1, state="active")
+        assert rows and rows[0].source_platform == SourcePlatform.nnmi
+        assert rows[0].escalate_href is None  # NNMi never escalatable
+    finally:
+        db.close()
 
 
 def test_extract_email_and_tag_resolution():

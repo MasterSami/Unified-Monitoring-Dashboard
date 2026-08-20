@@ -45,7 +45,7 @@
           {% endif %}
         </td>
         <td>
-          {% if not a.resolved and (a.owner or a.owner_email) %}
+          {% if a.escalate_href %}
           <a class="btn-escalate" href="{{ a.escalate_href }}"
              title="{% if a.owner_email %}Open Outlook to escalate to {{ a.owner or a.owner_email }} ({{ a.owner_email }}){% else %}Owner: {{ a.owner }} — no email on file; Outlook opens with an empty recipient{% endif %}">
             Escalate

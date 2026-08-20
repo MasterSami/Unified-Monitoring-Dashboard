@@ -15,7 +15,7 @@ from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import dynatrace_severity_label, normalize_dynatrace_severity
-from app.owners import owner_from_tags
+from app.owners import dynatrace_owner
 from app.servers import ServerConfig
 
 _PROBLEMS_UNAVAILABLE = "unavailable — token lacks problems.read scope"
@@ -46,21 +46,6 @@ def _host_group(props: dict, tags: list | None) -> str | None:
     return None
 
 
-def _first_host_rel(entity: dict) -> str | None:
-    """Owning HOST entity id for a DISK entity (from/to relationships)."""
-    for bag in (entity.get("fromRelationships"), entity.get("toRelationships")):
-        if not isinstance(bag, dict):
-            continue
-        for key, lst in bag.items():
-            if "disk" not in key.lower() and "host" not in key.lower():
-                continue
-            for item in lst or []:
-                rid = item.get("id") if isinstance(item, dict) else item
-                if isinstance(rid, str) and rid.startswith("HOST-"):
-                    return rid
-    return None
-
-
 class DynatraceCollector(BaseCollector):
     """Collects hosts (Entities v2) and problems (Problems v2) from Dynatrace."""
 
@@ -86,7 +71,9 @@ class DynatraceCollector(BaseCollector):
         url = f"{self._base}/api/v2/entities"
         params = {
             "entitySelector": 'type("HOST")',
-            "fields": "properties,fromRelationships,tags",
+            # managementZones added for owner resolution (a proxy when no owner
+            # tag exists) — see app.owners.dynatrace_owner.
+            "fields": "properties,fromRelationships,tags,managementZones",
             "pageSize": "500",
         }
         hosts: list[dict] = []
@@ -113,7 +100,7 @@ class DynatraceCollector(BaseCollector):
                     cores = props.get("cpuCores") or props.get("logicalCpuCores")
                     if isinstance(cores, (int, float)) and cores > 0:
                         metrics["cores"] = int(cores)
-                    owner, owner_email = owner_from_tags(e.get("tags"))
+                    owner, owner_email = dynatrace_owner(e)
                     hosts.append(
                         {
                             "external_id": e.get("entityId"),

@@ -553,10 +553,14 @@ def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
 
     Sets transient (non-persisted) attributes used by the Alerts template:
     ``owner``, ``owner_email`` and ``escalate_href`` (a ``mailto:`` that opens
-    Outlook with a pre-filled FYA mail to the owner). Only active alerts get a
-    link — a resolved alert has nothing to escalate.
+    Outlook with a pre-filled FYA mail to the owner). A link is produced only
+    when the alert is ACTIVE, comes from Zabbix/Dynatrace (NNMi has no host
+    owners), and an owner was resolved for its host.
     """
     from urllib.parse import quote
+
+    #: Platforms whose alerts can be escalated to a server owner.
+    escalatable = {SourcePlatform.zabbix, SourcePlatform.dynatrace}
 
     for a in alerts:  # safe defaults so the template never hits an Undefined
         a.owner = None
@@ -583,7 +587,12 @@ def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
             a.owner, a.owner_email = lookup.get(
                 a.host_hostname.strip().lower(), (None, None)
             )
-        if not a.resolved:
+        # Only active Zabbix/Dynatrace alerts with a resolved owner get a link.
+        if (
+            not a.resolved
+            and a.source_platform in escalatable
+            and (a.owner or a.owner_email)
+        ):
             a.escalate_href = _escalate_mailto(a, quote, settings)
 
 

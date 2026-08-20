@@ -60,6 +60,69 @@ def owner_from_tags(tags: list | None) -> tuple[str | None, str | None]:
     return owner, owner_email
 
 
+#: Dynatrace owner tag keys, matched EXACTLY (case-insensitive) — from the
+#: user's dynatrace_hosts_owners.py. Exact match (not substring) avoids false
+#: positives like a "teamwork" tag matching "team".
+_DT_OWNER_TAG_KEYS = {
+    "owner", "ownership", "owned_by", "team",
+    "department", "contact", "poc", "responsible",
+}
+
+
+def dynatrace_owner(entity: dict) -> tuple[str | None, str | None]:
+    """(owner, owner_email) for a Dynatrace HOST entity.
+
+    Ported from the user's export script's resolution order:
+
+    1. a tag whose key exactly matches an owner key AND has a value;
+    2. a tag encoded as ``owner:someone`` in ``stringRepresentation``;
+    3. management zones (a proxy for ownership);
+    4. the host group name (a weaker proxy).
+
+    ``owner_email`` is filled only when an email is actually present (tags),
+    never for the zone/host-group proxies.
+    """
+    tags = entity.get("tags") or []
+    props = entity.get("properties") or {}
+
+    # 1) exact-key tag with a value
+    for t in tags:
+        if not isinstance(t, dict):
+            continue
+        key = (t.get("key") or "").strip().lower()
+        val = (t.get("value") or "").strip()
+        if key in _DT_OWNER_TAG_KEYS and val:
+            return val, extract_email(val)
+
+    # 2) "owner:someone" packed into stringRepresentation
+    for t in tags:
+        if not isinstance(t, dict):
+            continue
+        key = (t.get("key") or "").strip().lower()
+        if key in _DT_OWNER_TAG_KEYS:
+            s = (t.get("stringRepresentation") or "").strip()
+            if ":" in s:
+                val = s.split(":", 1)[1].strip()
+                if val:
+                    return val, extract_email(val)
+
+    # 3) management zones (proxy)
+    zones = [
+        m.get("name", "")
+        for m in (entity.get("managementZones") or [])
+        if isinstance(m, dict) and m.get("name")
+    ]
+    if zones:
+        return ", ".join(zones), None
+
+    # 4) host group (weaker proxy)
+    hg = props.get("hostGroupName")
+    if hg:
+        return str(hg), None
+
+    return None, None
+
+
 def resolve_owner(
     tags: list | None = None,
     inventory: dict | None = None,

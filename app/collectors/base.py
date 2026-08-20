@@ -44,6 +44,21 @@ class BaseCollector(abc.ABC):
         self.logger = logging.getLogger(f"collector.{self.name}.{self.instance}")
         #: Free-form note surfaced in the UI (e.g. proxy summary or a warning).
         self.notes: str | None = None
+        #: When the resolved-alert history was last backfilled (throttling).
+        self._last_history_backfill: datetime | None = None
+
+    def _should_backfill_history(self) -> bool:
+        """True when the resolved-alert history is due for a refresh.
+
+        Collectors are long-lived singletons, so this timestamp survives across
+        poll cycles — the first run of each process backfills, then at most once
+        per ``alert_history_refresh_minutes``.
+        """
+        window = int(getattr(self.settings, "alert_history_refresh_minutes", 60))
+        if window <= 0 or self._last_history_backfill is None:
+            return True
+        age = datetime.now(timezone.utc) - self._last_history_backfill
+        return age.total_seconds() >= window * 60
 
     @property
     def verify_tls(self) -> bool:
@@ -138,21 +153,25 @@ class BaseCollector(abc.ABC):
             host_count = upsert_hosts(db, self.platform, hosts, self.instance)
             alert_count = upsert_alerts(db, self.platform, alerts, self.instance)
 
-            # Resolved-alert history backfill — best-effort, never fails a run.
-            try:
-                resolved = self.collect_resolved_alerts()
-                if resolved:
-                    from app.normalizer import upsert_resolved_alerts
+            # Resolved-alert history backfill — best-effort, never fails a run,
+            # and throttled so it doesn't re-scan history every poll cycle
+            # (that's the expensive, write-heavy part).
+            if self._should_backfill_history():
+                try:
+                    resolved = self.collect_resolved_alerts()
+                    if resolved:
+                        from app.normalizer import upsert_resolved_alerts
 
-                    added = upsert_resolved_alerts(
-                        db, self.platform, resolved, self.instance
-                    )
-                    if added:
-                        self.logger.info(
-                            "backfilled %d resolved alerts from history", added
+                        added = upsert_resolved_alerts(
+                            db, self.platform, resolved, self.instance
                         )
-            except Exception as exc:  # noqa: BLE001 — history is optional
-                self.logger.warning("resolved-alert backfill failed: %s", exc)
+                        if added:
+                            self.logger.info(
+                                "backfilled %d resolved alerts from history", added
+                            )
+                    self._last_history_backfill = datetime.now(timezone.utc)
+                except Exception as exc:  # noqa: BLE001 — history is optional
+                    self.logger.warning("resolved-alert backfill failed: %s", exc)
 
             run = CollectorRun(
                 platform=self.name,

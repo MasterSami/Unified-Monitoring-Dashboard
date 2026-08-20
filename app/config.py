@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # "Resolved" view is real history, not just what resolved since deploy.
     alert_history_days: int = 30
 
+    # Minimum minutes between resolved-alert history backfills per instance.
+    # History changes slowly, so backfilling every poll cycle is wasteful and
+    # write-heavy; default once per hour. Set 0 to run every cycle.
+    alert_history_refresh_minutes: int = 60
+
     # Show the CSV "Export" buttons (and enable the .csv endpoints).
     # Set to false to hide/disable export across the whole UI and API.
     enable_export: bool = True

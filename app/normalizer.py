@@ -336,15 +336,32 @@ def upsert_resolved_alerts(
     Returns the number of NEW history rows inserted.
     """
     now = _utcnow()
-    existing = {
-        a.external_id: a
+    if not alerts:
+        return 0
+
+    # Load ONLY the rows this batch might touch (its own external_ids plus any
+    # match ids used for episode dedup), chunked to respect SQLite's bound-param
+    # limit. Loading the whole (potentially 100k+ row) history every run was the
+    # main backfill cost.
+    wanted_ids: set[str] = set()
+    for item in alerts:
+        wanted_ids.add(str(item["external_id"]))
+        mid = item.get("match_external_id")
+        if mid is not None:
+            wanted_ids.add(str(mid))
+
+    existing: dict[str, Alert] = {}
+    id_list = list(wanted_ids)
+    for i in range(0, len(id_list), 500):
+        chunk = id_list[i : i + 500]
         for a in db.scalars(
             select(Alert).where(
                 Alert.source_platform == platform,
                 Alert.source_instance == instance,
+                Alert.external_id.in_(chunk),
             )
-        ).all()
-    }
+        ).all():
+            existing[a.external_id] = a
     inserted = 0
     for item in alerts:
         external_id = str(item["external_id"])

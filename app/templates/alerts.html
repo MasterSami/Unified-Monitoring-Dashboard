@@ -29,11 +29,6 @@
       type="button"
       class="{{ 'active' if s == cur_state else '' }}"
       data-state="{{ s }}"
-      hx-get="/partials/alerts"
-      hx-target="#alerts-region"
-      hx-swap="innerHTML"
-      hx-include=".afilter"
-      hx-vals='{"state": "{{ s }}"}'
       onclick="selectState(this)"
     >
       {{ s | capitalize }}
@@ -68,8 +63,16 @@
       b.classList.remove("active");
     });
     btn.classList.add("active");
+    // Single source of truth: update the mirror FIRST, then fire the request
+    // via the region's own hx-include=".afilter". Doing it this way (instead of
+    // hx-vals on the button) avoids the race where HTMX serializes the old
+    // mirror value before this onclick runs — which showed resolved rows under
+    // the Active tab.
     var mirror = document.getElementById("a-state");
     if (mirror) mirror.value = btn.dataset.state;
+    if (window.htmx) {
+      window.htmx.trigger(document.getElementById("alerts-region"), "refresh");
+    }
   }
 
   function exportAlerts() {
