@@ -37,6 +37,33 @@ class IngestCounts:
     hosts: int = 0
 
 
+#: SQLite caps bound parameters per statement; chunk IN() lists below it.
+_IN_CHUNK = 500
+
+
+def _prefetch(db: Session, model, instance_col, id_col, wanted: set[tuple[str, str]]):
+    """Load existing rows for a batch in chunked IN() queries.
+
+    Keyed ``(instance, external_id) -> row``. This mirrors what
+    :mod:`app.normalizer` does for the pull collectors: one query per chunk
+    instead of one per item. A 500-event push used to mean 500 round trips.
+    """
+    found: dict[tuple[str, str], object] = {}
+    ids = sorted({eid for _inst, eid in wanted})
+    instances = sorted({inst for inst, _eid in wanted})
+    for i in range(0, len(ids), _IN_CHUNK):
+        chunk = ids[i : i + _IN_CHUNK]
+        for row in db.scalars(
+            select(model).where(
+                model.source_platform == SourcePlatform.sitescope,
+                instance_col.in_(instances),
+                id_col.in_(chunk),
+            )
+        ).all():
+            found[(row.source_instance, row.external_id)] = row
+    return found
+
+
 def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]:
     """Idempotent upsert on (platform, instance, external_id). No reconciliation.
 
@@ -44,31 +71,29 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
     unlike the pull collectors we must NOT resolve rows absent from the batch.
     """
     inserted = updated = 0
+    if not events:
+        return 0, 0
+
     # Two lines can map to the same event_id (same monitor + state in the same
     # second). Track rows touched this batch so a duplicate updates in place
     # instead of inserting a second row that would violate the unique key.
-    batch: dict[tuple[str, str], Alert] = {}
+    batch: dict[tuple[str, str], Alert] = _prefetch(  # type: ignore[assignment]
+        db, Alert, Alert.source_instance, Alert.external_id,
+        {(ev.source_instance, ev.external_id) for ev in events},
+    )
+    updated = len(batch)
+
     for ev in events:
         key = (ev.source_instance, ev.external_id)
         row = batch.get(key)
         if row is None:
-            row = db.scalar(
-                select(Alert).where(
-                    Alert.source_platform == SourcePlatform.sitescope,
-                    Alert.source_instance == ev.source_instance,
-                    Alert.external_id == ev.external_id,
-                )
+            row = Alert(
+                source_platform=SourcePlatform.sitescope,
+                source_instance=ev.source_instance,
+                external_id=ev.external_id,
             )
-            if row is None:
-                row = Alert(
-                    source_platform=SourcePlatform.sitescope,
-                    source_instance=ev.source_instance,
-                    external_id=ev.external_id,
-                )
-                db.add(row)
-                inserted += 1
-            else:
-                updated += 1
+            db.add(row)
+            inserted += 1
             batch[key] = row
         row.host_hostname = ev.host_hostname
         row.severity_int = ev.severity_int
@@ -89,14 +114,14 @@ def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
     from datetime import datetime, timezone
 
     inserted = 0
+    if not hosts:
+        return 0
+    existing = _prefetch(
+        db, Host, Host.source_instance, Host.external_id,
+        {(instance, h.external_id) for h in hosts},
+    )
     for h in hosts:
-        row = db.scalar(
-            select(Host).where(
-                Host.source_platform == SourcePlatform.sitescope,
-                Host.source_instance == instance,
-                Host.external_id == h.external_id,
-            )
-        )
+        row = existing.get((instance, h.external_id))
         if row is None:
             row = Host(
                 source_platform=SourcePlatform.sitescope,
@@ -104,6 +129,7 @@ def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
                 external_id=h.external_id,
             )
             db.add(row)
+            existing[(instance, h.external_id)] = row
             inserted += 1
         row.hostname = h.hostname
         row.ip = h.ip

@@ -236,6 +236,53 @@ def run_topology_now() -> None:
     run_topology(get_settings())
 
 
+def _dispatch(job_id: str, func, **kwargs) -> bool:
+    """Ask the scheduler to run ``func`` once, right now, in the background.
+
+    Manual triggers ("Refresh now", "Rebuild topology") used to execute inline
+    on the request thread, which meant one click held a FastAPI threadpool
+    thread for as long as every collector took to answer — minutes, on a slow
+    morning, and nothing stopped a handful of users from doing it at once.
+
+    Handing the work to APScheduler instead makes the request return
+    immediately and gives repeat clicks the right semantics for free: the
+    polling job already carries ``max_instances=1`` and ``coalesce=True``, so a
+    second click while a run is in flight is absorbed rather than doubled.
+
+    Returns False when there is no scheduler (tests, or before startup), so the
+    caller can fall back to running inline.
+    """
+    if _scheduler is None:
+        return False
+    _scheduler.add_job(
+        func,
+        trigger="date",
+        run_date=datetime.now(),
+        id=job_id,
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+        misfire_grace_time=None,
+        kwargs=kwargs,
+    )
+    return True
+
+
+def request_run_all() -> bool:
+    """Queue a run of every collector. True if it was handed to the scheduler."""
+    return _dispatch("manual_run_all", get_service().run_all)
+
+
+def request_run_one(instance: str) -> bool:
+    """Queue a run of one instance. True if it was handed to the scheduler."""
+    return _dispatch(f"manual_run_{instance}", get_service().run_one, instance=instance)
+
+
+def request_topology_run() -> bool:
+    """Queue a topology rebuild. True if it was handed to the scheduler."""
+    return _dispatch("manual_topology", run_topology_now)
+
+
 def start_scheduler(settings: Settings) -> BackgroundScheduler:
     """Start the background polling scheduler and return it."""
     global _scheduler

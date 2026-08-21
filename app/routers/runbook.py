@@ -63,21 +63,8 @@ _results_lock = threading.Lock()
 # --- Guards -----------------------------------------------------------------
 
 
-class RunbookDisabled(Exception):
-    """The feature flag is off."""
-
-
 def _feature_on(settings: Settings) -> bool:
     return bool(settings.enable_runbook)
-
-
-def current_admin(
-    request: Request, settings: Settings = Depends(get_settings)
-) -> str | None:
-    """Username from the signed cookie, or None when not signed in."""
-    if not _feature_on(settings):
-        return None
-    return read_token(settings, request.cookies.get(COOKIE_NAME))
 
 
 def _disabled_page(request: Request) -> HTMLResponse:

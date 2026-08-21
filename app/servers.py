@@ -70,16 +70,49 @@ def load_servers(settings: Settings) -> list[ServerConfig]:
     In mock mode, returns the built-in fake instances. Otherwise reads the YAML
     file at ``settings.servers_config``; a missing file yields an empty list
     with a clear warning (the app still starts, just with no data).
+
+    The parse is cached against the file's mtime and size. This is called from
+    the sidebar health strip, which every page renders and re-polls every 60s,
+    so without the cache each open browser tab cost a disk read, a full YAML
+    parse and a Pydantic revalidation per minute. Editing ``servers.yaml`` still
+    takes effect on the next call — the mtime changes and the cache misses.
     """
     enabled = set(settings.enabled_collectors_list)
 
     if settings.mock_mode:
         servers = list(MOCK_SERVERS)
     else:
-        servers = _load_yaml(settings.servers_config)
+        servers = _load_yaml_cached(settings.servers_config)
 
     servers = [s for s in servers if s.platform in enabled]
     return _dedupe_names(servers)
+
+
+#: path -> (mtime, size, parsed). Keyed on both so a same-second rewrite of a
+#: different length is still picked up.
+_yaml_cache: dict[str, tuple[float, int, list[ServerConfig]]] = {}
+
+
+def _load_yaml_cached(path: str) -> list[ServerConfig]:
+    """:func:`_load_yaml`, memoized on the file's (mtime, size)."""
+    try:
+        stat = Path(path).stat()
+        stamp = (stat.st_mtime, stat.st_size)
+    except OSError:
+        stamp = (0.0, -1)  # missing file: _load_yaml warns, cache the empty list
+
+    cached = _yaml_cache.get(path)
+    if cached is not None and (cached[0], cached[1]) == stamp:
+        return cached[2]
+
+    servers = _load_yaml(path)
+    _yaml_cache[path] = (stamp[0], stamp[1], servers)
+    return servers
+
+
+def reset_server_cache() -> None:
+    """Drop the parsed-YAML cache (tests, and after an on-disk edit)."""
+    _yaml_cache.clear()
 
 
 def _load_yaml(path: str) -> list[ServerConfig]:

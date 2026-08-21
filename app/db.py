@@ -26,7 +26,11 @@ engine = create_engine(
     settings.database_url,
     echo=False,
     future=True,
-    pool_pre_ping=True,
+    # pool_pre_ping issues a `SELECT 1` on every checkout to detect connections
+    # a network or a server restart dropped. That is worth it for PostgreSQL and
+    # pointless for a local SQLite file, where the connection cannot go stale
+    # over the wire — so skip the extra round trip per request there.
+    pool_pre_ping=not _is_sqlite,
     connect_args=_connect_args,
 )
 
@@ -117,6 +121,20 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # Collector health: latest run / latest success per instance (batched).
     ("ix_collector_runs_instance_id", "collector_runs", "(instance, id)"),
     ("ix_collector_runs_status_instance_id", "collector_runs", "(status, instance, id)"),
+    # Agents page: the per-agent alert rollup groups by (instance, hostname)
+    # over unresolved alerts, and the drill-down is a point lookup on the same
+    # three columns. Without this both scan the whole alerts table — which now
+    # includes the 30-day resolved backfill, so it is the largest table we have.
+    ("ix_alerts_resolved_instance_host", "alerts",
+     "(resolved, source_instance, host_hostname)"),
+    # Capacity/Agents default ordering: filter by platform+instance, sort by name.
+    ("ix_hosts_platform_instance_hostname", "hosts",
+     "(source_platform, source_instance, hostname)"),
+    # Overview agent rollup: GROUP BY (instance, platform, status).
+    ("ix_hosts_instance_platform_status", "hosts",
+     "(source_instance, source_platform, status)"),
+    # Capacity group filter.
+    ("ix_hosts_group_name", "hosts", "(group_name)"),
 ]
 
 

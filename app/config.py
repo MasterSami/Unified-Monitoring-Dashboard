@@ -41,6 +41,20 @@ class Settings(BaseSettings):
     # Rows per page in the hosts / alerts tables.
     page_size: int = 300
 
+    # Re-stat every template on every render so edits show without a restart.
+    # Off by default: the sidebar health strip re-renders on a 60s timer on
+    # every open tab, and each render stats the page template plus every
+    # {% extends %} / {% include %} it pulls in. Running under `uvicorn
+    # --reload` restarts the process on a template edit anyway; turn this on
+    # only if you edit templates against a server you are not restarting.
+    template_auto_reload: bool = False
+
+    # Cap on rows the raw JSON endpoints (/api/v1/hosts, /api/v1/alerts) return
+    # when no explicit limit is given, so a bare GET can never serialize the
+    # whole alert history.
+    api_default_limit: int = 500
+    api_max_limit: int = 5000
+
     # How far back (days) collectors backfill RESOLVED alerts from the source
     # tools (Zabbix event history, Dynatrace closed problems) so the Alerts
     # "Resolved" view is real history, not just what resolved since deploy.

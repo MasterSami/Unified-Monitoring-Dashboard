@@ -8,8 +8,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import distinct, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, distinct, func, select
+from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
 from app.db import get_db
@@ -65,6 +65,9 @@ def parse_dt(value: str | None) -> datetime | None:
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 _STATIC_DIR = _TEMPLATE_DIR.parent / "static"
 templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
+# See Settings.template_auto_reload — this saves a stat() per template per
+# include on every render, and the partials re-render on a 60s timer.
+templates.env.auto_reload = get_settings().template_auto_reload
 
 
 def _asset_version() -> str:
@@ -127,6 +130,21 @@ templates.env.filters["relative_time"] = _relative_time
 # --- Shared query helpers ---------------------------------------------------
 
 
+def _count_of(db: Session, stmt: Select) -> int:
+    """COUNT the rows a filtered SELECT would return, without projecting them.
+
+    Wrapping the entity SELECT in a subquery makes the database materialize
+    every column — including the large JSON payloads — just to count. Swapping
+    the column list for ``count()`` lets it answer from an index instead.
+
+    ``maintain_column_froms`` is required: without it SQLAlchemy rebuilds the
+    FROM list from the new column list, and ``count()`` names no table — an
+    unfiltered statement would then emit a bare ``SELECT count(*)`` and answer 1.
+    """
+    counted = stmt.with_only_columns(func.count(), maintain_column_froms=True)
+    return db.scalar(counted.order_by(None)) or 0
+
+
 def _severity_buckets(db: Session) -> list[SeverityBucket]:
     rows = db.execute(
         select(Alert.severity_int, func.count(Alert.id))
@@ -142,41 +160,15 @@ def _severity_buckets(db: Session) -> list[SeverityBucket]:
     ]
 
 
-def _per_platform(db: Session) -> list[PlatformHostCount]:
-    def by_platform(rows: list[tuple]) -> dict[str, int]:
-        return {getattr(p, "value", str(p)): int(c) for p, c in rows}
+def _host_rollup(db: Session) -> list[tuple]:
+    """``(instance, platform, status, count)`` for every host, in ONE query.
 
-    totals = by_platform(
-        db.execute(
-            select(Host.source_platform, func.count(Host.id)).group_by(
-                Host.source_platform
-            )
-        ).all()
-    )
-    downs = by_platform(
-        db.execute(
-            select(Host.source_platform, func.count(Host.id))
-            .where(Host.status == HostStatus.down)
-            .group_by(Host.source_platform)
-        ).all()
-    )
-    return [
-        PlatformHostCount(
-            platform=p, total=totals.get(p, 0), down=downs.get(p, 0)
-        )
-        for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
-    ]
-
-
-def _agent_stats(db: Session) -> list[dict]:
-    """Per-instance monitoring-agent health, derived from host status.
-
-    Each host's status reflects whether its monitoring agent is reporting
-    (Zabbix agent / Dynatrace OneAgent / NNMi SNMP). A "problem" agent is one
-    that is down or unknown (disabled hosts are excluded — intentionally off).
-    Returns one dict per instance, most-problematic first.
+    The Overview needs the same numbers sliced four ways — per instance, per
+    platform, per status, and in total. They all come out of this single
+    GROUP BY, so the page no longer issues five separate aggregate queries (and
+    three full table scans) on every 60s refresh.
     """
-    rows = db.execute(
+    return db.execute(
         select(
             Host.source_instance,
             Host.source_platform,
@@ -185,6 +177,36 @@ def _agent_stats(db: Session) -> list[dict]:
         ).group_by(Host.source_instance, Host.source_platform, Host.status)
     ).all()
 
+
+def _enum_value(value: object) -> str:
+    return getattr(value, "value", str(value))
+
+
+def _per_platform(rows: list[tuple]) -> list[PlatformHostCount]:
+    """Hosts per platform (total + down), rolled up from :func:`_host_rollup`."""
+    totals: dict[str, int] = {}
+    downs: dict[str, int] = {}
+    for _instance, platform, status, count in rows:
+        key = _enum_value(platform)
+        totals[key] = totals.get(key, 0) + int(count)
+        if _enum_value(status) == HostStatus.down.value:
+            downs[key] = downs.get(key, 0) + int(count)
+    return [
+        PlatformHostCount(
+            platform=p, total=totals.get(p, 0), down=downs.get(p, 0)
+        )
+        for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
+    ]
+
+
+def _agent_stats(rows: list[tuple]) -> list[dict]:
+    """Per-instance monitoring-agent health, derived from host status.
+
+    Each host's status reflects whether its monitoring agent is reporting
+    (Zabbix agent / Dynatrace OneAgent / NNMi SNMP). A "problem" agent is one
+    that is down or unknown (disabled hosts are excluded — intentionally off).
+    Returns one dict per instance, most-problematic first.
+    """
     agg: dict[str, dict] = {}
     for instance, platform, status, count in rows:
         entry = agg.setdefault(
@@ -248,6 +270,7 @@ def _agent_alerts(db: Session, instance: str, hostname: str) -> list[Alert]:
     """Active alerts for one agent (host), most severe first."""
     stmt = (
         select(Alert)
+        .options(defer(Alert.raw_payload))
         .where(
             Alert.resolved.is_(False),
             Alert.source_instance == instance,
@@ -275,12 +298,12 @@ def _donut_gradient(buckets: list[SeverityBucket]) -> str:
     return ", ".join(stops)
 
 
-def _host_status_counts(db: Session) -> dict[str, int]:
-    """Return host counts keyed by normalized status (up/down/unknown/disabled)."""
-    rows = db.execute(
-        select(Host.status, func.count(Host.id)).group_by(Host.status)
-    ).all()
-    counts = {s.value if hasattr(s, "value") else str(s): int(c) for s, c in rows}
+def _host_status_counts(rows: list[tuple]) -> dict[str, int]:
+    """Host counts keyed by normalized status, from :func:`_host_rollup`."""
+    counts: dict[str, int] = {}
+    for _instance, _platform, status, count in rows:
+        key = _enum_value(status)
+        counts[key] = counts.get(key, 0) + int(count)
     return {
         "up": counts.get("up", 0),
         "down": counts.get("down", 0),
@@ -340,7 +363,16 @@ def _shared_host_groups(
     if not ips:
         return [], total, page, pages
 
-    hosts = list(db.scalars(select(Host).where(Host.ip.in_(ips))).all())
+    # Only the five columns the shared table renders — these rows exist purely
+    # to be grouped and displayed, so loading whole Host entities (payload JSON
+    # included) for every instance sharing each IP was pure waste.
+    hosts = list(
+        db.scalars(
+            select(Host)
+            .options(defer(Host.raw_payload), defer(Host.metrics))
+            .where(Host.ip.in_(ips))
+        ).all()
+    )
     by_ip: dict[str, list[Host]] = {}
     for h in hosts:
         by_ip.setdefault(str(h.ip), []).append(h)
@@ -369,6 +401,7 @@ def _shared_host_groups(
 def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
     stmt = (
         select(Alert)
+        .options(defer(Alert.raw_payload))
         .where(Alert.resolved.is_(False))
         .order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
         .limit(limit)
@@ -377,27 +410,19 @@ def _recent_critical(db: Session, limit: int = 6) -> list[Alert]:
 
 
 def _overview_context(db: Session, settings: Settings) -> dict:
-    total_hosts = db.scalar(select(func.count(Host.id))) or 0
-    hosts_down = (
-        db.scalar(select(func.count(Host.id)).where(Host.status == HostStatus.down))
-        or 0
-    )
-    active_alerts = (
-        db.scalar(select(func.count(Alert.id)).where(Alert.resolved.is_(False))) or 0
-    )
-    critical_alerts = (
-        db.scalar(
-            select(func.count(Alert.id)).where(
-                Alert.resolved.is_(False), Alert.severity_int == 5
-            )
-        )
-        or 0
-    )
+    # One host rollup and one alert rollup feed every tile on this page. The
+    # totals below used to be five more aggregate queries; they are all just
+    # sums of what these two already returned.
+    rows = _host_rollup(db)
     buckets = _severity_buckets(db)
-    per_platform = _per_platform(db)
+
+    status_counts = _host_status_counts(rows)
+    per_platform = _per_platform(rows)
+    agent_stats = _agent_stats(rows)
     max_total = max((p.total for p in per_platform), default=0) or 1
-    status_counts = _host_status_counts(db)
-    agent_stats = _agent_stats(db)
+    total_hosts = sum(status_counts.values())
+    active_alerts = sum(b.count for b in buckets)
+    critical_alerts = next((b.count for b in buckets if b.severity_int == 5), 0)
     return {
         "total_hosts": total_hosts,
         "status_counts": status_counts,
@@ -427,8 +452,14 @@ def _hosts_stmt(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
 ):
-    """Build the filtered (unordered, unlimited) host SELECT."""
-    stmt = select(Host)
+    """Build the filtered (unordered, unlimited) host SELECT.
+
+    ``raw_payload`` holds the entire source record (for Zabbix, the full
+    host.get response including interfaces, tags and inventory) and nothing
+    downstream reads it — not a template, not a schema, not an export. Deferring
+    it saves loading and JSON-decoding it 300 times per page render.
+    """
+    stmt = select(Host).options(defer(Host.raw_payload))
     if platform and platform != "all":
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
@@ -472,7 +503,7 @@ def _hosts_query(
 ) -> tuple[list[Host], int, int, int]:
     """Return (rows, total, page, pages) — one page of the filtered hosts."""
     stmt = _hosts_stmt(q, platform, status, instance, group, date_from, date_to)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    total = _count_of(db, stmt)
     page, pages, offset = _paginate(page, total)
     sort_cols = {
         "hostname": Host.hostname,
@@ -505,8 +536,11 @@ def _alerts_filtered_stmt(
 
     ``state`` selects the lifecycle bucket: ``active`` (unresolved, the default),
     ``resolved`` (history), or ``all`` (both — useful for historical exports).
+
+    ``raw_payload`` is deferred for the same reason as on hosts: it is written
+    by the collectors and read by nothing.
     """
-    stmt = select(Alert)
+    stmt = select(Alert).options(defer(Alert.raw_payload))
     if state == "active":
         stmt = stmt.where(Alert.resolved.is_(False))
     elif state == "resolved":
@@ -538,7 +572,7 @@ def _active_alerts(
 ) -> tuple[list[Alert], int, int, int]:
     """Return (rows, total, page, pages) — one page of alerts for ``state``."""
     stmt = _alerts_filtered_stmt(q, date_from, date_to, state)
-    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    total = _count_of(db, stmt)
     page, pages, offset = _paginate(page, total)
     stmt = (
         stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
@@ -583,18 +617,31 @@ def _attach_escalation(db: Session, alerts: list[Alert]) -> None:
                 by_ext_id[ext] = (owner, email)
 
     by_name: dict[str, tuple[str | None, str | None]] = {}
-    wanted = {
-        (a.host_hostname or "").strip().lower() for a in alerts if a.host_hostname
-    }
-    if wanted:
+
+    def _record(hostname: str | None, owner, email) -> None:
+        key = (hostname or "").strip().lower()
+        if key and (key not in by_name or (owner or email)):
+            by_name[key] = (owner, email)
+
+    owner_cols = select(Host.hostname, Host.owner, Host.owner_email)
+    exact = {a.host_hostname.strip() for a in alerts if a.host_hostname}
+    if exact:
+        # Match on the raw column so ix_hosts_hostname is usable. Wrapping it in
+        # lower() disqualifies the index and turns this into a full scan of
+        # hosts — on a page that re-renders every 60s per open tab.
         for hn, owner, email in db.execute(
-            select(Host.hostname, Host.owner, Host.owner_email).where(
-                func.lower(Host.hostname).in_(wanted)
-            )
+            owner_cols.where(Host.hostname.in_(exact))
         ):
-            key = (hn or "").strip().lower()
-            if key not in by_name or (owner or email):
-                by_name[key] = (owner, email)
+            _record(hn, owner, email)
+
+    # Only if some alert's hostname didn't match exactly do we pay for the
+    # case-insensitive scan, and then only for the names still unresolved.
+    missing = {n.lower() for n in exact} - set(by_name)
+    if missing:
+        for hn, owner, email in db.execute(
+            owner_cols.where(func.lower(Host.hostname).in_(missing))
+        ):
+            _record(hn, owner, email)
 
     settings = get_settings()
     for a in alerts:
@@ -654,7 +701,7 @@ def overview(
     """Overview dashboard with KPI cards."""
     ctx = _overview_context(db, settings)
     ctx.update({"request": request, "active_page": "overview"})
-    return templates.TemplateResponse("overview.html", ctx)
+    return templates.TemplateResponse(request, "overview.html", ctx)
 
 
 def _instance_names(settings: Settings, db: Session | None = None) -> list[dict]:
@@ -765,6 +812,7 @@ def capacity_page(
         db, None, "all", "all", "hostname", "asc", "all", 1, "all"
     )
     return templates.TemplateResponse(
+        request,
         "capacity.html",
         {
             "request": request,
@@ -808,6 +856,7 @@ def capacity_partial(
         db, q, platform, status, sort, order, instance, page, group
     )
     return templates.TemplateResponse(
+        request,
         "partials/capacity_table.html",
         {
             "request": request,
@@ -856,7 +905,7 @@ def capacity_zabbix_detail_partial(
             ctx["detail"] = host_capacity_detail(collector, hostid)
         except Exception as exc:  # noqa: BLE001 — surface, never 500 the panel
             ctx["error"] = f"Could not load detail: {exc}"
-    return templates.TemplateResponse("partials/capacity_zabbix_detail.html", ctx)
+    return templates.TemplateResponse(request, "partials/capacity_zabbix_detail.html", ctx)
 
 
 @router.get("/shared", response_class=HTMLResponse)
@@ -868,6 +917,7 @@ def shared_page(
     """Devices monitored by more than one instance (by shared IP)."""
     groups, total, page, pages = _shared_host_groups(db, 1)
     return templates.TemplateResponse(
+        request,
         "shared.html",
         {
             "request": request,
@@ -891,6 +941,7 @@ def shared_partial(
     """Shared-devices list fragment (server-side paginated)."""
     groups, total, page, pages = _shared_host_groups(db, page)
     return templates.TemplateResponse(
+        request,
         "partials/shared_table.html",
         {
             "request": request,
@@ -914,6 +965,7 @@ def agents_page(
     )
     _annotate_agent_alerts(db, hosts)
     return templates.TemplateResponse(
+        request,
         "agents.html",
         {
             "request": request,
@@ -955,6 +1007,7 @@ def agents_partial(
     )
     _annotate_agent_alerts(db, hosts)
     return templates.TemplateResponse(
+        request,
         "partials/agents_table.html",
         {
             "request": request,
@@ -988,6 +1041,7 @@ def agent_detail_partial(
         )
     )
     return templates.TemplateResponse(
+        request,
         "partials/agent_detail.html",
         {
             "request": request,
@@ -1050,6 +1104,7 @@ def topology_page(
     """
     if not settings.enable_topology:
         return templates.TemplateResponse(
+            request,
             "topology.html",
             {"request": request, "active_page": "topology", "enabled": False},
         )
@@ -1102,7 +1157,7 @@ def topology_page(
             }
         )
 
-    return templates.TemplateResponse("topology.html", ctx)
+    return templates.TemplateResponse(request, "topology.html", ctx)
 
 
 @router.get("/alerts", response_class=HTMLResponse)
@@ -1114,6 +1169,7 @@ def alerts_page(
     """Alerts table page (defaults to the active/unresolved bucket)."""
     alerts, total, page, pages = _active_alerts(db, None, 1, state="active")
     return templates.TemplateResponse(
+        request,
         "alerts.html",
         {
             "request": request,
@@ -1141,7 +1197,7 @@ def overview_partial(
     """KPI cards fragment (polled every 60s)."""
     ctx = _overview_context(db, settings)
     ctx["request"] = request
-    return templates.TemplateResponse("partials/overview_cards.html", ctx)
+    return templates.TemplateResponse(request, "partials/overview_cards.html", ctx)
 
 
 @router.get("/partials/hosts", response_class=HTMLResponse)
@@ -1161,6 +1217,7 @@ def hosts_partial(
         db, q, platform, status, sort, order, instance, page
     )
     return templates.TemplateResponse(
+        request,
         "partials/hosts_table.html",
         {
             "request": request,
@@ -1195,6 +1252,7 @@ def alerts_partial(
     df, dt = parse_dt(date_from), parse_dt(date_to)
     alerts, total, page, pages = _active_alerts(db, q, page, df, dt, state)
     return templates.TemplateResponse(
+        request,
         "partials/alerts_table.html",
         {
             "request": request,
@@ -1220,6 +1278,7 @@ def health_partial(
 ) -> HTMLResponse:
     """Collector health strip fragment (sidebar)."""
     return templates.TemplateResponse(
+        request,
         "partials/health_strip.html",
         {"request": request, "collectors": get_collector_statuses(db, settings)},
     )

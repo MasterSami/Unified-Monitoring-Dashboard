@@ -9,12 +9,13 @@ from __future__ import annotations
 import csv
 import io
 import secrets
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
 from app.db import get_db
@@ -29,7 +30,14 @@ from app.models import (
     TopologyNode,
 )
 from app.normalizer import severity_label
-from app.scheduler import get_collector_statuses, get_service, run_topology_now
+from app.scheduler import (
+    get_collector_statuses,
+    get_service,
+    request_run_all,
+    request_run_one,
+    request_topology_run,
+    run_topology_now,
+)
 from app.sitescope_ingest import ingest_lines
 from app.topology import (
     NNMI_L2_COLUMNS,
@@ -118,15 +126,31 @@ def ingest_sitescope(
     )
 
 
+def _page_window(
+    limit: int | None, offset: int | None, settings: Settings
+) -> tuple[int, int]:
+    """Clamp a caller's limit/offset to the configured cap.
+
+    These endpoints used to return the whole table — and with ``active=false``
+    the alerts one returned the entire 30-day resolved backfill, every row
+    validated through Pydantic on the way out.
+    """
+    size = settings.api_default_limit if limit is None else limit
+    return max(1, min(size, settings.api_max_limit)), max(0, offset or 0)
+
+
 @router.get("/hosts", response_model=list[HostOut])
 def list_hosts(
     platform: str | None = Query(default=None),
     status: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[Host]:
     """Return hosts, optionally filtered by platform, status, or search text."""
-    stmt = select(Host)
+    stmt = select(Host).options(defer(Host.raw_payload))
     if platform:
         stmt = stmt.where(Host.source_platform == platform)
     if status:
@@ -136,34 +160,59 @@ def list_hosts(
         stmt = stmt.where(
             func.lower(Host.hostname).like(like) | func.lower(Host.ip).like(like)
         )
-    stmt = stmt.order_by(Host.hostname.asc())
+    size, start = _page_window(limit, offset, settings)
+    stmt = stmt.order_by(Host.hostname.asc()).offset(start).limit(size)
     return list(db.scalars(stmt).all())
 
 
 @router.get("/alerts", response_model=list[AlertOut])
 def list_alerts(
     active: bool = Query(default=True),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
     db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> list[Alert]:
     """Return alerts. ``active=true`` (default) excludes resolved alerts."""
-    stmt = select(Alert)
+    stmt = select(Alert).options(defer(Alert.raw_payload))
     if active:
         stmt = stmt.where(Alert.resolved.is_(False))
-    stmt = stmt.order_by(
-        Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
+    size, start = _page_window(limit, offset, settings)
+    stmt = (
+        stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+        .offset(start)
+        .limit(size)
     )
     return list(db.scalars(stmt).all())
 
 
-def _csv_response(filename: str, header: list[str], rows: list[list]) -> StreamingResponse:
-    """Serialize rows to a downloadable CSV StreamingResponse."""
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(header)
-    writer.writerows(rows)
-    buf.seek(0)
+def _csv_response(
+    filename: str, header: list[str], rows: Iterable[Sequence[object]]
+) -> StreamingResponse:
+    """Stream rows out as a downloadable CSV.
+
+    ``rows`` is consumed lazily, so a large export never exists in memory in
+    full. It previously built the entire file into a StringIO and handed back
+    ``iter([whole_string])`` — a StreamingResponse in name only, which meant the
+    export lived in memory three times over (ORM rows, list of lists, and the
+    joined string) before the first byte reached the client.
+    """
+
+    def chunks():
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(header)
+        for row in rows:
+            writer.writerow(row)
+            if buf.tell() > 64_000:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate(0)
+        if buf.tell():
+            yield buf.getvalue()
+
     return StreamingResponse(
-        iter([buf.getvalue()]),
+        chunks(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -186,7 +235,7 @@ def export_hosts_csv(
 ) -> StreamingResponse:
     """Export hosts (respecting filters) as CSV."""
     _require_export(settings)
-    stmt = select(Host)
+    stmt = select(Host).options(defer(Host.raw_payload), defer(Host.metrics))
     if platform and platform != "all":
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
@@ -202,7 +251,9 @@ def export_hosts_csv(
             | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
     stmt = stmt.order_by(Host.hostname.asc())
-    rows = [
+    # Generator + unbuffered iteration: rows are written to the response as the
+    # cursor yields them, so the whole export never sits in memory at once.
+    rows = (
         [
             h.hostname,
             h.ip or "",
@@ -212,8 +263,8 @@ def export_hosts_csv(
             h.group_name or "",
             h.last_seen.isoformat() if h.last_seen else "",
         ]
-        for h in db.scalars(stmt).all()
-    ]
+        for h in db.scalars(stmt)
+    )
     return _csv_response(
         "hosts.csv",
         ["hostname", "ip", "platform", "instance", "status", "group", "last_seen"],
@@ -233,7 +284,7 @@ def export_capacity_csv(
 ) -> StreamingResponse:
     """Export the capacity view (hosts + CPU/mem/disk) as CSV."""
     _require_export(settings)
-    stmt = select(Host)
+    stmt = select(Host).options(defer(Host.raw_payload))
     if platform and platform != "all":
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
@@ -251,7 +302,7 @@ def export_capacity_csv(
             | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
     stmt = stmt.order_by(Host.hostname.asc())
-    rows = [
+    rows = (
         [
             h.hostname,
             h.ip or "",
@@ -265,8 +316,8 @@ def export_capacity_csv(
             (h.metrics or {}).get("mem_total_gb", ""),
             h.status.value,
         ]
-        for h in db.scalars(stmt).all()
-    ]
+        for h in db.scalars(stmt)
+    )
     return _csv_response(
         "capacity.csv",
         [
@@ -295,7 +346,7 @@ def export_alerts_csv(
 ) -> StreamingResponse:
     """Export alerts (respecting filters) as CSV."""
     _require_export(settings)
-    stmt = select(Alert)
+    stmt = select(Alert).options(defer(Alert.raw_payload))
     if active:
         stmt = stmt.where(Alert.resolved.is_(False))
     if q:
@@ -310,7 +361,7 @@ def export_alerts_csv(
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
-    rows = [
+    rows = (
         [
             a.severity_int,
             a.severity_label,
@@ -321,8 +372,8 @@ def export_alerts_csv(
             a.started_at.isoformat() if a.started_at else "",
             "resolved" if a.resolved else "active",
         ]
-        for a in db.scalars(stmt).all()
-    ]
+        for a in db.scalars(stmt)
+    )
     return _csv_response(
         "alerts.csv",
         [
@@ -547,18 +598,33 @@ def export_alerts_xlsx(
 
 
 def _db_report_rows(
-    db: Session, platform: str, instance: str | None = None
+    db: Session,
+    platform: str,
+    instance: str | None = None,
+    exclude_hostnames: set[str] | None = None,
 ) -> list[list]:
     """Best-effort weekly-report rows from stored host records (one per host).
 
     Used for Dynatrace (and as a fallback) where per-filesystem/trend data isn't
     pulled live: fills the same columns from the Host snapshot, N/A where unknown.
+
+    ``exclude_hostnames`` (lowercased) drops hosts already covered by a live
+    report. The exclusion runs in SQL rather than in the caller, so those rows
+    are never loaded just to be discarded.
     """
     from app.zabbix_report import REPORT_COLUMNS  # noqa: F401 (column order)
 
-    stmt = select(Host).where(Host.source_platform == platform)
+    stmt = (
+        select(Host)
+        .options(defer(Host.raw_payload))
+        .where(Host.source_platform == platform)
+    )
     if instance and instance != "all":
         stmt = stmt.where(Host.source_instance == instance)
+    if exclude_hostnames:
+        names = sorted(exclude_hostnames)
+        for i in range(0, len(names), 500):  # respect SQLite's bound-param limit
+            stmt = stmt.where(func.lower(Host.hostname).notin_(names[i : i + 500]))
     stmt = stmt.order_by(Host.hostname.asc())
     rows: list[list] = []
     for h in db.scalars(stmt):
@@ -673,11 +739,7 @@ def export_capacity_report_xlsx(
         # query is incomplete; preserve a usable row from the last collected
         # Host snapshot instead of producing an empty Excel sheet.
         live_hostnames = {str(row[0]).casefold() for row in live_rows if row}
-        rows.extend(
-            row
-            for row in _db_report_rows(db, "zabbix", inst)
-            if str(row[0]).casefold() not in live_hostnames
-        )
+        rows.extend(_db_report_rows(db, "zabbix", inst, live_hostnames))
 
     # --- Dynatrace: snapshot host-level + live per-partition disk ---
     if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
@@ -788,8 +850,14 @@ def topology_graph(
 
 @router.post("/topology/run")
 def topology_run(settings: Settings = Depends(get_settings)) -> dict[str, str]:
-    """Rebuild every instance's topology graph now (synchronous)."""
+    """Queue a rebuild of every instance's topology graph.
+
+    A rebuild walks NNMi's SOAP API and Dynatrace's entity API in full, so it
+    goes to the background scheduler rather than holding the request open.
+    """
     _require_topology(settings)
+    if request_topology_run():
+        return {"status": "queued"}
     run_topology_now()
     return {"status": "ok"}
 
@@ -983,18 +1051,31 @@ def collectors_status(
 
 @router.post("/collectors/{instance}/run")
 def run_collector(instance: str) -> dict[str, str]:
-    """Manually trigger a single instance's collection run (synchronous)."""
+    """Queue a single instance's collection run.
+
+    Handed to the background scheduler so the request returns at once; a
+    collection run talks to a remote monitoring API and can take minutes.
+    """
     service = get_service()
-    ran = service.run_one(instance)
-    if not ran:
+    if service.get(instance) is None:
         raise HTTPException(status_code=404, detail=f"unknown instance: {instance}")
+    if request_run_one(instance):
+        return {"status": "queued", "instance": instance}
+    service.run_one(instance)  # no scheduler (tests / pre-startup): run inline
     return {"status": "ok", "instance": instance}
 
 
 @router.post("/collectors/run")
 def run_all_collectors() -> dict[str, object]:
-    """Trigger a run of every configured instance (synchronous)."""
+    """Queue a run of every configured instance.
+
+    This backs the "Refresh now" button on every page. It returns immediately
+    and lets the scheduler coalesce repeat clicks, so a burst of them can no
+    longer tie up a threadpool thread each for the length of a full poll.
+    """
     service = get_service()
+    if request_run_all():
+        return {"status": "queued", "instances": list(service.collectors)}
     service.run_all()
     return {"status": "ok", "instances": list(service.collectors)}
 
