@@ -1,0 +1,19 @@
+# Normalize line endings in the repository to LF.
+#
+# Without this the repo drifts: some files were committed with CRLF and some
+# with LF, so any tool that rewrites a whole file (a formatter, an editor with
+# different settings, a script) silently flips every line and turns a two-line
+# change into a thousand-line diff.
+#
+# Git stores LF and checks out the platform's native endings, so this changes
+# nothing about how the files look on a Windows machine.
+* text=auto eol=lf
+
+# Binary assets git must never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.xlsx binary
+*.db binary
