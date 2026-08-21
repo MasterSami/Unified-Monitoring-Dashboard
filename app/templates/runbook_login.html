@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Runbook · SAMI'X{% endblock %}
+{% block page_title %}Runbook{% endblock %}
+{% block page_sub %}Admin sign-in required{% endblock %}
+
+{% block content %}
+<div class="rb-gate">
+  <div class="card rb-login">
+    <h3>Sign in to the Runbook</h3>
+    <p class="rb-gate-note">
+      The Runbook runs operational scripts against the monitoring tools, so it
+      is restricted to the admin team.
+    </p>
+
+    {% if error %}
+    <div class="notice rb-error">{{ error }}</div>
+    {% endif %}
+
+    {% if configured %}
+    <form method="post" action="/runbook/login" class="rb-form">
+      <label class="field">
+        <span class="field-lbl">Username</span>
+        <input type="text" name="username" autocomplete="username"
+          autocapitalize="none" spellcheck="false" required autofocus />
+      </label>
+      <label class="field">
+        <span class="field-lbl">Password</span>
+        <input type="password" name="password" autocomplete="current-password" required />
+      </label>
+      <button class="btn btn-accent" type="submit">Sign in</button>
+    </form>
+    {% else %}
+    <div class="notice">
+      No Runbook admin is configured yet. Add one to your <code>.env</code>:
+      <pre class="rb-pre">python -m app.runbook_auth hash</pre>
+      then paste the <code>RUNBOOK_USERS=…</code> line it prints and restart.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

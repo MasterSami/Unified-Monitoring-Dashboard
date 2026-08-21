@@ -1,0 +1,56 @@
+{% if error %}
+<div class="card">
+  <div class="notice rb-error">{{ error }}</div>
+</div>
+{% else %}
+<div class="card rb-out">
+  <div class="card-head">
+    <h3>Results</h3>
+    <span class="hint">
+      {{ rows | length }} row{{ '' if rows | length == 1 else 's' }}
+      {%- if elapsed %} · {{ '%.1f' | format(elapsed) }}s{% endif %}
+      · {{ instance if instance != 'all' else 'all instances' }}
+      · {{ ran_at.strftime('%Y-%m-%d %H:%M') }} UTC
+    </span>
+    <span class="spacer"></span>
+    {% if enable_export and rows %}
+    <a class="btn" href="/runbook/{{ script.slug }}/export.xlsx?instance={{ instance }}&token={{ token }}"
+       title="Download these results as a branded Excel workbook">Export Excel</a>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap rb-table-wrap">
+    <table>
+      <thead>
+        <tr>{% for c in script.columns %}<th>{{ c }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for cell in row %}
+          <td class="{{ 'mono' if loop.index0 in (0, 1, 2) else '' }}">
+            {%- if cell is none or cell == '' -%}
+              <span class="muted-dash">—</span>
+            {%- elif cell is string and cell in ('NOT MONITORED', 'NOT FOUND', 'OFFLINE', 'Disabled') -%}
+              <span class="rb-bad">{{ cell }}</span>
+            {%- elif cell is string and cell in ('MONITORED', 'ONLINE', 'Enabled') -%}
+              <span class="rb-good">{{ cell }}</span>
+            {%- else -%}
+              {{ cell }}
+            {%- endif -%}
+          </td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="{{ script.columns | length }}">
+            <div class="empty">Nothing matched. The script ran fine — there is
+              simply no row that meets its criteria right now.</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

@@ -21,6 +21,7 @@ _HEADER_FILL = "1F4E78"          # table header band
 _TITLE_FONT = Font(bold=True, size=16, color="1F4E78")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
 _MUTED = Font(color="666666", size=10)
+_CREDIT_FONT = Font(color="1F4E78", size=10, bold=True, italic=True)
 
 # Severity fills — aligned with the UI severity palette (5=critical … 1=ok).
 _SEV_FILL = {
@@ -41,12 +42,16 @@ def build_workbook(
     columns: Sequence[str],
     rows: Iterable[Sequence[object]],
     severity_col: int | None = None,
+    credit: str = "",
 ) -> bytes:
     """Return xlsx bytes: branded header block + styled table.
 
     ``severity_col`` (0-based index into ``columns``) tints each data row's
     severity cell by an accompanying integer the caller appends as the LAST
     value of every row (kept out of ``columns``); pass None for no coloring.
+
+    ``credit`` adds an attribution line to the header block — Runbook exports
+    use it to name the engineer who wrote the script.
     """
     wb = Workbook()
     ws = wb.active
@@ -76,6 +81,11 @@ def build_workbook(
     ws["A4"].font = _MUTED
 
     header_row = 6
+    if credit:
+        ws.merge_cells(f"A5:{last_col}5")
+        ws["A5"].value = credit
+        ws["A5"].font = _CREDIT_FONT
+        header_row = 7
     fill = PatternFill("solid", start_color=_HEADER_FILL)
     for i, name in enumerate(columns, 1):
         cell = ws.cell(row=header_row, column=i, value=name)

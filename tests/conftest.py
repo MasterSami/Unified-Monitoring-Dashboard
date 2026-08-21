@@ -7,6 +7,7 @@ binds to the throwaway SQLite file. The scheduler lifespan is not triggered
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 from pathlib import Path
@@ -14,6 +15,8 @@ from pathlib import Path
 import pytest
 
 INGEST_TOKEN = "test-token-123"
+RUNBOOK_USER = "admin"
+RUNBOOK_PASSWORD = "s3cret-pw"
 
 # Configure the environment at IMPORT time — conftest is imported before any
 # test module is collected, so the app's module-level engine binds to this
@@ -26,6 +29,13 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_TMP_DB}"
 os.environ["MOCK_MODE"] = "false"
 os.environ["ENABLED_COLLECTORS"] = ""  # no pull collectors in tests
 os.environ["SITESCOPE_INGEST_TOKEN"] = INGEST_TOKEN
+
+# Runbook: on, with one admin whose password is stored only as a digest.
+os.environ["ENABLE_RUNBOOK"] = "true"
+os.environ["RUNBOOK_USERS"] = (
+    f"{RUNBOOK_USER}={hashlib.sha256(RUNBOOK_PASSWORD.encode()).hexdigest()}"
+)
+os.environ["RUNBOOK_SECRET"] = "test-signing-key"
 
 
 @pytest.fixture(scope="session")

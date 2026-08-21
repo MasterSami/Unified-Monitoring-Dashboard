@@ -7,7 +7,7 @@
   <div class="card stat accent">
     <div class="stat-top">
       <span class="label">Total Hosts</span>
-      <span class="stat-ico">🖥</span>
+      <span class="stat-ico">▣</span>
     </div>
     <span class="value">{{ total_hosts }}</span>
     <span class="meta">{{ status_counts.up }} active · {{ shared_count }} shared</span>
@@ -15,7 +15,7 @@
   <div class="card stat danger">
     <div class="stat-top">
       <span class="label">Critical Alerts</span>
-      <span class="stat-ico">🔴</span>
+      <span class="stat-ico">●</span>
     </div>
     <span class="value">{{ critical_alerts }}</span>
     <span class="meta">highest severity · needs action now</span>
@@ -113,7 +113,7 @@
   Agent Health
   {% if agent_problem_total %}
     <span style="color: var(--down); font-weight: 700; text-transform: none; letter-spacing: 0;">
-      · ⚠ {{ agent_problem_total }} agent{{ '' if agent_problem_total == 1 else 's' }}
+      · {{ agent_problem_total }} agent{{ '' if agent_problem_total == 1 else 's' }}
       need attention on {{ agent_problem_instances }} tool{{ '' if agent_problem_instances == 1 else 's' }}
     </span>
   {% else %}
@@ -169,7 +169,7 @@
           <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.started_at | relative_time }}</td>
         </tr>
         {% else %}
-        <tr><td><div class="empty"><span class="big">🎉</span>No active alerts.</div></td></tr>
+        <tr><td><div class="empty">No active alerts.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -200,7 +200,7 @@
     {% endif %}
     {% if c.check_proxies and c.notes %}
       <div class="notice" style="{{ '' if 'OFFLINE' in c.notes else 'background: color-mix(in srgb, var(--up) 11%, transparent); color: var(--up); border-color: color-mix(in srgb, var(--up) 28%, transparent);' }}">
-        {{ '⚠' if 'OFFLINE' in c.notes else '🛰' }} {{ c.notes }}
+        {{ c.notes }}
       </div>
     {% endif %}
     {% if c.test_mail %}
@@ -211,7 +211,7 @@
         hx-swap="none"
         hx-on::after-request="notifyTestMail(event, '{{ c.instance }}')"
       >
-        <span class="htmx-indicator">⏳</span> ✉ Send test mail
+        <span class="spin htmx-indicator" aria-hidden="true"></span> Send test mail
       </button>
     {% endif %}
   </div>
@@ -227,6 +227,6 @@
       msg = r.message || msg;
       if (r.ok === false) ok = false;
     } catch (e) {}
-    if (window.toast) window.toast((ok ? "✓ " : "✕ ") + instance + ": " + msg, ok);
+    if (window.toast) window.toast(instance + ": " + msg, ok);
   }
 </script>

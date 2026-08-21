@@ -141,6 +141,24 @@ class ZabbixCollector(BaseCollector):
             raise CollectorError(f"Zabbix {method} error: {data['error']}")
         return data.get("result", [])
 
+    def read_rpc(self, method: str, params: dict) -> object:
+        """Call a **read-only** Zabbix method, reusing this instance's session.
+
+        The Runbook scripts go through here rather than opening their own API
+        connections: the collector is already authenticated, so a script costs
+        one HTTP round trip instead of a login plus the query.
+
+        Only ``*.get`` methods are accepted. That check is the reason this is a
+        separate method from :meth:`_rpc` — it makes "a Runbook script can never
+        mutate Zabbix" a property of the transport, not of every call site.
+        """
+        if not method.endswith(".get"):
+            raise CollectorError(
+                f"read_rpc refuses non-read method {method!r}; "
+                "only *.get calls are allowed here"
+            )
+        return self._rpc(method, params)
+
     # --- Contract -----------------------------------------------------------
 
     def collect_hosts(self) -> list[dict]:

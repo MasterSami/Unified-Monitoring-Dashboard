@@ -92,6 +92,8 @@ templates.env.globals["enable_topology"] = get_settings().enable_topology
 templates.env.globals["enable_export"] = get_settings().enable_export
 # Feature flag for the Topology export buttons (NNMi CSV / Dynatrace XLSX).
 templates.env.globals["enable_topology_export"] = get_settings().enable_topology_export
+# Feature flag for the Runbook (admin script library).
+templates.env.globals["enable_runbook"] = get_settings().enable_runbook
 
 
 # --- Template helpers -------------------------------------------------------

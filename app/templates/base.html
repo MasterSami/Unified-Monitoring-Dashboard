@@ -30,11 +30,11 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
-          <!-- Drop your logo at app/static/logo.svg (or logo.png); 📊 shows until then. -->
+          <!-- Drop your logo at app/static/logo.svg (or logo.png); initials show until then. -->
           <span class="logo">
             <img src="/static/logo.svg" alt="SAMI'X"
               onerror="if(this.src.indexOf('logo.svg')>-1){this.src='/static/logo.png';}else{this.style.display='none';this.nextElementSibling.style.display='inline';}" />
-            <span class="logo-fallback" style="display:none">📊</span>
+            <span class="logo-fallback" style="display:none">SX</span>
           </span>
           <span>
             SAMI'X
@@ -68,6 +68,13 @@
             <span class="ico">◉</span> Topology <span class="soon">soon</span>
           </span>
           {% endif %}
+
+          {% if enable_runbook %}
+          <div class="nav-section">Operations</div>
+          <a href="/runbook" class="{{ 'active' if active_page == 'runbook' else '' }}">
+            <span class="ico">▷</span> Runbook
+          </a>
+          {% endif %}
         </nav>
 
         <div class="sidebar-foot">
@@ -95,8 +102,8 @@
             title="Run all collectors now"
             onclick="refreshAll(event)"
           >
-            <span class="htmx-indicator">⏳</span>
-            <span class="rf-label">↻ Refresh now</span>
+            <span class="spin htmx-indicator" aria-hidden="true"></span>
+            <span class="rf-label">Refresh now</span>
           </button>
           <button id="theme-toggle" class="icon-btn" type="button">☾</button>
         </header>
@@ -142,7 +149,7 @@
               var hs = document.getElementById("health-strip");
               if (hs) window.htmx.trigger(hs, "refresh");
             }
-            if (window.toast) window.toast("↻ Collectors refreshed", true);
+            if (window.toast) window.toast("Collectors refreshed", true);
           });
       }
     </script>

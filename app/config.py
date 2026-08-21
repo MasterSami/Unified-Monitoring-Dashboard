@@ -64,6 +64,39 @@ class Settings(BaseSettings):
     # exports on independently. Enable it yourself from .env.
     enable_topology_export: bool = False
 
+    # --- Runbook (admin script library) -------------------------------------
+    # Feature flag for the Runbook tab — the team's library of operational
+    # scripts, browsable and runnable from the UI. OFF by default; enable it
+    # from .env exactly like ENABLE_TOPOLOGY. See RUNBOOK.md.
+    enable_runbook: bool = False
+
+    # Who may open the Runbook. Preferred form is a ';'-separated list of
+    # "user=<sha256-hex-of-password>" entries, so no plaintext password is ever
+    # stored:
+    #   RUNBOOK_USERS=ahmed=9f86d0...;sami=6b86b2...
+    # Generate a digest with:  python -m app.runbook_auth hash
+    runbook_users: str = ""
+    # Single-admin convenience fallback (plaintext, compared in constant time).
+    # Prefer RUNBOOK_USERS in anything shared.
+    runbook_user: str = ""
+    runbook_password: str = ""
+
+    # HMAC key signing the Runbook session cookie. Leave empty and a random key
+    # is generated per process (sessions then end on restart, which is fine for
+    # a single instance). Set it to keep sessions valid across restarts.
+    runbook_secret: str = ""
+    # How long a Runbook login stays valid.
+    runbook_session_minutes: int = 60
+
+    # Hard cap on rows a single Runbook script may return, so one broad query
+    # can never exhaust memory or freeze the browser.
+    runbook_max_rows: int = 20000
+
+    # Scripts that WRITE to the monitoring tools (create hosts/users, disable
+    # monitoring) are documented in the Runbook but never runnable from the web
+    # UI while this is false. Leave it off unless you have a strong reason.
+    runbook_allow_write: bool = False
+
     # --- SiteScope push ingest ---------------------------------------------
     # Bearer token the SiteScope forwarder must present to POST events. Empty
     # (default) disables the ingest endpoint entirely (returns 503). Set it in

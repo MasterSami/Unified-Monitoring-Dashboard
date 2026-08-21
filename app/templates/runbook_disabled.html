@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Runbook · SAMI'X{% endblock %}
+{% block page_title %}Runbook{% endblock %}
+{% block page_sub %}Feature disabled{% endblock %}
+
+{% block content %}
+<div class="rb-gate">
+  <div class="card rb-login">
+    <h3>The Runbook is turned off</h3>
+    <p class="rb-gate-note">
+      Enable it the same way as Topology — set this in your <code>.env</code>
+      and restart:
+    </p>
+    <pre class="rb-pre">ENABLE_RUNBOOK=true
+RUNBOOK_USERS=&lt;user&gt;=&lt;sha256-of-password&gt;</pre>
+    <p class="rb-gate-note">
+      Generate the digest with <code>python -m app.runbook_auth hash</code>.
+    </p>
+  </div>
+</div>
+{% endblock %}

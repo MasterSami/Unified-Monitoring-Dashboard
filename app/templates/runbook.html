@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Runbook · SAMI'X{% endblock %}
+{% block page_title %}Runbook{% endblock %}
+{% block page_sub %}The team's script library — documented, searchable, runnable{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="tabs" role="tablist">
+    <a class="tab-link {{ 'active' if platform == 'all' else '' }}" href="/runbook">
+      All <span class="tab-n">{{ total }}</span>
+    </a>
+    {% for p in platforms %}
+    <a class="tab-link {{ 'active' if platform == p else '' }}"
+       href="/runbook?platform={{ p }}">{{ p | capitalize }}</a>
+    {% endfor %}
+  </div>
+
+  <div class="spacer"></div>
+
+  <span class="rb-who">Signed in as <b>{{ user }}</b></span>
+  <form method="post" action="/runbook/logout" style="display:inline">
+    <button class="btn" type="submit">Sign out</button>
+  </form>
+</div>
+
+<div class="rb-grid">
+  {% for s in scripts %}
+  <a class="card rb-card {{ 'rb-card-write' if not s.read_only else '' }}"
+     href="/runbook/{{ s.slug }}">
+    <div class="rb-card-top">
+      <span class="badge badge-{{ s.platform }}"><span class="dot"></span>{{ s.platform }}</span>
+      {% if s.read_only %}
+        <span class="pill rb-pill-read">read-only</span>
+      {% else %}
+        <span class="pill rb-pill-write">changes config</span>
+      {% endif %}
+    </div>
+    <h3 class="rb-card-title">{{ s.title }}</h3>
+    <p class="rb-card-line">{{ s.tagline }}</p>
+    <div class="rb-card-foot">
+      <span class="rb-cols">{{ s.columns | length }} columns</span>
+      {% if s.params %}<span class="rb-cols">{{ s.params | length }} input{{ '' if s.params | length == 1 else 's' }}</span>{% endif %}
+      <span class="rb-author">{{ s.author }}</span>
+    </div>
+  </a>
+  {% else %}
+  <div class="card"><div class="empty">No scripts catalogued for this platform yet.</div></div>
+  {% endfor %}
+</div>
+
+{% if platform in ('dynatrace', 'nnmi') and not scripts %}
+<div class="notice rb-soon">
+  Nothing here yet — the catalogue starts with the Zabbix scripts. Adding a
+  {{ platform | capitalize }} one means writing a runner in
+  <code>app/runbook.py</code> and registering it in <code>SCRIPTS</code>.
+</div>
+{% endif %}
+{% endblock %}

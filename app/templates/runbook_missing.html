@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Runbook · SAMI'X{% endblock %}
+{% block page_title %}Runbook{% endblock %}
+{% block page_sub %}Script not found{% endblock %}
+
+{% block content %}
+<div class="rb-gate">
+  <div class="card rb-login">
+    <h3>No script called “{{ slug }}”</h3>
+    <p class="rb-gate-note">It may have been renamed or removed from the catalogue.</p>
+    <a class="btn btn-accent" href="/runbook">Back to the Runbook</a>
+  </div>
+</div>
+{% endblock %}

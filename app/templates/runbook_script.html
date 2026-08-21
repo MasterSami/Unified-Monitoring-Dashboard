@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}{{ script.title }} · Runbook · SAMI'X{% endblock %}
+{% block page_title %}{{ script.title }}{% endblock %}
+{% block page_sub %}{{ script.tagline }}{% endblock %}
+
+{% block content %}
+<div class="rb-crumb">
+  <a href="/runbook">Runbook</a> <span>/</span>
+  <a href="/runbook?platform={{ script.platform }}">{{ script.platform | capitalize }}</a>
+  <span>/</span> <b>{{ script.title }}</b>
+</div>
+
+<div class="rb-detail">
+  <!-- What it does ------------------------------------------------------- -->
+  <div class="card rb-doc">
+    <div class="rb-doc-head">
+      <span class="badge badge-{{ script.platform }}"><span class="dot"></span>{{ script.platform }}</span>
+      {% if script.read_only %}
+        <span class="pill rb-pill-read">read-only</span>
+      {% else %}
+        <span class="pill rb-pill-write">changes config</span>
+      {% endif %}
+      <span class="spacer"></span>
+      <span class="rb-author">Script by {{ script.author }}</span>
+    </div>
+
+    <div class="section-title">What it does</div>
+    {% for para in script.purpose %}
+    <p class="rb-para">{{ para }}</p>
+    {% endfor %}
+
+    <div class="section-title">Step by step</div>
+    <ol class="rb-steps">
+      {% for step in script.steps %}
+      <li>{{ step }}</li>
+      {% endfor %}
+    </ol>
+
+    <div class="section-title">What you get back</div>
+    <div class="rb-chips">
+      {% for c in script.columns %}<span class="rb-chip">{{ c }}</span>{% endfor %}
+    </div>
+
+    <div class="section-title">API calls it makes</div>
+    <div class="rb-chips">
+      {% for m in script.api_calls %}<span class="rb-chip rb-chip-api">{{ m }}</span>{% endfor %}
+    </div>
+
+    {% for note in script.notes %}
+    <div class="notice rb-note">{{ note }}</div>
+    {% endfor %}
+  </div>
+
+  <!-- Run panel ----------------------------------------------------------- -->
+  <div class="card rb-run">
+    <div class="section-title" style="margin-top:0">Run it</div>
+
+    {% if not script.read_only %}
+    <div class="notice rb-error">
+      This script changes the monitoring configuration, so it has no Run button
+      here. The Runbook only executes read-only reports.
+    </div>
+    {% elif not instances %}
+    <div class="notice">
+      No {{ script.platform | capitalize }} instance is configured. Add one to
+      <code>servers.yaml</code> and turn <code>MOCK_MODE</code> off.
+    </div>
+    {% else %}
+    <form
+      id="rb-form"
+      hx-post="/partials/runbook/run/{{ script.slug }}"
+      hx-target="#rb-results"
+      hx-swap="innerHTML"
+      hx-indicator="#rb-run-btn"
+    >
+      <label class="field">
+        <span class="field-lbl">Instance</span>
+        <select name="instance" class="select">
+          <option value="all" {{ 'selected' if instance == 'all' else '' }}>
+            All {{ script.platform | capitalize }} instances
+          </option>
+          {% for i in instances %}
+          <option value="{{ i.name }}" {{ 'selected' if instance == i.name else '' }}>
+            {{ i.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+
+      {% for p in script.params %}
+      <label class="field">
+        <span class="field-lbl">
+          {{ p.label }}{% if p.required %} <span class="rb-req">required</span>{% endif %}
+        </span>
+        {% if p.kind == 'textarea' %}
+        <textarea name="{{ p.name }}" rows="4" class="rb-textarea"
+          placeholder="{{ p.placeholder }}">{{ params.get(p.name, '') }}</textarea>
+        {% elif p.kind == 'datetime' %}
+        <input type="datetime-local" name="{{ p.name }}" class="dt-input"
+          value="{{ params.get(p.name, '') }}" />
+        {% else %}
+        <input type="text" name="{{ p.name }}" placeholder="{{ p.placeholder }}"
+          value="{{ params.get(p.name, '') }}" autocomplete="off" />
+        {% endif %}
+        {% if p.help %}<span class="rb-help">{{ p.help }}</span>{% endif %}
+      </label>
+      {% endfor %}
+
+      <button class="btn btn-accent rb-go" id="rb-run-btn" type="submit">
+        <span class="spin htmx-indicator" aria-hidden="true"></span>
+        Run script
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div id="rb-results" class="rb-results">
+  {% if script.read_only and instances %}
+  <div class="card"><div class="empty">Press <b>Run script</b> to fetch live results.</div></div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Prefill any datetime inputs to the last 24h (UTC) so the form is usable
+  // straight away instead of erroring on empty required fields.
+  (function () {
+    function p(n) { return String(n).padStart(2, "0"); }
+    function u(d) {
+      return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) +
+        "T" + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+    }
+    var now = new Date(), from = new Date(now.getTime() - 24 * 3600 * 1000);
+    var f = document.querySelector("[name=date_from]"), t = document.querySelector("[name=date_to]");
+    if (f && !f.value) f.value = u(from);
+    if (t && !t.value) t.value = u(now);
+  })();
+</script>
+{% endblock %}

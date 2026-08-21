@@ -54,16 +54,16 @@
   {% if enable_topology_export and instance %}
     {% if view == 'network' %}
     <a class="btn" href="/api/v1/topology/nnmi-l2.csv?instance={{ instance | urlencode }}"
-       title="Export L2 connections to CSV">⭳ Export CSV</a>
+       title="Export L2 connections to CSV">Export CSV</a>
     {% else %}
     <a class="btn" href="/api/v1/topology/dynatrace-map.xlsx?instance={{ instance | urlencode }}"
-       title="Export the unified map (3 sheets) to XLSX">⭳ Export XLSX</a>
+       title="Export the unified map (3 sheets) to XLSX">Export XLSX</a>
     {% endif %}
   {% endif %}
 
   <button class="btn" type="button" onclick="rebuildTopology(event)"
           title="Re-extract topology from all sources now">
-    <span class="htmx-indicator">⏳</span> ↻ Rebuild
+    <span class="spin htmx-indicator" aria-hidden="true"></span> Rebuild
   </button>
 </div>
 
@@ -73,7 +73,7 @@
     <span class="big">◉</span>
     No {{ meta.label | lower }} data yet.
     <div style="margin-top:10px; font-size:13px; color:var(--text-faint);">
-      Click <b>↻ Rebuild</b> to extract it from {{ meta.source }}
+      Click <b>Rebuild</b> to extract it from {{ meta.source }}
       {% if not enable_export %}{% endif %}
       (in MOCK_MODE this seeds a sample graph).
     </div>
@@ -231,7 +231,7 @@
     btn.disabled = true;
     fetch("/api/v1/topology/run", { method: "POST" })
       .then(function (r) {
-        if (window.toast) window.toast(r.ok ? "↻ Topology rebuilt" : "Rebuild failed", r.ok);
+        if (window.toast) window.toast(r.ok ? "Topology rebuilt" : "Rebuild failed", r.ok);
         if (r.ok) setTimeout(function () { location.reload(); }, 500);
         else { btn.classList.remove("htmx-request"); btn.disabled = false; }
       })
