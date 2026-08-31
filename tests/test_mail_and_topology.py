@@ -14,7 +14,6 @@ def _mail(**over):
 
     kwargs = dict(
         instance="Zabbix-66",
-        relay="10.19.42.5:25",
         sender="zabbix@corp.com",
         recipient="ahmed@corp.com",
         sent_at=SENT,
@@ -61,17 +60,17 @@ def test_both_parts_carry_the_same_facts():
     html = _part(msg, "html").get_content()
     for body in (text, html):
         assert "Zabbix-66" in body
-        assert "10.19.42.5:25" in body
         assert "2026-08-21 14:32 UTC" in body
         assert "SAMI'X" in body
-    assert "Email alerting is working" in text
-    assert "Email alerting is working" in html
+        assert "Email alerting is working" in body
+        assert "Mail is working good" in body
+        assert "No action is needed" in body
 
 
-def test_signature_explains_why_the_mail_arrived():
-    """A test mail nobody asked for is alarming; say who triggered it."""
+def test_signature_names_the_tool_and_closes_the_loop():
+    """The reader must know what sent this and that nothing is expected of them."""
     text = _part(_mail(), "plain").get_content()
-    assert "Send test mail" in text
+    assert "SAMI'X \u00b7 Unified Monitoring Dashboard" in text
     assert "No action is needed" in text
 
 
@@ -202,8 +201,7 @@ def test_collector_sends_the_branded_message(monkeypatch):
     msg = sent["msg"]
     assert msg.get_content_type() == "multipart/alternative"
     assert msg["Subject"] == "[SAMI'X] Test mail from Zabbix-66"
-    # The relay it actually connected to is the relay it reports.
-    assert "10.19.42.5:25" in _part(msg, "plain").get_content()
+    assert "Zabbix-66" in _part(msg, "plain").get_content()
     assert sent.get("quit") is True
 
 

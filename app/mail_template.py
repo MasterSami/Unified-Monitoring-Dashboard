@@ -82,7 +82,7 @@ def _fmt(sent_at: datetime) -> str:
     return sent_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def _html(instance: str, relay: str, stamp: str, has_logo: bool) -> str:
+def _html(instance: str, stamp: str, has_logo: bool) -> str:
     """The memo: wordmark, one clear statement, the facts, a signature."""
     return f"""\
 <!doctype html>
@@ -128,15 +128,15 @@ def _html(instance: str, relay: str, stamp: str, has_logo: bool) -> str:
       <td style="padding:14px 40px 0 40px;font-family:{_FONT};font-size:15px;
         line-height:1.65;color:{_MUTED};">
         This test mail was sent through <span style="color:{_INK};font-weight:600;"
-        >{instance}</span> and reached you, so the relay is configured correctly
-        and alert mail from this instance will arrive the same way.
+        >{instance}</span> and reached you.<br>
+        Mail is working good.
       </td>
     </tr>
 
     <tr>
       <td style="padding:20px 40px 0 40px;font-family:{_FONT};font-size:13px;
         line-height:1.7;color:{_FAINT};">
-        Relay {relay} &nbsp;·&nbsp; {stamp}
+        Sent {stamp}
       </td>
     </tr>
 
@@ -154,8 +154,6 @@ def _html(instance: str, relay: str, stamp: str, has_logo: bool) -> str:
         line-height:1.7;color:{_FAINT};">
         <span style="color:{_ACCENT};font-weight:600;">{BRAND}</span>
         &nbsp;·&nbsp; Unified Monitoring Dashboard<br>
-        You received this because someone pressed
-        <span style="color:{_MUTED};">Send test mail</span> in {BRAND}.
         No action is needed.
       </td>
     </tr>
@@ -170,22 +168,20 @@ def _html(instance: str, relay: str, stamp: str, has_logo: bool) -> str:
 </html>"""
 
 
-def _text(instance: str, relay: str, stamp: str) -> str:
+def _text(instance: str, stamp: str) -> str:
     """Plain-text alternative — the same memo, same order."""
     return f"""\
 {BRAND}
 
 Email alerting is working.
 
-This test mail was sent through {instance} and reached you, so the relay is
-configured correctly and alert mail from this instance will arrive the same way.
+This test mail was sent through {instance} and reached you.
+Mail is working good.
 
-Relay: {relay}
 Sent:  {stamp}
 
 --
 {BRAND_LONG}
-You received this because someone pressed "Send test mail" in {BRAND}.
 No action is needed.
 """
 
@@ -193,7 +189,6 @@ No action is needed.
 def build_test_mail(
     *,
     instance: str,
-    relay: str,
     sender: str,
     recipient: str,
     sent_at: datetime | None = None,
@@ -216,8 +211,8 @@ def build_test_mail(
     # responders do not reply to it.
     msg["Auto-Submitted"] = "auto-generated"
 
-    msg.set_content(_text(instance, relay, stamp))
-    msg.add_alternative(_html(instance, relay, stamp, logo is not None), subtype="html")
+    msg.set_content(_text(instance, stamp))
+    msg.add_alternative(_html(instance, stamp, logo is not None), subtype="html")
 
     if logo is not None:
         # payload[1] is the HTML part just added; attaching here (not to the

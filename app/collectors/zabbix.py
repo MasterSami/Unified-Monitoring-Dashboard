@@ -619,7 +619,6 @@ class ZabbixCollector(BaseCollector):
 
         msg = build_test_mail(
             instance=self.instance,
-            relay=f"{server}:{port}",
             sender=sender,
             recipient=sendto,
         )
