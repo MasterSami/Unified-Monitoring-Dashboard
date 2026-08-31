@@ -1090,7 +1090,11 @@ def topology_page(
     request: Request,
     view: str = "network",
     instance: str | None = None,
-    mode: str = "graph",
+    # Table first, deliberately. The graph renders every node and edge through
+    # Cytoscape's force layout, which pins a CPU core for as long as it takes to
+    # settle — on a large NNMi map that hangs a laptop. The table shows the same
+    # data instantly; the graph is one click away for anyone who wants it.
+    mode: str = "table",
     sub: str = "unified",
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
@@ -1112,7 +1116,7 @@ def topology_page(
     if view not in _TOPO_VIEWS:
         view = "network"
     if mode not in ("graph", "table"):
-        mode = "graph"
+        mode = "table"
     if sub not in ("unified", "app", "service"):
         sub = "unified"
     meta = _TOPO_VIEWS[view]

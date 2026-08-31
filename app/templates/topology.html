@@ -44,11 +44,14 @@
   </label>
   {% endif %}
 
+  <!-- Table first: it is the default because the graph's force layout can hang
+       a laptop on a large map. -->
   <div class="seg seg-sm">
-    <a class="seg-item {{ 'active' if mode == 'graph' else '' }}"
-       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=graph">◈ Graph</a>
     <a class="seg-item {{ 'active' if mode == 'table' else '' }}"
        href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=table&sub={{ sub }}">▤ Table</a>
+    <a class="seg-item {{ 'active' if mode == 'graph' else '' }}"
+       href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=graph"
+       title="Interactive graph — heavy on large maps">◈ Graph</a>
   </div>
 
   {% if enable_topology_export and instance %}

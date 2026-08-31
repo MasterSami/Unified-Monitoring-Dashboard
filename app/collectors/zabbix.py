@@ -14,7 +14,6 @@ from __future__ import annotations
 import smtplib
 import ssl
 from datetime import datetime, timezone
-from email.mime.text import MIMEText
 from urllib.parse import urlparse
 
 import httpx
@@ -22,6 +21,7 @@ import httpx
 from app.collectors import mock_data
 from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
+from app.mail_template import build_test_mail
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_zabbix_severity, zabbix_severity_label
 from app.owners import resolve_owner
@@ -617,15 +617,12 @@ class ZabbixCollector(BaseCollector):
         username = mt.get("username", "")
         password = mt.get("passwd", "")  # usually not returned by the API
 
-        msg = MIMEText(
-            f"Test email from the Unified Monitoring Dashboard via {self.instance}.\n"
-            f"If you received this, email alerting through this relay works.",
-            "plain",
-            "utf-8",
+        msg = build_test_mail(
+            instance=self.instance,
+            relay=f"{server}:{port}",
+            sender=sender,
+            recipient=sendto,
         )
-        msg["Subject"] = f"[{self.instance}] Unified Monitoring test mail"
-        msg["From"] = sender
-        msg["To"] = sendto
 
         try:
             ctx = ssl._create_unverified_context()
@@ -637,7 +634,7 @@ class ZabbixCollector(BaseCollector):
                     smtp.starttls(context=ctx)
             if auth == "1" and username:
                 smtp.login(username, password)
-            smtp.sendmail(sender, [sendto], msg.as_string())
+            smtp.send_message(msg)
             smtp.quit()
             return {
                 "ok": True,
