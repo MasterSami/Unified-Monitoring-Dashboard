@@ -590,6 +590,14 @@ a {
 .bar-fill.down {
   background: var(--down);
 }
+/* Neither healthy nor failed: not reporting, and switched off on purpose.
+   Both used to be painted with the "up" green. */
+.bar-fill.unknown {
+  background: var(--unknown);
+}
+.bar-fill.disabled {
+  background: var(--disabled);
+}
 
 /* --- Badges & pills ------------------------------------------------------- */
 

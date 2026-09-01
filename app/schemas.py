@@ -69,16 +69,23 @@ class SeverityBucket(BaseModel):
 
 
 class PlatformHostCount(BaseModel):
-    """Host counts for a single platform.
+    """Host counts for a single platform, split by status.
 
     ``total`` is what the platform actually monitors; ``discovered`` is
     everything it knows about. The two differ only for Dynatrace, whose entity
     API also returns hosts seen as network peers with no OneAgent installed.
+
+    The status fields sum to ``total``. They are carried separately because
+    deriving "up" as ``total - down`` counts every ``unknown`` and ``disabled``
+    host as healthy — which on a real estate is most of the difference.
     """
 
     platform: str
     total: int
     down: int
+    up: int = 0
+    unknown: int = 0
+    disabled: int = 0
     discovered: int = 0
 
 

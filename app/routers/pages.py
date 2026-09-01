@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import Select, distinct, func, select
+from sqlalchemy import Select, distinct, func, or_, select
 from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
@@ -194,15 +194,32 @@ def _device_key():
     return func.coalesce(func.nullif(Host.ip, ""), func.lower(Host.hostname))
 
 
+def _monitored_only():
+    """Rows that represent a host something is actually monitoring.
+
+    Dynatrace also returns hosts it merely discovered as network peers, with no
+    OneAgent on them. They are not monitored, so they must be excluded here for
+    the same reason they are excluded from the per-platform bars — otherwise the
+    headline tile and the platform card answer different questions and stop
+    reconciling.
+    """
+    return or_(
+        Host.source_platform != SourcePlatform.dynatrace,
+        Host.agent_deployed.is_(True),
+    )
+
+
 def _distinct_active_hosts(db: Session) -> int:
-    """How many DISTINCT devices are currently up, counted once across tools.
+    """How many DISTINCT devices are up and monitored, counted once across tools.
 
     A server watched by both Zabbix and Dynatrace is one server. Summing the
     per-tool totals double-counts every one of them, which is what made the
     headline figure so much larger than the estate actually is.
     """
     return db.scalar(
-        select(func.count(distinct(_device_key()))).where(Host.status == HostStatus.up)
+        select(func.count(distinct(_device_key()))).where(
+            Host.status == HostStatus.up, _monitored_only()
+        )
     ) or 0
 
 
@@ -267,8 +284,7 @@ def _per_platform(rows: list[tuple]) -> list[PlatformHostCount]:
     hosts with an agent are counted here. Every other platform reports what it
     monitors, so their totals are unchanged.
     """
-    totals: dict[str, int] = {}
-    downs: dict[str, int] = {}
+    by_status: dict[str, dict[str, int]] = {}
     discovered: dict[str, int] = {}
     for _instance, platform, status, agent, count in rows:
         key = _enum_value(platform)
@@ -276,14 +292,17 @@ def _per_platform(rows: list[tuple]) -> list[PlatformHostCount]:
         discovered[key] = discovered.get(key, 0) + n
         if key == "dynatrace" and agent is not True:
             continue  # discovered, but no OneAgent — not a monitored host
-        totals[key] = totals.get(key, 0) + n
-        if _enum_value(status) == HostStatus.down.value:
-            downs[key] = downs.get(key, 0) + n
+        bucket = by_status.setdefault(key, {})
+        state = _enum_value(status)
+        bucket[state] = bucket.get(state, 0) + n
     return [
         PlatformHostCount(
             platform=p,
-            total=totals.get(p, 0),
-            down=downs.get(p, 0),
+            total=sum(by_status.get(p, {}).values()),
+            up=by_status.get(p, {}).get("up", 0),
+            down=by_status.get(p, {}).get("down", 0),
+            unknown=by_status.get(p, {}).get("unknown", 0),
+            disabled=by_status.get(p, {}).get("disabled", 0),
             discovered=discovered.get(p, 0),
         )
         for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
@@ -511,13 +530,18 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     per_platform = _per_platform(rows)
     agent_stats = _agent_stats(rows)
     max_total = max((p.total for p in per_platform), default=0) or 1
+    # The same population the headline tile counts, but WITHOUT deduplication.
+    # Showing both makes the gap between them read as duplicates rather than as
+    # two numbers that disagree.
+    active_rows = sum(p.up for p in per_platform)
     total_hosts = sum(status_counts.values())
     active_alerts = sum(b.count for b in buckets)
     return {
         "total_hosts": total_hosts,
-        # The headline tile: distinct devices that are up, counted once even
-        # when several tools watch the same server.
+        # The headline tile: distinct devices that are up and monitored, counted
+        # once even when several tools watch the same server.
         "active_hosts": _distinct_active_hosts(db),
+        "active_rows": active_rows,
         "status_counts": status_counts,
         "hosts_up": status_counts["up"],
         "hosts_down": status_counts["down"],

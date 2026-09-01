@@ -109,16 +109,19 @@ def _ctx(estate):
 
 
 def test_active_servers_counts_each_device_once(estate):
-    """web-01 and db-01 are each watched by two tools but are one server each."""
+    """web-01 and db-01 are each watched by two tools but are one server each.
+
+    Five host rows are up and monitored (three Zabbix + two Dynatrace), but two
+    of them are the same servers seen twice, so three devices remain:
+    10.70.0.1, .2 and .3. Not .4 (down), and not .9/.10 (up, but no OneAgent).
+    """
     from app.routers.pages import _distinct_active_hosts
 
     db = estate()
     try:
-        assert _distinct_active_hosts(db) == 5
+        assert _distinct_active_hosts(db) == 3
     finally:
         db.close()
-    # 10.70.0.1, .2, .3 (up, some duplicated), .9, .10 (up, no agent)
-    # NOT .4 — it is down.
 
 
 def test_active_servers_is_smaller_than_the_naive_sum(estate):
@@ -126,6 +129,71 @@ def test_active_servers_is_smaller_than_the_naive_sum(estate):
     ctx = _ctx(estate)
     naive = sum(p.total for p in ctx["per_platform"])
     assert ctx["active_hosts"] < naive
+
+
+def test_tile_and_platform_card_reconcile(estate):
+    """The headline and the per-platform bars must count the same population.
+
+    They differ only by deduplication: the tile counts devices, the bars count
+    host records. Anything else means the two cards are answering different
+    questions, which is how a 4,962 headline ended up beside a 13,379 bar.
+    """
+    ctx = _ctx(estate)
+    assert ctx["active_rows"] == sum(p.up for p in ctx["per_platform"])
+    # Same population, so unique can never exceed the record count...
+    assert ctx["active_hosts"] <= ctx["active_rows"]
+    # ...and here it is strictly smaller, because two servers are seen twice.
+    assert ctx["active_hosts"] == ctx["active_rows"] - 2
+
+
+def test_platform_status_counts_sum_to_total(estate):
+    """up + down + unknown + disabled == total, for every platform."""
+    ctx = _ctx(estate)
+    for p in ctx["per_platform"]:
+        assert p.up + p.down + p.unknown + p.disabled == p.total, p.platform
+
+
+def test_up_is_not_derived_from_total_minus_down(estate):
+    """`total - down` counts unknown and disabled hosts as healthy."""
+    db = estate()
+    try:
+        db.add(Host(
+            external_id="kpi-unk", source_platform=SourcePlatform.zabbix,
+            source_instance="KPI-ZBX", hostname="ghost-01", ip="10.70.0.50",
+            status=HostStatus.unknown, last_seen=NOW,
+        ))
+        db.add(Host(
+            external_id="kpi-dis", source_platform=SourcePlatform.zabbix,
+            source_instance="KPI-ZBX", hostname="off-01", ip="10.70.0.51",
+            status=HostStatus.disabled, last_seen=NOW,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    zbx = next(p for p in _ctx(estate)["per_platform"] if p.platform == "zabbix")
+    assert zbx.unknown == 1 and zbx.disabled == 1
+    # The old derivation would have reported these two as up.
+    assert zbx.up == zbx.total - zbx.down - zbx.unknown - zbx.disabled
+    assert zbx.up != zbx.total - zbx.down
+
+
+def test_unmonitored_dynatrace_hosts_are_excluded_from_the_headline(estate):
+    """peer-01/peer-02 are up but have no OneAgent — not 'active servers'."""
+    from app.routers.pages import _distinct_active_hosts
+
+    db = estate()
+    try:
+        active = _distinct_active_hosts(db)
+        from sqlalchemy import select
+        peers = set(db.scalars(
+            select(Host.ip).where(Host.agent_deployed.is_(False))
+        ).all())
+    finally:
+        db.close()
+    assert peers == {"10.70.0.9", "10.70.0.10"}
+    # 10.70.0.1, .2, .3 only — the two agent-less peers do not count.
+    assert active == 3
 
 
 def test_down_hosts_are_not_active(estate):
