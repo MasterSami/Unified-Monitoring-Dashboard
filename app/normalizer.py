@@ -218,6 +218,10 @@ def upsert_hosts(
             row.owner = item.get("owner")
         if item.get("owner_email") is not None:
             row.owner_email = item.get("owner_email")
+        # Only Dynatrace reports this; leaving it untouched elsewhere keeps the
+        # column NULL for platforms where the distinction does not exist.
+        if "agent_deployed" in item:
+            row.agent_deployed = item.get("agent_deployed")
         row.last_seen = item.get("last_seen") or now
         # Capacity metrics: only overwrite when this run provided them, so a
         # collector that doesn't emit metrics never wipes previously-known ones.

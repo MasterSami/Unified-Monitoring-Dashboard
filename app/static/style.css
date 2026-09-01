@@ -475,6 +475,68 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Native severity breakdown (per tool, per tool's own labels) ---------- */
+
+.sev-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.sev-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.sev-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+.sev-group-total {
+  font-size: 12.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.sev-row {
+  display: grid;
+  grid-template-columns: 10px minmax(78px, auto) 1fr auto;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+}
+.sev-row .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.sev-name {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.sev-bar {
+  height: 7px;
+  border-radius: 5px;
+  background: var(--surface-3, var(--surface-2));
+  overflow: hidden;
+}
+.sev-fill {
+  display: block;
+  height: 100%;
+  border-radius: 5px;
+  min-width: 2px;
+}
+.sev-count {
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
+}
+
 /* --- Platform bars -------------------------------------------------------- */
 
 .bars {
@@ -503,6 +565,13 @@ a {
   font-weight: 600;
   margin-left: 8px;
   font-size: 11.5px;
+}
+/* "of N discovered" — the hosts a platform can see but does not monitor. */
+.bar-top .bt-count .bt-extra {
+  color: var(--text-faint);
+  font-weight: 500;
+  margin-left: 6px;
+  font-size: 11px;
 }
 .bar-track {
   height: 9px;

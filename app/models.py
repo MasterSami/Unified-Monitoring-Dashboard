@@ -87,6 +87,14 @@ class Host(Base):
     #: Responsible person/team for this server, and their email (for Escalate).
     owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     owner_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Is a monitoring agent actually deployed on this host?
+    #:
+    #: Dynatrace's entity API returns every host it has *discovered*, including
+    #: ones seen only as a network peer with no OneAgent on them. Counting those
+    #: as monitored inflates the estate — the number an operator recognises is
+    #: the one on Dynatrace's own OneAgent deployment page. ``None`` means the
+    #: platform does not draw this distinction (Zabbix, NNMi).
+    agent_deployed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_seen: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

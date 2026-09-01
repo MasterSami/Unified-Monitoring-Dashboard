@@ -6,11 +6,15 @@
 <div class="grid cols-4">
   <div class="card stat accent">
     <div class="stat-top">
-      <span class="label">Total Hosts</span>
+      <span class="label">Active Servers</span>
       <span class="stat-ico">▣</span>
     </div>
-    <span class="value">{{ total_hosts }}</span>
-    <span class="meta">{{ status_counts.up }} active · {{ shared_count }} shared</span>
+    {# Distinct devices that are up. A server watched by two tools is one
+       server here — summing the per-tool totals double-counted the estate. #}
+    <span class="value">{{ active_hosts }}</span>
+    <span class="meta" title="Counted once per device, even when several tools monitor it">
+      unique devices · duplicates removed
+    </span>
   </div>
   <div class="card stat danger">
     <div class="stat-top">
@@ -18,7 +22,10 @@
       <span class="stat-ico">●</span>
     </div>
     <span class="value">{{ critical_alerts }}</span>
-    <span class="meta">highest severity · needs action now</span>
+    <span class="meta">
+      {% if critical_labels %}{{ critical_labels | map('capitalize') | join(' · ') }}
+      {%- else %}highest severity{% endif %} only
+    </span>
   </div>
   <div class="card stat warn">
     <div class="stat-top">
@@ -38,7 +45,11 @@
   </div>
 </div>
 
-<!-- Hosts by status -->
+{# Hosts by status — hidden by default, controlled by SHOW_HOST_STATUS_ROW in
+   .env. It repeats what Agent Health already shows, and the large "unknown" and
+   "disabled" counts read as failures to anyone who does not know both are
+   normal states. Set SHOW_HOST_STATUS_ROW=true to bring this strip back. #}
+{% if show_host_status_row %}
 <div class="section-title">Hosts by status</div>
 <div class="status-row">
   <div class="status-counter" style="--sc: var(--up)">
@@ -58,36 +69,47 @@
     <span class="lbl"><span class="d"></span>Disabled</span>
   </div>
 </div>
+{% endif %}
 
 <!-- Charts row -->
 <div class="grid cols-2" style="margin-top: 16px;">
+  {# Each tool's OWN severity names, not the unified 1-5 scale. "Disaster",
+     "Availability" and "Major" mean different things and collapsing them into
+     one bucket hid which tool was actually raising what. #}
   <div class="card">
     <div class="card-head">
       <h3>Active Alerts by Severity</h3>
-      <span class="hint">{{ active_alerts }} total</span>
+      <span class="hint">{{ active_alerts }} total · each tool's own labels</span>
     </div>
-    <div class="donut-wrap">
-      <div class="donut" style="background: conic-gradient({{ donut_gradient }});">
-        <div class="donut-center">
-          <div class="big">{{ active_alerts }}</div>
-          <div class="cap">alerts</div>
+    <div class="sev-groups">
+      {% for g in severity_by_platform %}
+      <div class="sev-group">
+        <div class="sev-group-head">
+          <span class="badge badge-{{ g.platform }}"><span class="dot"></span>{{ g.platform }}</span>
+          <span class="sev-group-total">{{ g.total }}</span>
         </div>
-      </div>
-      <div class="legend">
-        {% for b in severity_buckets %}
-        <div class="legend-row">
-          <span class="swatch" style="background: var(--sev{{ b.severity_int }})"></span>
-          <span class="lg-label">{{ sev_names[b.severity_int] }}</span>
-          <span class="lg-val">{{ b.count }}</span>
+        {% set gmax = g.levels | map(attribute='count') | max %}
+        {% for lv in g.levels %}
+        <div class="sev-row">
+          <span class="swatch" style="background: var(--sev{{ lv.severity_int }})"></span>
+          <span class="sev-name">{{ lv.label }}</span>
+          <span class="sev-bar">
+            <span class="sev-fill" style="width: {{ (lv.count / gmax * 100) if gmax else 0 }}%;
+              background: var(--sev{{ lv.severity_int }})"></span>
+          </span>
+          <span class="sev-count">{{ lv.count }}</span>
         </div>
         {% endfor %}
       </div>
+      {% else %}
+      <div class="empty">No active alerts on any platform.</div>
+      {% endfor %}
     </div>
   </div>
 
   <div class="card">
     <div class="card-head">
-      <h3>Hosts by Platform</h3>
+      <h3>Monitored Hosts by Platform</h3>
       <span class="hint">up / down</span>
     </div>
     <div class="bars">
@@ -95,7 +117,17 @@
       <div class="bar-row">
         <div class="bar-top">
           <span class="badge badge-{{ p.platform }}"><span class="dot"></span>{{ p.platform }}</span>
-          <span class="bt-count">{{ p.total }}{% if p.down %}<span class="dn">{{ p.down }} down</span>{% endif %}</span>
+          <span class="bt-count">
+            {{ p.total }}
+            {%- if p.discovered > p.total %}
+            {# Dynatrace discovers hosts it has no OneAgent on; this is the gap
+               between what it can see and what it actually monitors. #}
+            <span class="bt-extra" title="{{ p.discovered - p.total }} discovered without a OneAgent">
+              of {{ p.discovered }} discovered
+            </span>
+            {%- endif %}
+            {%- if p.down %}<span class="dn">{{ p.down }} down</span>{% endif %}
+          </span>
         </div>
         <div class="bar-track">
           {% set up = p.total - p.down %}

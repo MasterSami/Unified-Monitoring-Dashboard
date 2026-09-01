@@ -161,20 +161,26 @@ def _severity_buckets(db: Session) -> list[SeverityBucket]:
 
 
 def _host_rollup(db: Session) -> list[tuple]:
-    """``(instance, platform, status, count)`` for every host, in ONE query.
+    """``(instance, platform, status, agent_deployed, count)`` in ONE query.
 
-    The Overview needs the same numbers sliced four ways — per instance, per
-    platform, per status, and in total. They all come out of this single
-    GROUP BY, so the page no longer issues five separate aggregate queries (and
-    three full table scans) on every 60s refresh.
+    The Overview needs the same numbers sliced several ways — per instance, per
+    platform, per status, and in total. They all come out of this single GROUP
+    BY, so the page no longer issues five separate aggregate queries (and three
+    full table scans) on every 60s refresh.
     """
     return db.execute(
         select(
             Host.source_instance,
             Host.source_platform,
             Host.status,
+            Host.agent_deployed,
             func.count(Host.id),
-        ).group_by(Host.source_instance, Host.source_platform, Host.status)
+        ).group_by(
+            Host.source_instance,
+            Host.source_platform,
+            Host.status,
+            Host.agent_deployed,
+        )
     ).all()
 
 
@@ -182,18 +188,103 @@ def _enum_value(value: object) -> str:
     return getattr(value, "value", str(value))
 
 
+#: Identity of a physical device across tools: its IP, or its name when the tool
+#: recorded no IP. Used to count the estate once rather than once per tool.
+def _device_key():
+    return func.coalesce(func.nullif(Host.ip, ""), func.lower(Host.hostname))
+
+
+def _distinct_active_hosts(db: Session) -> int:
+    """How many DISTINCT devices are currently up, counted once across tools.
+
+    A server watched by both Zabbix and Dynatrace is one server. Summing the
+    per-tool totals double-counts every one of them, which is what made the
+    headline figure so much larger than the estate actually is.
+    """
+    return db.scalar(
+        select(func.count(distinct(_device_key()))).where(Host.status == HostStatus.up)
+    ) or 0
+
+
+def _critical_alert_count(db: Session, settings: Settings) -> int:
+    """Active alerts each tool itself calls most severe (Disaster / Critical).
+
+    Counting the unified 1-5 scale pulled in every platform's top tier at once,
+    which produced a number nobody could act on. Matching each tool's own label
+    keeps the tile to what a person would recognise as critical.
+    """
+    labels = settings.critical_alert_label_set
+    stmt = select(func.count(Alert.id)).where(Alert.resolved.is_(False))
+    if labels:
+        stmt = stmt.where(func.lower(Alert.severity_label).in_(labels))
+    else:  # no labels configured -> fall back to the unified top severity
+        stmt = stmt.where(Alert.severity_int == 5)
+    return db.scalar(stmt) or 0
+
+
+def _native_severity_breakdown(db: Session) -> list[dict]:
+    """Active alerts grouped by platform and by each tool's OWN severity label.
+
+    The unified 1-5 scale is right for sorting one mixed list, but it hides what
+    each tool actually said: 'Disaster', 'Availability' and 'Major' all collapse
+    into the same bucket. This returns them as the tools name them, one group
+    per platform, most severe first.
+    """
+    rows = db.execute(
+        select(
+            Alert.source_platform,
+            Alert.severity_label,
+            Alert.severity_int,
+            func.count(Alert.id),
+        )
+        .where(Alert.resolved.is_(False))
+        .group_by(Alert.source_platform, Alert.severity_label, Alert.severity_int)
+    ).all()
+
+    grouped: dict[str, dict] = {}
+    for platform, label, sev, count in rows:
+        key = _enum_value(platform)
+        entry = grouped.setdefault(key, {"platform": key, "total": 0, "levels": []})
+        entry["total"] += int(count)
+        entry["levels"].append(
+            {
+                "label": label or severity_label(int(sev or 1)),
+                "severity_int": int(sev or 1),
+                "count": int(count),
+            }
+        )
+    for entry in grouped.values():
+        entry["levels"].sort(key=lambda lv: (-lv["severity_int"], lv["label"]))
+    return sorted(grouped.values(), key=lambda e: -e["total"])
+
+
 def _per_platform(rows: list[tuple]) -> list[PlatformHostCount]:
-    """Hosts per platform (total + down), rolled up from :func:`_host_rollup`."""
+    """Hosts per platform (total + down), rolled up from :func:`_host_rollup`.
+
+    Dynatrace is counted differently on purpose: its entity API returns every
+    host it has *discovered*, including ones with no OneAgent on them, so a raw
+    count does not match the figure on Dynatrace's own deployment page. Only
+    hosts with an agent are counted here. Every other platform reports what it
+    monitors, so their totals are unchanged.
+    """
     totals: dict[str, int] = {}
     downs: dict[str, int] = {}
-    for _instance, platform, status, count in rows:
+    discovered: dict[str, int] = {}
+    for _instance, platform, status, agent, count in rows:
         key = _enum_value(platform)
-        totals[key] = totals.get(key, 0) + int(count)
+        n = int(count)
+        discovered[key] = discovered.get(key, 0) + n
+        if key == "dynatrace" and agent is not True:
+            continue  # discovered, but no OneAgent — not a monitored host
+        totals[key] = totals.get(key, 0) + n
         if _enum_value(status) == HostStatus.down.value:
-            downs[key] = downs.get(key, 0) + int(count)
+            downs[key] = downs.get(key, 0) + n
     return [
         PlatformHostCount(
-            platform=p, total=totals.get(p, 0), down=downs.get(p, 0)
+            platform=p,
+            total=totals.get(p, 0),
+            down=downs.get(p, 0),
+            discovered=discovered.get(p, 0),
         )
         for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
     ]
@@ -208,7 +299,7 @@ def _agent_stats(rows: list[tuple]) -> list[dict]:
     Returns one dict per instance, most-problematic first.
     """
     agg: dict[str, dict] = {}
-    for instance, platform, status, count in rows:
+    for instance, platform, status, _agent, count in rows:
         entry = agg.setdefault(
             instance or "—",
             {
@@ -301,7 +392,7 @@ def _donut_gradient(buckets: list[SeverityBucket]) -> str:
 def _host_status_counts(rows: list[tuple]) -> dict[str, int]:
     """Host counts keyed by normalized status, from :func:`_host_rollup`."""
     counts: dict[str, int] = {}
-    for _instance, _platform, status, count in rows:
+    for _instance, _platform, status, _agent, count in rows:
         key = _enum_value(status)
         counts[key] = counts.get(key, 0) + int(count)
     return {
@@ -422,14 +513,19 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     max_total = max((p.total for p in per_platform), default=0) or 1
     total_hosts = sum(status_counts.values())
     active_alerts = sum(b.count for b in buckets)
-    critical_alerts = next((b.count for b in buckets if b.severity_int == 5), 0)
     return {
         "total_hosts": total_hosts,
+        # The headline tile: distinct devices that are up, counted once even
+        # when several tools watch the same server.
+        "active_hosts": _distinct_active_hosts(db),
         "status_counts": status_counts,
         "hosts_up": status_counts["up"],
         "hosts_down": status_counts["down"],
         "active_alerts": active_alerts,
-        "critical_alerts": critical_alerts,
+        "critical_alerts": _critical_alert_count(db, settings),
+        "critical_labels": sorted(settings.critical_alert_label_set),
+        "severity_by_platform": _native_severity_breakdown(db),
+        "show_host_status_row": settings.show_host_status_row,
         "per_platform": per_platform,
         "platform_max": max_total,
         "severity_buckets": buckets,

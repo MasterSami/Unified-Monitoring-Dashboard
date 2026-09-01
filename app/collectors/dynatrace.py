@@ -23,6 +23,31 @@ _PROBLEMS_UNAVAILABLE = "unavailable — token lacks problems.read scope"
 _GB = 1024**3
 
 
+#: Monitoring modes that mean a OneAgent is installed and reporting. Dynatrace
+#: also returns hosts in DISCOVERY mode (seen only as a network peer of a
+#: monitored host) and with monitoring OFF — those have no agent on them.
+_AGENT_MODES = {"FULL_STACK", "INFRASTRUCTURE", "CLOUD_INFRASTRUCTURE"}
+
+
+def _has_oneagent(props: dict) -> bool:
+    """True when this host actually has a OneAgent deployed on it.
+
+    The entity API returns the whole discovered estate, so a plain host count is
+    much larger than the figure on Dynatrace's own OneAgent deployment page —
+    which is the number people recognise. Two independent signals agree on that
+    figure: an explicit monitoring mode, and the presence of an agent version.
+    """
+    mode = str(props.get("monitoringMode") or "").upper()
+    if mode:
+        return mode in _AGENT_MODES
+    # Older tenants omit monitoringMode; an agentVersion only exists once an
+    # agent has reported in.
+    version = props.get("agentVersion")
+    if isinstance(version, dict):
+        return bool(version.get("major") or version.get("minor"))
+    return bool(version)
+
+
 def _host_group(props: dict, tags: list | None) -> str | None:
     """Best real host-group name for a Dynatrace HOST entity, or None.
 
@@ -105,6 +130,7 @@ class DynatraceCollector(BaseCollector):
                         {
                             "external_id": e.get("entityId"),
                             "hostname": e.get("displayName"),
+                            "agent_deployed": _has_oneagent(props),
                             "ip": (props.get("ipAddress") or [None])[0]
                             if isinstance(props.get("ipAddress"), list)
                             else props.get("ipAddress"),

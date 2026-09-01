@@ -92,6 +92,7 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "metrics": "JSON",
         "owner": "VARCHAR(255)",
         "owner_email": "VARCHAR(255)",
+        "agent_deployed": "BOOLEAN",
     },
     "alerts": {
         "state": "VARCHAR(64)",

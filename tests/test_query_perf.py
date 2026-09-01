@@ -78,20 +78,22 @@ def test_overview_context_issues_a_bounded_number_of_queries(seeded):
     finally:
         db.close()
 
-    # Total hosts, per-status, per-platform and per-instance all come out of a
-    # single GROUP BY; previously each was its own aggregate query.
+    # Per-status, per-platform and per-instance all come out of a single GROUP
+    # BY; previously each was its own aggregate query. Three host aggregates
+    # remain and each answers a question the rollup cannot: the rollup itself,
+    # the distinct-device count (needs COUNT DISTINCT over a coalesced key), and
+    # the shared-device count (needs its own HAVING).
     host_aggregates = [s for s in sql if "count(" in s.lower() and " hosts" in s.lower()]
-    assert len(host_aggregates) <= 2, host_aggregates
-    assert len(sql) <= 8, sql
+    assert len(host_aggregates) <= 3, host_aggregates
+    assert len(sql) <= 10, sql
 
     # And the derived numbers still agree with each other.
     assert ctx["total_hosts"] == sum(ctx["status_counts"].values())
     assert ctx["hosts_down"] == ctx["status_counts"]["down"]
     assert ctx["active_alerts"] == sum(b.count for b in ctx["severity_buckets"])
-    assert ctx["critical_alerts"] == next(
-        b.count for b in ctx["severity_buckets"] if b.severity_int == 5
-    )
-    assert ctx["total_hosts"] == sum(p.total for p in ctx["per_platform"])
+    # The native breakdown must account for exactly the same alerts as the
+    # unified buckets — a mismatch would mean one view is dropping rows.
+    assert ctx["active_alerts"] == sum(g["total"] for g in ctx["severity_by_platform"])
 
 
 def test_overview_rollup_matches_direct_counts(seeded):

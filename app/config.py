@@ -41,6 +41,29 @@ class Settings(BaseSettings):
     # Rows per page in the hosts / alerts tables.
     page_size: int = 300
 
+    # --- Overview presentation ----------------------------------------------
+    # The "Hosts by status" strip on the Overview. Hidden by default: it repeats
+    # numbers the Agent Health section already carries, and the large "unknown"
+    # and "disabled" counts read as failures to anyone who does not know that
+    # both are normal states. Set to true to bring it back.
+    show_host_status_row: bool = False
+
+    # Which alerts the "Critical Alerts" tile counts, matched against each
+    # tool's OWN severity label (case-insensitive, comma-separated). Counting
+    # the unified 1-5 scale swept in every platform's top tier and produced a
+    # number too large to act on; this counts only what each tool itself calls
+    # its most severe. Leave empty to fall back to unified severity 5.
+    critical_alert_labels: str = "disaster,critical"
+
+    @property
+    def critical_alert_label_set(self) -> set[str]:
+        """Normalized set of native severity labels counted as critical."""
+        return {
+            part.strip().lower()
+            for part in self.critical_alert_labels.split(",")
+            if part.strip()
+        }
+
     # Re-stat every template on every render so edits show without a restart.
     # Off by default: the sidebar health strip re-renders on a 60s timer on
     # every open tab, and each render stats the page template plus every
