@@ -571,6 +571,61 @@ class ZabbixCollector(BaseCollector):
 
     # --- Test mail ----------------------------------------------------------
 
+    def _send_test_mail_via_frontend(
+        self, media_type: dict, sendto: str, msg
+    ) -> dict | None:
+        """Drive the frontend's Test button so the Zabbix SERVER sends the mail.
+
+        Returns ``None`` when this path cannot even be attempted (no frontend
+        credentials configured), so the caller can fall back to SMTP. Any real
+        failure comes back as a normal ``{"ok": False}`` result — this must
+        never raise into the request.
+        """
+        from app.collectors.zabbix_ui import FrontendError, ZabbixFrontend
+
+        if not (self.config.user and self.config.password):
+            # A static API token authenticates the API but not the frontend,
+            # which needs a real username and password to get a session cookie.
+            self.logger.info(
+                "test mail: no frontend credentials for %s; using direct SMTP",
+                self.instance,
+            )
+            return None
+
+        base = self.config.url.rstrip("/")
+        subject = msg["Subject"]
+        # The frontend controller takes plain text, not a MIME message.
+        body = msg.get_body(preferencelist=("plain",)).get_content()
+
+        try:
+            with ZabbixFrontend(
+                base,
+                self.config.user,
+                self.config.password,
+                verify=self.verify_tls,
+            ) as ui:
+                ui.login()
+                ui.discover(str(media_type.get("mediatypeid")))
+                note = ui.send_test(
+                    str(media_type.get("mediatypeid")), sendto, subject, body
+                )
+            return {
+                "ok": True,
+                "message": (
+                    f"Sent by {self.instance} itself to {sendto} "
+                    f"via '{media_type.get('name')}' — {note}"
+                ),
+            }
+        except FrontendError as exc:
+            self.logger.warning("test mail via frontend failed: %s", exc)
+            return {"ok": False, "message": f"Zabbix frontend test failed: {exc}"}
+        except Exception as exc:  # noqa: BLE001 — reported, never raised
+            self.logger.warning("test mail via frontend errored: %s", exc)
+            return {
+                "ok": False,
+                "message": f"Zabbix frontend unreachable ({type(exc).__name__}: {exc})",
+            }
+
     def send_test_mail(self, sendto: str) -> dict:
         """Send a test email to ``sendto`` via this instance's SMTP relay.
 
@@ -622,6 +677,17 @@ class ZabbixCollector(BaseCollector):
             sender=sender,
             recipient=sendto,
         )
+
+        # Ask the Zabbix server to send it, rather than sending from here. That
+        # is what the UI's Test button does, and it is the only mode that works
+        # when the dashboard cannot reach the relay itself — over a VPN from
+        # home, port 25 is typically not routed, so the direct SMTP path fails
+        # even though email alerting is perfectly healthy.
+        mode = getattr(self.settings, "test_mail_mode", "auto")
+        if mode in ("auto", "ui"):
+            result = self._send_test_mail_via_frontend(mt, sendto, msg)
+            if result is not None and (result["ok"] or mode == "ui"):
+                return result
 
         try:
             ctx = ssl._create_unverified_context()

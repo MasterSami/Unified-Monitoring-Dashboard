@@ -475,66 +475,32 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Native severity breakdown (per tool, per tool's own labels) ---------- */
+/* --- Severity keys under each platform's stacked bar ---------------------- */
 
-.sev-groups {
+.sev-keys {
   display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 18px;
-  max-height: 340px;
-  overflow-y: auto;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 1px;
 }
-.sev-group {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.sev-group-head {
-  display: flex;
+.sev-key {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 2px;
-}
-.sev-group-total {
-  font-size: 12.5px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-}
-.sev-row {
-  display: grid;
-  grid-template-columns: 10px minmax(78px, auto) 1fr auto;
-  align-items: center;
-  gap: 9px;
-  font-size: 12.5px;
-}
-.sev-row .swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-.sev-name {
+  gap: 5px;
+  font-size: 11.5px;
   color: var(--text-muted);
   white-space: nowrap;
 }
-.sev-bar {
-  height: 7px;
-  border-radius: 5px;
-  background: var(--surface-3, var(--surface-2));
-  overflow: hidden;
+.sev-key .swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
-.sev-fill {
-  display: block;
-  height: 100%;
-  border-radius: 5px;
-  min-width: 2px;
-}
-.sev-count {
+.sev-key b {
   font-weight: 650;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
-  min-width: 3ch;
-  text-align: right;
 }
 
 /* --- Platform bars -------------------------------------------------------- */
@@ -582,7 +548,17 @@ a {
 }
 .bar-fill {
   height: 100%;
+  min-width: 2px;
+}
+/* Round only the outer ends, so a stacked bar reads as one bar. */
+.bar-track > .bar-fill:first-child {
   border-radius: 6px 0 0 6px;
+}
+.bar-track > .bar-fill:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.bar-track > .bar-fill:only-child {
+  border-radius: 6px;
 }
 .bar-fill.up {
   background: var(--up);

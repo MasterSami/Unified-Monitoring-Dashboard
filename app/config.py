@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # Default recipient for the Zabbix "send test mail" action.
     test_mail_to: str = ""
 
+    # How the Zabbix test mail is sent:
+    #   ui    - drive the frontend's Test button, so the ZABBIX SERVER sends it
+    #   smtp  - connect to the relay directly from wherever this app runs
+    #   auto  - try ui first, fall back to smtp (default)
+    # "ui" is the mode that works over a VPN: the relay is usually unreachable
+    # from a laptop on port 25, but the Zabbix server always has a route to it.
+    # It needs a real username/password in servers.yaml (an API token cannot log
+    # into the frontend) and a Super admin role.
+    test_mail_mode: str = "auto"
+
     # Optional CC added to every alert "Escalate" mail (comma-separated).
     escalation_cc: str = ""
 
@@ -47,6 +57,13 @@ class Settings(BaseSettings):
     # and "disabled" counts read as failures to anyone who does not know that
     # both are normal states. Set to true to bring it back.
     show_host_status_row: bool = False
+
+    # Should the "Total Active Servers" tile count only hosts something is
+    # actively monitoring? Default false: the tile answers "how many servers do
+    # we have that are running", so it includes hosts Dynatrace discovered
+    # without a OneAgent. Set true to narrow it to monitored hosts, which then
+    # matches the per-platform card exactly.
+    active_servers_monitored_only: bool = False
 
     # Which alerts the "Critical Alerts" tile counts, matched against each
     # tool's OWN severity label (case-insensitive, comma-separated). Counting

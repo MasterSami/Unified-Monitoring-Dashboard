@@ -6,7 +6,7 @@
 <div class="grid cols-4">
   <div class="card stat accent">
     <div class="stat-top">
-      <span class="label">Active Servers</span>
+      <span class="label">Total Active Servers</span>
       <span class="stat-ico">▣</span>
     </div>
     {# Distinct devices that are up. A server watched by two tools is one
@@ -75,33 +75,41 @@
 
 <!-- Charts row -->
 <div class="grid cols-2" style="margin-top: 16px;">
-  {# Each tool's OWN severity names, not the unified 1-5 scale. "Disaster",
-     "Availability" and "Major" mean different things and collapsing them into
-     one bucket hid which tool was actually raising what. #}
+  {# One row per platform, mirroring the card beside it: a badge, a total, one
+     stacked bar, and the tool's OWN severity names beneath. Collapsing them
+     into the unified 1-5 scale hid which tool was raising what; giving each
+     label its own row made this card three times taller than its neighbour. #}
   <div class="card">
     <div class="card-head">
       <h3>Active Alerts by Severity</h3>
       <span class="hint">{{ active_alerts }} total · each tool's own labels</span>
     </div>
-    <div class="sev-groups">
+    <div class="bars">
+      {% set sev_max = severity_by_platform | map(attribute='total') | max | default(1, true) %}
       {% for g in severity_by_platform %}
-      <div class="sev-group">
-        <div class="sev-group-head">
+      <div class="bar-row">
+        <div class="bar-top">
           <span class="badge badge-{{ g.platform }}"><span class="dot"></span>{{ g.platform }}</span>
-          <span class="sev-group-total">{{ g.total }}</span>
+          <span class="bt-count">{{ g.total }}</span>
         </div>
-        {% set gmax = g.levels | map(attribute='count') | max %}
-        {% for lv in g.levels %}
-        <div class="sev-row">
-          <span class="swatch" style="background: var(--sev{{ lv.severity_int }})"></span>
-          <span class="sev-name">{{ lv.label }}</span>
-          <span class="sev-bar">
-            <span class="sev-fill" style="width: {{ (lv.count / gmax * 100) if gmax else 0 }}%;
-              background: var(--sev{{ lv.severity_int }})"></span>
+        {# Bars are scaled against the busiest platform, so their lengths are
+           comparable across rows rather than each filling its own track. #}
+        <div class="bar-track">
+          {% for lv in g.levels %}
+          <div class="bar-fill" title="{{ lv.count }} {{ lv.label }}"
+            style="width: {{ (lv.count / sev_max * 100) }}%;
+                   background: var(--sev{{ lv.severity_int }})"></div>
+          {% endfor %}
+        </div>
+        <div class="sev-keys">
+          {% for lv in g.levels %}
+          <span class="sev-key" title="{{ lv.count }} × {{ lv.label }}">
+            <span class="swatch" style="background: var(--sev{{ lv.severity_int }})"></span>
+            {{ lv.label }}
+            <b>{{ lv.count }}</b>
           </span>
-          <span class="sev-count">{{ lv.count }}</span>
+          {% endfor %}
         </div>
-        {% endfor %}
       </div>
       {% else %}
       <div class="empty">No active alerts on any platform.</div>

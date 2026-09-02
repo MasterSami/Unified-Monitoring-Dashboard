@@ -209,18 +209,25 @@ def _monitored_only():
     )
 
 
-def _distinct_active_hosts(db: Session) -> int:
-    """How many DISTINCT devices are up and monitored, counted once across tools.
+def _distinct_active_hosts(db: Session, settings: Settings) -> int:
+    """How many DISTINCT servers are up, counted once across every tool.
 
     A server watched by both Zabbix and Dynatrace is one server. Summing the
     per-tool totals double-counts every one of them, which is what made the
     headline figure so much larger than the estate actually is.
+
+    By default this is the whole estate: every host any tool reports as up,
+    including the ones Dynatrace has discovered without a OneAgent — they are
+    still real servers that are running. Set
+    ``ACTIVE_SERVERS_MONITORED_ONLY=true`` to narrow it to hosts something is
+    actually monitoring, which then matches the per-platform card exactly.
     """
-    return db.scalar(
-        select(func.count(distinct(_device_key()))).where(
-            Host.status == HostStatus.up, _monitored_only()
-        )
-    ) or 0
+    stmt = select(func.count(distinct(_device_key()))).where(
+        Host.status == HostStatus.up
+    )
+    if settings.active_servers_monitored_only:
+        stmt = stmt.where(_monitored_only())
+    return db.scalar(stmt) or 0
 
 
 def _critical_alert_count(db: Session, settings: Settings) -> int:
@@ -534,13 +541,23 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     # Showing both makes the gap between them read as duplicates rather than as
     # two numbers that disagree.
     active_rows = sum(p.up for p in per_platform)
+    if not settings.active_servers_monitored_only:
+        # The tile counts every running host, so its companion figure has to
+        # include the discovered-but-unmonitored ones too.
+        active_rows += sum(
+            int(count)
+            for _inst, platform, status, agent, count in rows
+            if _enum_value(platform) == "dynatrace"
+            and agent is not True
+            and _enum_value(status) == HostStatus.up.value
+        )
     total_hosts = sum(status_counts.values())
     active_alerts = sum(b.count for b in buckets)
     return {
         "total_hosts": total_hosts,
         # The headline tile: distinct devices that are up and monitored, counted
         # once even when several tools watch the same server.
-        "active_hosts": _distinct_active_hosts(db),
+        "active_hosts": _distinct_active_hosts(db, settings),
         "active_rows": active_rows,
         "status_counts": status_counts,
         "hosts_up": status_counts["up"],
