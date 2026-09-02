@@ -408,3 +408,66 @@ def test_platforms_without_the_concept_keep_it_null(estate):
         assert value is None
     finally:
         db.close()
+
+
+# --- Dedup must not collapse hosts that share a placeholder IP -------------
+
+
+def test_placeholder_ips_do_not_merge_hosts(estate):
+    """Many Zabbix hosts sit on 127.0.0.1; that is not a device identity.
+
+    Keying on it merged every such host into one "device", which is how a
+    12,000-row estate reported under 5,000 servers.
+    """
+    from app.config import get_settings
+    from app.routers.pages import _distinct_active_hosts
+
+    db = estate()
+    try:
+        before = _distinct_active_hosts(db, get_settings())
+        for i, ip in enumerate(["127.0.0.1", "127.0.0.1", "0.0.0.0", "", "::1"]):
+            db.add(Host(
+                external_id=f"kpi-ph{i}", source_platform=SourcePlatform.zabbix,
+                source_instance="KPI-ZBX", hostname=f"agent-{i:02d}", ip=ip,
+                status=HostStatus.up, last_seen=NOW,
+            ))
+        db.commit()
+        after = _distinct_active_hosts(db, get_settings())
+    finally:
+        db.close()
+
+    # Five distinct servers were added, so five must appear — not one.
+    assert after == before + 5
+
+
+def test_real_shared_ips_still_merge(estate):
+    """The dedup must keep working for genuine cross-tool duplicates."""
+    from app.config import get_settings
+    from app.routers.pages import _distinct_active_hosts
+
+    db = estate()
+    try:
+        before = _distinct_active_hosts(db, get_settings())
+        db.add(Host(
+            external_id="kpi-dup-a", source_platform=SourcePlatform.zabbix,
+            source_instance="KPI-ZBX", hostname="shared-01", ip="10.70.9.9",
+            status=HostStatus.up, last_seen=NOW,
+        ))
+        db.add(Host(
+            external_id="kpi-dup-b", source_platform=SourcePlatform.nnmi,
+            source_instance="KPI-NNMI", hostname="shared-01.net", ip="10.70.9.9",
+            status=HostStatus.up, last_seen=NOW,
+        ))
+        db.commit()
+        after = _distinct_active_hosts(db, get_settings())
+    finally:
+        db.close()
+
+    assert after == before + 1, "one device seen by two tools is one device"
+
+
+def test_placeholder_list_covers_the_usual_suspects():
+    from app.routers.pages import PLACEHOLDER_IPS
+
+    for ip in ("", "127.0.0.1", "0.0.0.0", "::1"):
+        assert ip in PLACEHOLDER_IPS

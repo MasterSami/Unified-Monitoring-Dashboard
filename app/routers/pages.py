@@ -188,10 +188,24 @@ def _enum_value(value: object) -> str:
     return getattr(value, "value", str(value))
 
 
-#: Identity of a physical device across tools: its IP, or its name when the tool
-#: recorded no IP. Used to count the estate once rather than once per tool.
+#: IPs that identify no particular machine. A host whose interface is recorded
+#: as 127.0.0.1 is extremely common in Zabbix (active agents, hosts behind a
+#: proxy, templates cloned from a default), and treating that as a device
+#: identity collapses every one of them into a single "device".
+PLACEHOLDER_IPS = ("", "127.0.0.1", "0.0.0.0", "::1", "localhost")
+
+
 def _device_key():
-    return func.coalesce(func.nullif(Host.ip, ""), func.lower(Host.hostname))
+    """Identity of a physical device across tools: its IP, else its name.
+
+    Only a *real* IP identifies a device. Anything in :data:`PLACEHOLDER_IPS`
+    falls back to the hostname, which is unique per tool and therefore counts
+    those hosts individually instead of merging them all together.
+    """
+    ip = Host.ip
+    for placeholder in PLACEHOLDER_IPS:
+        ip = func.nullif(ip, placeholder)
+    return func.coalesce(ip, func.lower(Host.hostname))
 
 
 def _monitored_only():

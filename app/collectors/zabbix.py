@@ -684,10 +684,24 @@ class ZabbixCollector(BaseCollector):
         # home, port 25 is typically not routed, so the direct SMTP path fails
         # even though email alerting is perfectly healthy.
         mode = getattr(self.settings, "test_mail_mode", "auto")
+        #: Why the frontend path did not deliver, carried into the SMTP result.
+        #: Without this the user only ever saw the SMTP timeout, which is the
+        #: symptom of the fallback rather than the reason the good path failed.
+        frontend_note: str | None = None
+
         if mode in ("auto", "ui"):
             result = self._send_test_mail_via_frontend(mt, sendto, msg)
-            if result is not None and (result["ok"] or mode == "ui"):
+            if result is None:
+                frontend_note = (
+                    f"{self.instance} has no frontend username/password in "
+                    "servers.yaml, so Zabbix could not be asked to send it"
+                )
+                if mode == "ui":
+                    return {"ok": False, "message": frontend_note}
+            elif result["ok"] or mode == "ui":
                 return result
+            else:
+                frontend_note = result["message"]
 
         try:
             ctx = ssl._create_unverified_context()
@@ -707,8 +721,11 @@ class ZabbixCollector(BaseCollector):
             }
         except Exception as exc:  # noqa: BLE001 — reported to the UI
             self.logger.warning("test mail send failed: %s", exc)
-            return {
-                "ok": False,
-                "message": f"SMTP send failed via {server}:{port} — {exc}",
-            }
+            detail = f"SMTP send failed via {server}:{port} — {exc}"
+            if frontend_note:
+                # Both paths failed. The frontend one is the actionable half:
+                # a timeout from here is expected on a VPN, where this machine
+                # has no route to the relay in the first place.
+                detail += f". Zabbix was asked to send it first: {frontend_note}"
+            return {"ok": False, "message": detail}
 
