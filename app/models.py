@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models for the unified monitoring data model.
 
-Three platforms (Zabbix, Dynatrace, NNMi) are normalized into a shared
+Four monitoring tools (Zabbix, Dynatrace, NNMi, SiteScope) plus the Digital
+View asset inventory are normalized into a shared
 :class:`Host` / :class:`Alert` schema. :class:`CollectorRun` records the
 outcome of each polling run for health tracking.
 """
@@ -34,24 +35,24 @@ def _utcnow() -> datetime:
 class SourcePlatform(str, enum.Enum):
     """Supported source platforms.
 
-    The first four are monitoring tools that report live state. ``huawei`` is
-    different in kind: it is the Huawei i2000 / Digital View **asset
-    inventory**, loaded from an exported workbook because the API port is
-    closed to us. It tells us what exists and how big it is, never whether it
-    is up — so its hosts carry ``unknown`` status by design.
+    The first four are monitoring tools that report live state.
+    ``digitalview`` is different in kind: it is the Digital View (Huawei i2000)
+    **asset inventory**, loaded from an exported workbook because the API port
+    is closed to us. It tells us what exists and how big it is, never whether
+    it is up — so its hosts carry ``unknown`` status by design.
     """
 
     zabbix = "zabbix"
     dynatrace = "dynatrace"
     nnmi = "nnmi"
     sitescope = "sitescope"
-    huawei = "huawei"
+    digitalview = "digitalview"
 
 
 #: Every platform, in the order the UI lists them. Monitoring tools first,
 #: inventory sources last.
 PLATFORM_ORDER: tuple[str, ...] = (
-    "zabbix", "dynatrace", "nnmi", "sitescope", "huawei",
+    "zabbix", "dynatrace", "nnmi", "sitescope", "digitalview",
 )
 
 #: Platforms that report live availability. An inventory source does not, so

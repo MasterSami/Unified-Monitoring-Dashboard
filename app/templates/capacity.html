@@ -23,7 +23,7 @@
     </div>
 
     <div class="tabs" role="tablist">
-      {% for p in ['all', 'zabbix', 'dynatrace', 'nnmi', 'sitescope'] %}
+      {% for p in ['all'] + platform_order | list %}
       <button
         type="button"
         class="{{ 'active' if p == 'all' else '' }}"
@@ -35,7 +35,7 @@
         hx-vals='{"platform": "{{ p }}"}'
         onclick="selectTab(this)"
       >
-        {{ 'All' if p == 'all' else p | capitalize }}
+        {{ p | platform_label }}
       </button>
       {% endfor %}
     </div>

@@ -1,9 +1,9 @@
-"""Huawei i2000 / Digital View asset inventory, read from an exported workbook.
+"""Digital View (Huawei i2000) asset inventory, read from an exported workbook.
 
 Huawei keeps the API port closed to us, so the inventory arrives the only way it
 can: someone exports ``BaseAssetImportTemplate_En.xlsx`` from the Digital View
 UI and drops it on disk. This module turns that workbook into the same host
-shape every collector produces, so Huawei assets appear on the Hosts, Capacity
+shape every collector produces, so Digital View assets appear on the Hosts, Capacity
 and Shared pages like anything else.
 
 **This is inventory, not monitoring.** The export says what exists, how much CPU
@@ -45,7 +45,7 @@ from pathlib import Path
 
 from app.models import HostStatus, SourcePlatform
 
-logger = logging.getLogger("huawei")
+logger = logging.getLogger("digitalview")
 
 #: Sheets holding host-like assets, and the row their real header sits on.
 _HOST_SHEETS = {
@@ -72,7 +72,7 @@ _FORBIDDEN = {
 
 
 @dataclass
-class HuaweiInventory:
+class DigitalViewInventory:
     """What one workbook contained."""
 
     hosts: list[dict] = field(default_factory=list)
@@ -262,17 +262,17 @@ def _host_record(
     }
 
 
-def parse_workbook(path: str | Path) -> HuaweiInventory:
+def parse_workbook(path: str | Path) -> DigitalViewInventory:
     """Read a Digital View asset export into normalized host dicts."""
     from openpyxl import load_workbook
 
     p = Path(path)
-    inventory = HuaweiInventory()
+    inventory = DigitalViewInventory()
     try:
         stat = p.stat()
         inventory.exported_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc)
     except OSError as exc:
-        logger.warning("huawei asset file unreadable (%s): %s", p, exc)
+        logger.warning("digitalview asset file unreadable (%s): %s", p, exc)
         return inventory
 
     wb = load_workbook(p, data_only=True, read_only=False)
@@ -311,18 +311,18 @@ def parse_workbook(path: str | Path) -> HuaweiInventory:
         wb.close()
 
     logger.info(
-        "huawei: parsed %d asset(s) from %s (%s)",
+        "digitalview: parsed %d asset(s) from %s (%s)",
         inventory.count, p.name,
         ", ".join(f"{k}={v}" for k, v in inventory.sheets_read.items()),
     )
     return inventory
 
 
-def load_into_db(db, instance: str, path: str | Path) -> HuaweiInventory:
+def load_into_db(db, instance: str, path: str | Path) -> DigitalViewInventory:
     """Parse the workbook and upsert its assets as Huawei hosts."""
     from app.normalizer import upsert_hosts
 
     inventory = parse_workbook(path)
     if inventory.hosts:
-        upsert_hosts(db, SourcePlatform.huawei, inventory.hosts, instance)
+        upsert_hosts(db, SourcePlatform.digitalview, inventory.hosts, instance)
     return inventory

@@ -34,7 +34,7 @@
         onclick="document.querySelectorAll('.agent-row').forEach(function(r){r.classList.remove('sel')}); this.classList.add('sel')">
         <td><strong>{{ h.hostname }}</strong></td>
         <td class="mono">{{ h.ip or '—' }}</td>
-        <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value }}</span></td>
+        <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.source_instance or '—' }}</td>
         <td><span class="pill status-{{ h.status.value }}"><span class="dot"></span>{{ h.status.value }}</span></td>
         <td>

@@ -610,7 +610,7 @@ a {
 }
 /* Huawei is an asset inventory, not a monitoring feed — its own hue keeps it
    visibly distinct from the four tools that report live state. */
-.badge-huawei {
+.badge-digitalview {
   --dot: #a855f7;
 }
 

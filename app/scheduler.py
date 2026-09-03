@@ -226,46 +226,46 @@ def _run_sitescope_demo_job() -> None:
         _load_sitescope_file(instance, path)
 
 
-_HUAWEI_JOB_ID = "huawei_asset_load"
+_DIGITALVIEW_JOB_ID = "digitalview_asset_load"
 #: (mtime, size) of the workbook the last load read, so an unchanged file is
 #: parsed once rather than on every tick — the export changes rarely.
-_huawei_stamp: tuple[float, int] | None = None
+_digitalview_stamp: tuple[float, int] | None = None
 
 
-def _run_huawei_job(force: bool = False) -> None:
+def _run_digitalview_job(force: bool = False) -> None:
     """Load the Huawei asset export, if it is new since the last load.
 
     Contained like every other scheduled job: a bad or missing workbook is
     logged and skipped, never allowed to stop the scheduler.
     """
-    global _huawei_stamp
+    global _digitalview_stamp
     from pathlib import Path
 
-    from app.huawei_assets import load_into_db
+    from app.digitalview_assets import load_into_db
 
     settings = get_settings()
-    path = settings.huawei_asset_file
+    path = settings.digitalview_asset_file
     if not path:
         return
     try:
         stat = Path(path).stat()
     except OSError as exc:
-        logger.warning("huawei asset file unreadable (%s): %s", path, exc)
+        logger.warning("digitalview asset file unreadable (%s): %s", path, exc)
         return
 
     stamp = (stat.st_mtime, stat.st_size)
-    if not force and _huawei_stamp == stamp:
+    if not force and _digitalview_stamp == stamp:
         return  # same export as last time; nothing to re-read
-    _huawei_stamp = stamp
+    _digitalview_stamp = stamp
 
-    instance = settings.huawei_instance or "Huawei-DigitalView"
+    instance = settings.digitalview_instance or "DigitalView"
     db: Session = SessionLocal()
     try:
         started = datetime.now(timezone.utc)
         inventory = load_into_db(db, instance, path)
         db.add(
             CollectorRun(
-                platform="huawei",
+                platform="digitalview",
                 instance=instance,
                 started_at=started,
                 finished_at=datetime.now(timezone.utc),
@@ -285,13 +285,13 @@ def _run_huawei_job(force: bool = False) -> None:
         )
         db.commit()
         logger.info(
-            "huawei: loaded %d asset(s) for %s from %s",
+            "digitalview: loaded %d asset(s) for %s from %s",
             inventory.count, instance, path,
         )
     except Exception:  # pragma: no cover - must never crash the scheduler
         db.rollback()
-        _huawei_stamp = None  # let the next tick retry
-        logger.exception("huawei asset load failed for %s", instance)
+        _digitalview_stamp = None  # let the next tick retry
+        logger.exception("digitalview asset load failed for %s", instance)
     finally:
         db.close()
 
@@ -413,20 +413,20 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     # Huawei asset inventory: a file on disk, re-read only when it changes.
     # Cheap enough to check every poll interval; the parse only runs on a new
     # export.
-    if settings.huawei_asset_file:
+    if settings.digitalview_asset_file:
         scheduler.add_job(
-            _run_huawei_job,
+            _run_digitalview_job,
             trigger="interval",
             minutes=settings.poll_interval_minutes,
-            id=_HUAWEI_JOB_ID,
+            id=_DIGITALVIEW_JOB_ID,
             max_instances=1,
             coalesce=True,
             replace_existing=True,
             next_run_time=datetime.now(),
         )
         logger.info(
-            "huawei asset inventory enabled: %s (checked every %d min)",
-            settings.huawei_asset_file, settings.poll_interval_minutes,
+            "digitalview asset inventory enabled: %s (checked every %d min)",
+            settings.digitalview_asset_file, settings.poll_interval_minutes,
         )
 
     scheduler.start()

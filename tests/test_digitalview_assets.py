@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
-from app.huawei_assets import parse_workbook
+from app.digitalview_assets import parse_workbook
 from app.models import HostStatus
 
 
@@ -173,8 +173,8 @@ def test_every_asset_is_unknown_not_up(inventory):
 def test_huawei_is_not_a_live_platform():
     from app.models import LIVE_PLATFORMS, PLATFORM_ORDER
 
-    assert "huawei" in PLATFORM_ORDER
-    assert "huawei" not in LIVE_PLATFORMS
+    assert "digitalview" in PLATFORM_ORDER
+    assert "digitalview" not in LIVE_PLATFORMS
 
 
 # --- Credentials ------------------------------------------------------------
@@ -191,7 +191,7 @@ def test_no_credential_ever_reaches_a_host_record(inventory):
 
 def test_user_columns_are_refused_by_name():
     """Even asked for directly, credential columns return nothing."""
-    from app.huawei_assets import _pick
+    from app.digitalview_assets import _pick
 
     headers = ["*Name", "User", "Password", "Security User"]
     row = ("host-1", "Administrator", "hunter2", "snmpUser")
@@ -235,22 +235,22 @@ def test_assets_land_as_huawei_hosts(client, tmp_path_factory):
     from sqlalchemy import select
 
     from app.db import SessionLocal
-    from app.huawei_assets import load_into_db
+    from app.digitalview_assets import load_into_db
     from app.models import Host, SourcePlatform
 
     path = _template(tmp_path_factory.mktemp("huawei-db"))
     db = SessionLocal()
     try:
-        result = load_into_db(db, "Huawei-TEST", path)
+        result = load_into_db(db, "DigitalView-TEST", path)
         db.commit()
         rows = db.scalars(
-            select(Host).where(Host.source_instance == "Huawei-TEST")
+            select(Host).where(Host.source_instance == "DigitalView-TEST")
         ).all()
     finally:
         db.close()
 
     assert result.count == 4 and len(rows) == 4
-    assert {r.source_platform for r in rows} == {SourcePlatform.huawei}
+    assert {r.source_platform for r in rows} == {SourcePlatform.digitalview}
     assert {r.status for r in rows} == {HostStatus.unknown}
     assert next(r for r in rows if r.hostname == "vm-app-01").ip == "10.9.0.1"
 
@@ -259,18 +259,85 @@ def test_reimporting_the_same_export_does_not_duplicate(client, tmp_path_factory
     from sqlalchemy import func, select
 
     from app.db import SessionLocal
-    from app.huawei_assets import load_into_db
+    from app.digitalview_assets import load_into_db
     from app.models import Host
 
     path = _template(tmp_path_factory.mktemp("huawei-idem"))
     db = SessionLocal()
     try:
         for _ in range(3):
-            load_into_db(db, "Huawei-IDEM", path)
+            load_into_db(db, "DigitalView-IDEM", path)
             db.commit()
         count = db.scalar(
-            select(func.count(Host.id)).where(Host.source_instance == "Huawei-IDEM")
+            select(func.count(Host.id)).where(Host.source_instance == "DigitalView-IDEM")
         )
     finally:
         db.close()
     assert count == 4
+
+
+# --- The platform is visible everywhere it should be ------------------------
+
+
+def test_platform_filter_tabs_include_digitalview(client):
+    """The tabs used to be a hardcoded list that silently went stale."""
+    for page in ("/capacity", "/agents"):
+        body = client.get(page).text
+        assert 'data-platform="digitalview"' in body, page
+        # …and every other platform is still there.
+        for platform in ("zabbix", "dynatrace", "nnmi", "sitescope"):
+            assert f'data-platform="{platform}"' in body, (page, platform)
+
+
+def test_tabs_follow_the_model_not_a_literal_list(client):
+    """Adding a platform to PLATFORM_ORDER must be enough to make it appear."""
+    from app.models import PLATFORM_ORDER
+
+    body = client.get("/capacity").text
+    for platform in PLATFORM_ORDER:
+        assert f'data-platform="{platform}"' in body, platform
+
+
+def test_platform_names_are_spelled_the_way_the_products_are(client):
+    from app.routers.pages import _platform_label
+
+    assert _platform_label("digitalview") == "DigitalView"
+    assert _platform_label("nnmi") == "NNMi"
+    assert _platform_label("sitescope") == "SiteScope"
+    assert _platform_label("zabbix") == "Zabbix"
+    # An unknown platform still renders sensibly rather than blank.
+    assert _platform_label("newtool") == "Newtool"
+
+    body = client.get("/capacity").text
+    assert ">DigitalView<" in body.replace("\n", "").replace("  ", "")
+
+
+def test_rows_written_under_the_old_platform_name_are_migrated(tmp_path):
+    """A database loaded before the rename must not orphan its rows."""
+    from sqlalchemy import create_engine, text
+
+    import app.db as dbmod
+
+    path = tmp_path / "rename.db"
+    engine = create_engine(f"sqlite:///{path}")
+    dbmod.Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO hosts (hostname, source_platform, source_instance,"
+            " external_id, status, metrics, raw_payload, updated_at)"
+            " VALUES ('old-1', 'huawei', 'DV', 'x1', 'unknown', '{}', '{}',"
+            " CURRENT_TIMESTAMP)"
+        ))
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(dbmod, "engine", engine)
+    try:
+        dbmod._rename_platforms()
+    finally:
+        patch.undo()
+
+    with engine.begin() as conn:
+        value = conn.execute(
+            text("SELECT source_platform FROM hosts WHERE external_id = 'x1'")
+        ).scalar()
+    assert value == "digitalview"

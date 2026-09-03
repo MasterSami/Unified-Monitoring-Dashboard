@@ -30,4 +30,4 @@ servers.local.yaml
 # numbers and rack positions for the whole estate — keep it out of the repo.
 BaseAssetImportTemplate*.xlsx
 *_asset_export*.xlsx
-huawei_assets*.xlsx
+digitalview_assets*.xlsx

@@ -14,8 +14,8 @@ alongside Zabbix, Dynatrace and NNMi on the Hosts, Capacity and Shared pages.
 ## Turning it on
 
 ```env
-HUAWEI_ASSET_FILE=D:\umd\BaseAssetImportTemplate_En.xlsx
-HUAWEI_INSTANCE=Huawei-DigitalView
+DIGITALVIEW_ASSET_FILE=D:\umd\BaseAssetImportTemplate_En.xlsx
+DIGITALVIEW_INSTANCE=DigitalView
 ```
 
 Restart, and the assets load. The file is re-checked every poll interval and

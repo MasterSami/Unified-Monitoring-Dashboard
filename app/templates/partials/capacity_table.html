@@ -56,7 +56,7 @@
       <tr>
         <td><strong>{{ h.hostname }}</strong></td>
         <td class="mono">{{ h.ip or '—' }}</td>
-        <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value }}</span></td>
+        <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>
         <td>{{ rcell(h.cpu_pct, m.get('cpu_used_cores'), m.get('cores'), 'cores') }}</td>
         <td>{{ rcell(h.mem_pct, m.get('mem_used_gb'), m.get('mem_total_gb'), 'GB') }}</td>

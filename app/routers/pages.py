@@ -132,6 +132,31 @@ def _relative_time(value: datetime | None) -> str:
 templates.env.filters["relative_time"] = _relative_time
 
 
+#: How each platform is written in the UI. Anything absent is title-cased, so a
+#: new platform reads correctly without an entry here — this exists only for
+#: names that title-casing would get wrong.
+PLATFORM_LABELS: dict[str, str] = {
+    "all": "All",
+    "nnmi": "NNMi",
+    "sitescope": "SiteScope",
+    "digitalview": "DigitalView",
+    "zabbix": "Zabbix",
+    "dynatrace": "Dynatrace",
+}
+
+
+def _platform_label(value: str | None) -> str:
+    """Render a platform name the way the product spells it."""
+    key = _enum_value(value or "").lower()
+    return PLATFORM_LABELS.get(key, key.title())
+
+
+templates.env.filters["platform_label"] = _platform_label
+# Every platform, so the filter tabs follow the model instead of repeating a
+# hardcoded list that silently goes stale when a platform is added.
+templates.env.globals["platform_order"] = PLATFORM_ORDER
+
+
 # --- Shared query helpers ---------------------------------------------------
 
 

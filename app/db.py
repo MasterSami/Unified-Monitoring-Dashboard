@@ -168,6 +168,33 @@ def _ensure_columns() -> None:
                     )
 
 
+#: Platform values renamed after rows had already been written. Applied on
+#: startup so an existing database follows the rename instead of orphaning its
+#: rows under a value the enum no longer has.
+_RENAMED_PLATFORMS: list[tuple[str, str]] = [
+    ("huawei", "digitalview"),
+]
+
+
+def _rename_platforms() -> None:
+    """Migrate rows written under an old platform name (idempotent)."""
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for old, new in _RENAMED_PLATFORMS:
+            for table, column in (
+                ("hosts", "source_platform"),
+                ("alerts", "source_platform"),
+                ("collector_runs", "platform"),
+            ):
+                if table not in tables:
+                    continue
+                conn.execute(
+                    text(f"UPDATE {table} SET {column} = :new WHERE {column} = :old"),
+                    {"new": new, "old": old},
+                )
+
+
 def init_db() -> None:
     """Create all tables, then apply small column migrations. Idempotent."""
     # Import models so they register with the metadata before create_all.
@@ -176,3 +203,4 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
     _ensure_indexes()
+    _rename_platforms()
