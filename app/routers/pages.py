@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, defer
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
+    LIVE_PLATFORMS,
+    PLATFORM_ORDER,
     Alert,
     Host,
     HostStatus,
@@ -97,6 +99,9 @@ templates.env.globals["enable_export"] = get_settings().enable_export
 templates.env.globals["enable_topology_export"] = get_settings().enable_topology_export
 # Feature flag for the Runbook (admin script library).
 templates.env.globals["enable_runbook"] = get_settings().enable_runbook
+# Platforms that report live availability. Anything outside this set is an
+# inventory source and is labelled as such wherever hosts are counted.
+templates.env.globals["live_platforms"] = LIVE_PLATFORMS
 
 
 # --- Template helpers -------------------------------------------------------
@@ -326,7 +331,7 @@ def _per_platform(rows: list[tuple]) -> list[PlatformHostCount]:
             disabled=by_status.get(p, {}).get("disabled", 0),
             discovered=discovered.get(p, 0),
         )
-        for p in ("zabbix", "dynatrace", "nnmi", "sitescope")
+        for p in PLATFORM_ORDER
     ]
 
 

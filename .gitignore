@@ -25,3 +25,9 @@ env/
 # Server inventory with credentials
 servers.yaml
 servers.local.yaml
+
+# Huawei Digital View asset export. Carries account names, SNMP users, serial
+# numbers and rack positions for the whole estate — keep it out of the repo.
+BaseAssetImportTemplate*.xlsx
+*_asset_export*.xlsx
+huawei_assets*.xlsx

@@ -608,6 +608,28 @@ a {
 .badge-sitescope {
   --dot: #f59e0b;
 }
+/* Huawei is an asset inventory, not a monitoring feed — its own hue keeps it
+   visibly distinct from the four tools that report live state. */
+.badge-huawei {
+  --dot: #a855f7;
+}
+
+/* Marks a platform that lists what exists rather than what is running. */
+.inv-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  margin-left: 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
 
 .pill {
   display: inline-flex;

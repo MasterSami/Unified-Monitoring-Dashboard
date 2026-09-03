@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, defer
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import (
+    PLATFORM_ORDER,
     Alert,
     CollectorRun,
     Host,
@@ -1009,7 +1010,7 @@ def summary(
             total=total_by_platform.get(plat, 0),
             down=down_by_platform.get(plat, 0),
         )
-        for plat in ("zabbix", "dynatrace", "nnmi", "sitescope")
+        for plat in PLATFORM_ORDER
     ]
 
     # Active alerts by severity.

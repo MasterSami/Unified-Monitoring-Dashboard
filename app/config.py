@@ -151,6 +151,18 @@ class Settings(BaseSettings):
     # UI while this is false. Leave it off unless you have a strong reason.
     runbook_allow_write: bool = False
 
+    # --- Huawei i2000 / Digital View asset inventory ------------------------
+    # Huawei keeps the API port closed to us, so the inventory arrives as an
+    # exported workbook (BaseAssetImportTemplate_En.xlsx) instead. Point this at
+    # the file and its assets are loaded on startup and re-read whenever the
+    # file changes on disk — drop in a fresh export and the dashboard follows.
+    #
+    # This is INVENTORY, not monitoring: it says what exists and how big it is,
+    # never whether it is up. Its hosts are stored with `unknown` status so they
+    # never inflate the availability figures.
+    huawei_asset_file: str = ""
+    huawei_instance: str = "Huawei-DigitalView"
+
     # --- SiteScope push ingest ---------------------------------------------
     # Bearer token the SiteScope forwarder must present to POST events. Empty
     # (default) disables the ingest endpoint entirely (returns 503). Set it in

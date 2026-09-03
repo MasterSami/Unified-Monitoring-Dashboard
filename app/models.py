@@ -32,12 +32,33 @@ def _utcnow() -> datetime:
 
 
 class SourcePlatform(str, enum.Enum):
-    """Supported monitoring source platforms."""
+    """Supported source platforms.
+
+    The first four are monitoring tools that report live state. ``huawei`` is
+    different in kind: it is the Huawei i2000 / Digital View **asset
+    inventory**, loaded from an exported workbook because the API port is
+    closed to us. It tells us what exists and how big it is, never whether it
+    is up — so its hosts carry ``unknown`` status by design.
+    """
 
     zabbix = "zabbix"
     dynatrace = "dynatrace"
     nnmi = "nnmi"
     sitescope = "sitescope"
+    huawei = "huawei"
+
+
+#: Every platform, in the order the UI lists them. Monitoring tools first,
+#: inventory sources last.
+PLATFORM_ORDER: tuple[str, ...] = (
+    "zabbix", "dynatrace", "nnmi", "sitescope", "huawei",
+)
+
+#: Platforms that report live availability. An inventory source does not, so
+#: counting its hosts as "up" would inflate every health figure on the site.
+LIVE_PLATFORMS: frozenset[str] = frozenset(
+    {"zabbix", "dynatrace", "nnmi", "sitescope"}
+)
 
 
 class HostStatus(str, enum.Enum):
