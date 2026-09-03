@@ -129,25 +129,44 @@ def get_collector_statuses(db: Session, settings: Settings) -> list[CollectorSta
             )
         )
 
-    # Push-based collectors (e.g. the SiteScope forwarder) aren't in the server
-    # inventory — derive their health from the run rows they record on ingest,
-    # so a stale/dead forwarder still shows up in the UI. Already prefetched.
+    # Feeds that aren't in the server inventory — the SiteScope forwarder pushes
+    # to us, the Digital View inventory is a file on disk — derive their health
+    # from the run rows they record instead, so a dead forwarder or an
+    # unreadable workbook still shows up in the UI. Already prefetched.
+    #
+    # This used to accept only "sitescope", which meant a Digital View failure
+    # was written to the database and then never displayed anywhere.
+    notes_by_platform = {
+        "sitescope": "push (forwarder)",
+        "digitalview": "asset inventory (file)",
+    }
     for instance, last_run in last_runs.items():
-        if instance in configured or last_run.platform != "sitescope":
+        if instance in configured or last_run.platform not in notes_by_platform:
             continue
+        succeeded = last_run.status == RunStatus.success
         statuses.append(
             CollectorStatus(
-                platform="sitescope",
+                platform=last_run.platform,
                 instance=instance,
                 enabled=True,
                 last_run_at=last_run.started_at,
-                last_success_at=last_run.finished_at,
+                last_success_at=(
+                    last_success[instance].finished_at
+                    if instance in last_success
+                    else None
+                ),
                 status=last_run.status.value,
                 items_collected=last_run.items_collected,
                 hosts_collected=last_run.hosts_collected,
                 alerts_collected=last_run.alerts_collected,
-                error_message=None,
-                notes="push (forwarder)",
+                # A failed run's message is the reason; a successful one's is a
+                # note (e.g. the export date), which belongs in `notes`.
+                error_message=None if succeeded else last_run.error_message,
+                notes=(
+                    last_run.error_message
+                    if succeeded and last_run.error_message
+                    else notes_by_platform[last_run.platform]
+                ),
             )
         )
     return statuses
@@ -232,6 +251,29 @@ _DIGITALVIEW_JOB_ID = "digitalview_asset_load"
 _digitalview_stamp: tuple[float, int] | None = None
 
 
+def _record_digitalview_failure(instance: str, reason: str) -> None:
+    """Persist a failed run so the UI can show why the import produced nothing."""
+    db: Session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        db.add(
+            CollectorRun(
+                platform="digitalview",
+                instance=instance,
+                started_at=now,
+                finished_at=now,
+                status=RunStatus.failed,
+                items_collected=0,
+                error_message=reason[:2048],
+            )
+        )
+        db.commit()
+    except Exception:  # pragma: no cover - reporting must never raise
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _run_digitalview_job(force: bool = False) -> None:
     """Load the Huawei asset export, if it is new since the last load.
 
@@ -247,10 +289,17 @@ def _run_digitalview_job(force: bool = False) -> None:
     path = settings.digitalview_asset_file
     if not path:
         return
+
+    instance = settings.digitalview_instance or "DigitalView"
     try:
         stat = Path(path).stat()
     except OSError as exc:
+        # Record a FAILED run rather than only logging. A wrong path used to
+        # look identical to "no assets" on the dashboard — the platform row
+        # showed 0 with nothing to say why. Now the sidebar turns red and
+        # carries the reason, like every other feed that cannot reach its source.
         logger.warning("digitalview asset file unreadable (%s): %s", path, exc)
+        _record_digitalview_failure(instance, f"cannot read {path}: {exc}")
         return
 
     stamp = (stat.st_mtime, stat.st_size)
@@ -258,7 +307,6 @@ def _run_digitalview_job(force: bool = False) -> None:
         return  # same export as last time; nothing to re-read
     _digitalview_stamp = stamp
 
-    instance = settings.digitalview_instance or "DigitalView"
     db: Session = SessionLocal()
     try:
         started = datetime.now(timezone.utc)
@@ -288,10 +336,13 @@ def _run_digitalview_job(force: bool = False) -> None:
             "digitalview: loaded %d asset(s) for %s from %s",
             inventory.count, instance, path,
         )
-    except Exception:  # pragma: no cover - must never crash the scheduler
+    except Exception as exc:  # noqa: BLE001 — must never crash the scheduler
         db.rollback()
         _digitalview_stamp = None  # let the next tick retry
         logger.exception("digitalview asset load failed for %s", instance)
+        _record_digitalview_failure(
+            instance, f"could not read the workbook: {type(exc).__name__}: {exc}"
+        )
     finally:
         db.close()
 

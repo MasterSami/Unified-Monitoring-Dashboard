@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -160,8 +161,19 @@ class Settings(BaseSettings):
     # This is INVENTORY, not monitoring: it says what exists and how big it is,
     # never whether it is up. Its hosts are stored with `unknown` status so they
     # never inflate the availability figures.
-    digitalview_asset_file: str = ""
-    digitalview_instance: str = "DigitalView"
+    #
+    # HUAWEI_ASSET_FILE is accepted as well: the setting shipped under that name
+    # first, and silently ignoring it would look exactly like a broken import.
+    digitalview_asset_file: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "digitalview_asset_file", "huawei_asset_file"
+        ),
+    )
+    digitalview_instance: str = Field(
+        default="DigitalView",
+        validation_alias=AliasChoices("digitalview_instance", "huawei_instance"),
+    )
 
     # --- SiteScope push ingest ---------------------------------------------
     # Bearer token the SiteScope forwarder must present to POST events. Empty

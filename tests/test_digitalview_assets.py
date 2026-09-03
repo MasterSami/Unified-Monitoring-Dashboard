@@ -341,3 +341,161 @@ def test_rows_written_under_the_old_platform_name_are_migrated(tmp_path):
             text("SELECT source_platform FROM hosts WHERE external_id = 'x1'")
         ).scalar()
     assert value == "digitalview"
+
+
+# --- Configuration must be hard to get wrong --------------------------------
+
+
+def test_the_old_env_name_still_works(monkeypatch):
+    """The setting shipped as HUAWEI_ASSET_FILE first; ignoring it looks broken."""
+    from app.config import Settings
+
+    monkeypatch.delenv("DIGITALVIEW_ASSET_FILE", raising=False)
+    monkeypatch.setenv("HUAWEI_ASSET_FILE", r"D:\umd\Base.xlsx")
+    assert Settings().digitalview_asset_file == r"D:\umd\Base.xlsx"
+
+    # The current name wins when both are present.
+    monkeypatch.setenv("DIGITALVIEW_ASSET_FILE", r"D:\umd\New.xlsx")
+    assert Settings().digitalview_asset_file == r"D:\umd\New.xlsx"
+
+
+def test_a_bad_path_is_reported_as_a_failed_run(client, monkeypatch, tmp_path):
+    """A wrong path used to look exactly like "no assets": 0, with no reason."""
+    from sqlalchemy import select
+
+    import app.scheduler as sched
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import CollectorRun, RunStatus
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "digitalview_asset_file", str(tmp_path / "gone.xlsx"))
+    monkeypatch.setattr(settings, "digitalview_instance", "DV-BADPATH")
+    monkeypatch.setattr(sched, "_digitalview_stamp", None)
+
+    sched._run_digitalview_job(force=True)
+
+    db = SessionLocal()
+    try:
+        run = db.scalars(
+            select(CollectorRun).where(CollectorRun.instance == "DV-BADPATH")
+        ).first()
+    finally:
+        db.close()
+
+    assert run is not None, "a broken path must surface in the UI, not just the log"
+    assert run.status is RunStatus.failed
+    assert "gone.xlsx" in run.error_message
+
+
+def test_an_unreadable_workbook_is_reported_too(client, monkeypatch, tmp_path):
+    from sqlalchemy import select
+
+    import app.scheduler as sched
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import CollectorRun, RunStatus
+
+    broken = tmp_path / "notreally.xlsx"
+    broken.write_text("this is not a workbook", encoding="utf-8")
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "digitalview_asset_file", str(broken))
+    monkeypatch.setattr(settings, "digitalview_instance", "DV-BADFILE")
+    monkeypatch.setattr(sched, "_digitalview_stamp", None)
+
+    sched._run_digitalview_job(force=True)
+
+    db = SessionLocal()
+    try:
+        run = db.scalars(
+            select(CollectorRun).where(CollectorRun.instance == "DV-BADFILE")
+        ).first()
+    finally:
+        db.close()
+    assert run is not None and run.status is RunStatus.failed
+
+
+def test_a_good_workbook_records_a_successful_run(client, monkeypatch, tmp_path_factory):
+    from sqlalchemy import select
+
+    import app.scheduler as sched
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import CollectorRun, RunStatus
+
+    path = _template(tmp_path_factory.mktemp("dv-run"))
+    settings = get_settings()
+    monkeypatch.setattr(settings, "digitalview_asset_file", str(path))
+    monkeypatch.setattr(settings, "digitalview_instance", "DV-GOOD")
+    monkeypatch.setattr(sched, "_digitalview_stamp", None)
+
+    sched._run_digitalview_job(force=True)
+
+    db = SessionLocal()
+    try:
+        run = db.scalars(
+            select(CollectorRun).where(CollectorRun.instance == "DV-GOOD")
+        ).first()
+    finally:
+        db.close()
+    assert run is not None
+    assert run.status is RunStatus.success
+    assert run.hosts_collected == 4
+
+
+def test_the_feed_appears_in_the_collector_health_list(client, monkeypatch, tmp_path_factory):
+    """A file-based feed must show in the sidebar like any other.
+
+    The list accepted only "sitescope", so a Digital View failure was written
+    to the database and then displayed nowhere.
+    """
+    import app.scheduler as sched
+    from app.config import get_settings
+    from app.db import SessionLocal
+
+    settings = get_settings()
+    monkeypatch.setattr(sched, "_digitalview_stamp", None)
+    monkeypatch.setattr(settings, "digitalview_instance", "DV-HEALTH")
+    monkeypatch.setattr(
+        settings, "digitalview_asset_file",
+        str(_template(tmp_path_factory.mktemp("dv-health"))),
+    )
+    sched._run_digitalview_job(force=True)
+
+    db = SessionLocal()
+    try:
+        rows = sched.get_collector_statuses(db, settings)
+    finally:
+        db.close()
+
+    row = next((r for r in rows if r.instance == "DV-HEALTH"), None)
+    assert row is not None, "the Digital View feed must appear in collector health"
+    assert row.platform == "digitalview"
+    assert row.status == "success"
+    assert row.hosts_collected == 4
+    assert "asset inventory" in (row.notes or "")
+
+
+def test_a_failure_shows_its_reason_in_the_health_list(client, monkeypatch, tmp_path):
+    import app.scheduler as sched
+    from app.config import get_settings
+    from app.db import SessionLocal
+
+    settings = get_settings()
+    monkeypatch.setattr(sched, "_digitalview_stamp", None)
+    monkeypatch.setattr(settings, "digitalview_instance", "DV-BROKEN")
+    monkeypatch.setattr(
+        settings, "digitalview_asset_file", str(tmp_path / "missing.xlsx")
+    )
+    sched._run_digitalview_job(force=True)
+
+    db = SessionLocal()
+    try:
+        rows = sched.get_collector_statuses(db, settings)
+    finally:
+        db.close()
+
+    row = next(r for r in rows if r.instance == "DV-BROKEN")
+    assert row.status == "failed"
+    assert "missing.xlsx" in (row.error_message or "")
