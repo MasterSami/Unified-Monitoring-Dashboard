@@ -153,6 +153,22 @@ def _require_zabbix(collectors: list) -> list:
     return zbx
 
 
+def _require_dynatrace(collectors: list) -> list:
+    """Narrow the given collectors to live Dynatrace ones, or explain why not."""
+    dt = [c for c in collectors if getattr(c, "name", "") == "dynatrace"]
+    if not dt:
+        raise RunbookError(
+            "No Dynatrace instance selected. Pick one from the instance list, or "
+            "add a Dynatrace tenant to servers.yaml."
+        )
+    if getattr(dt[0].settings, "mock_mode", False):
+        raise RunbookError(
+            "MOCK_MODE is on, so there is no real Dynatrace to query. "
+            "Set MOCK_MODE=false and configure servers.yaml to use the Runbook."
+        )
+    return dt
+
+
 def _host_query(collector, params: dict) -> list[dict]:
     """``host.get`` with the fields every host-shaped report needs."""
     base = {
@@ -499,6 +515,305 @@ def run_ip_history(collectors: list, params: dict[str, str]) -> list[list]:
     return rows
 
 
+# --- Dynatrace: processes waiting on a restart ------------------------------
+
+#: Dynatrace treats any tag/property key that *starts with* one of these as a
+#: team identifier, so "owner", "owner-1" and "dt.owner.app" all count.
+_DT_OWNER_PREFIXES = ("owner", "dt.owner")
+
+#: One entitySelector may only cover ONE entity type — mixing HOST and
+#: PROCESS_GROUP ids returns 400 "ambiguous type information" — and the URL has
+#: a length limit, so ids are grouped by type and batched.
+_DT_ENTITY_BATCH = 50
+_DT_ENTITY_FIELDS = "+tags,+managementZones,+properties,+fromRelationships,+toRelationships"
+
+
+def _dt_entity_type(entity_id: str) -> str:
+    """``PROCESS_GROUP_INSTANCE-6D8F…`` -> ``PROCESS_GROUP_INSTANCE``.
+
+    Type names contain underscores but never hyphens, so splitting on the last
+    hyphen is safe.
+    """
+    return entity_id.rsplit("-", 1)[0]
+
+
+def _dt_related(entity: dict, prefix: str) -> list[str]:
+    """Related entity ids whose id starts with ``prefix``.
+
+    Picking relations by id prefix rather than by relationship name is
+    deliberate: the names differ across entity types and Dynatrace versions,
+    the ``HOST-`` / ``PROCESS_GROUP-`` prefix does not.
+    """
+    found: list[str] = []
+    for bucket in ("fromRelationships", "toRelationships"):
+        for rel_list in (entity.get(bucket) or {}).values():
+            for rel in rel_list or []:
+                rid = str(rel.get("id", ""))
+                if rid.startswith(prefix):
+                    found.append(rid)
+    return list(dict.fromkeys(found))
+
+
+def _dt_fetch_entities(collector, entity_ids) -> dict[str, dict]:
+    """Look entities up in batches, grouped by type. One call per 50 ids."""
+    ids = [e for e in dict.fromkeys(entity_ids) if e]
+    by_type: dict[str, list[str]] = {}
+    for eid in ids:
+        by_type.setdefault(_dt_entity_type(eid), []).append(eid)
+
+    out: dict[str, dict] = {}
+    for etype, type_ids in by_type.items():
+        for i in range(0, len(type_ids), _DT_ENTITY_BATCH):
+            batch = type_ids[i : i + _DT_ENTITY_BATCH]
+            selector = (
+                f'type("{etype}"),entityId('
+                + ",".join(f'"{e}"' for e in batch)
+                + ")"
+            )
+            try:
+                for ent in collector.read_paginated(
+                    "/api/v2/entities",
+                    {
+                        "entitySelector": selector,
+                        "fields": _DT_ENTITY_FIELDS,
+                        "pageSize": _DT_ENTITY_BATCH,
+                    },
+                    "entities",
+                ):
+                    out[ent["entityId"]] = ent
+            except Exception as exc:  # noqa: BLE001 — one bad batch is not fatal
+                logger.warning("entity batch failed (%s, %d ids): %s", etype, len(batch), exc)
+    return out
+
+
+def _dt_owner_values(pairs, prefixes=_DT_OWNER_PREFIXES) -> list[str]:
+    """Values of any key that names an owner."""
+    teams: list[str] = []
+    for key, value in pairs:
+        k = str(key or "").lower()
+        if not value:
+            continue
+        if any(k == p or k.startswith(p + "-") or k.startswith(p + ".") for p in prefixes):
+            teams.append(str(value))
+    return list(dict.fromkeys(teams))
+
+
+def _dt_tag_pairs(entity: dict):
+    return [(t.get("key", ""), t.get("value", "")) for t in (entity.get("tags") or [])]
+
+
+def _dt_property_pairs(entity: dict):
+    """Flatten an entity's properties into (key, value) pairs.
+
+    Properties hold strings, nested maps (host custom properties) and lists of
+    ``{key, value}`` metadata, and an owner can be recorded in any of them.
+    """
+    pairs: list[tuple[str, str]] = []
+    for key, value in (entity.get("properties") or {}).items():
+        if isinstance(value, str):
+            pairs.append((key, value))
+        elif isinstance(value, dict):
+            pairs += [(k, v) for k, v in value.items() if isinstance(v, str)]
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict) and "key" in item:
+                    pairs.append((str(item["key"]), str(item.get("value", ""))))
+    return pairs
+
+
+def _dt_teams(collector) -> dict[str, dict]:
+    """``builtin:ownership.teams`` -> ``{identifier: {name, contacts}}``.
+
+    Optional: a token without ``settings.read`` simply yields nothing and the
+    report falls back to raw team identifiers rather than failing.
+    """
+    teams: dict[str, dict] = {}
+    try:
+        for obj in collector.read_paginated(
+            "/api/v2/settings/objects",
+            {
+                "schemaIds": "builtin:ownership.teams",
+                "fields": "value",
+                "pageSize": 500,
+            },
+            "items",
+        ):
+            value = obj.get("value") or {}
+            identifier = value.get("identifier")
+            if not identifier:
+                continue
+            contacts = [
+                c.get("email") or c.get("url") or c.get("integrationType", "")
+                for c in (value.get("contactDetails") or [])
+            ]
+            entry = {
+                "name": value.get("name", identifier),
+                "contacts": [c for c in contacts if c],
+            }
+            teams[identifier] = entry
+            for supp in value.get("supplementaryIdentifiers") or []:
+                sid = supp.get("supplementaryIdentifier") if isinstance(supp, dict) else supp
+                if sid:
+                    teams[sid] = entry
+    except Exception as exc:  # noqa: BLE001 — ownership names are a nicety
+        logger.info("could not read ownership teams (%s); using raw team ids", exc)
+    return teams
+
+
+def _dt_version(value) -> str:
+    if isinstance(value, dict):
+        return ".".join(str(value[k]) for k in ("major", "minor", "revision") if k in value)
+    return str(value or "")
+
+
+def _dt_restart_candidates(collector, window: str) -> dict[str, dict]:
+    """``{pgi_id: {state, severity, name}}`` for everything needing a restart.
+
+    Tries the deprecated v1 endpoint first because it filters server-side — one
+    cheap call instead of scanning every process instance on the tenant — and
+    falls back to v2 when it has been removed.
+    """
+    found: dict[str, dict] = {}
+
+    # v1: filters server-side, but paginates through a RESPONSE HEADER rather
+    # than a body field. Missing that silently truncates at one page.
+    params: dict = {
+        "restartRequired": "true",
+        "includeDetails": "true",
+        "relativeTime": window,
+        "pageSize": 2000,
+    }
+    try:
+        for _ in range(50):
+            payload, headers = collector.read_api(
+                "/api/v1/entity/infrastructure/processes", params
+            )
+            rows = payload if isinstance(payload, list) else (payload or {}).get("values", [])
+            for row in rows or []:
+                state = row.get("monitoringState") or {}
+                eid = row.get("entityId", "")
+                if not eid:
+                    continue
+                found[eid] = {
+                    "state": "restart_required" if state.get("restartRequired") else "",
+                    "severity": (
+                        f'{state.get("actualMonitoringState", "?")}'
+                        f'->{state.get("expectedMonitoringState", "?")}'
+                    ),
+                    "name": row.get("displayName", ""),
+                }
+            next_key = headers.get("Next-Page-Key") or headers.get("next-page-key")
+            if not next_key:
+                break
+            params = {"nextPageKey": next_key}
+        return found
+    except Exception as exc:  # noqa: BLE001 — fall through to the v2 path
+        logger.info("v1 process endpoint unusable (%s); using /api/v2/monitoringstate", exc)
+
+    # v2: no server-side filter on state, so scan and filter here. Matches both
+    # "restart_required" and "restart_required_host_group_inconsistent".
+    for row in collector.read_paginated(
+        "/api/v2/monitoringstate",
+        {"entitySelector": 'type("PROCESS_GROUP_INSTANCE")', "pageSize": 500},
+        "monitoringStates",
+    ):
+        state = str(row.get("state") or "")
+        if "restart_required" not in state.lower():
+            continue
+        eid = row.get("entityId") or ""
+        if eid:
+            found[eid] = {
+                "state": state,
+                "severity": str(row.get("severity") or ""),
+                "name": "",
+            }
+    return found
+
+
+def run_dt_restart_required(collectors: list, params: dict[str, str]) -> list[list]:
+    """Processes Dynatrace is waiting to restart, with who owns each one."""
+    host_filter = (params.get("host") or "").strip().lower()
+    window = (params.get("window") or "3days").strip() or "3days"
+
+    rows: list[list] = []
+    for c in _require_dynatrace(collectors):
+        candidates = _dt_restart_candidates(c, window)
+        if not candidates:
+            continue
+
+        pgis = _dt_fetch_entities(c, list(candidates))
+        # Second hop: the hosts and process groups those instances belong to.
+        parents: list[str] = []
+        for ent in pgis.values():
+            parents += _dt_related(ent, "HOST-")
+            parents += _dt_related(ent, "PROCESS_GROUP-")
+        parent_entities = _dt_fetch_entities(c, parents)
+        teams = _dt_teams(c)
+
+        for pgi_id, found in candidates.items():
+            pgi = pgis.get(pgi_id, {})
+            host_ids = _dt_related(pgi, "HOST-")
+            # PROCESS_GROUP_INSTANCE ids also start with "PROCESS_GROUP-", so
+            # the instances have to be filtered back out to find the real group.
+            pg_ids = [p for p in _dt_related(pgi, "PROCESS_GROUP-") if "INSTANCE" not in p]
+            host = parent_entities.get(host_ids[0], {}) if host_ids else {}
+            pg = parent_entities.get(pg_ids[0], {}) if pg_ids else {}
+
+            host_name = host.get("displayName", "")
+            if host_filter and host_filter not in host_name.lower():
+                continue
+
+            # Most specific owner wins: the process, then its group, then the
+            # host it runs on. A management zone is a weak proxy, not ownership.
+            owner_ids: list[str] = []
+            source = "none"
+            for label, pairs in (
+                ("process", _dt_tag_pairs(pgi)),
+                ("process group", _dt_tag_pairs(pg)),
+                ("host tag", _dt_tag_pairs(host)),
+                ("host property", _dt_property_pairs(host)),
+            ):
+                owner_ids = _dt_owner_values(pairs)
+                if owner_ids:
+                    source = label
+                    break
+
+            zones = "; ".join(mz.get("name", "") for mz in (pgi.get("managementZones") or []))
+            if not owner_ids and zones:
+                source = "management zone"
+
+            names, contacts = [], []
+            for oid in owner_ids:
+                meta = teams.get(oid)
+                names.append(meta["name"] if meta else oid)
+                if meta:
+                    contacts += meta["contacts"]
+
+            rows.append([
+                c.instance,
+                host_name or "—",
+                found.get("name") or pgi.get("displayName", ""),
+                pg.get("displayName", ""),
+                ", ".join(names) or ("—" if owner_ids else "UNOWNED"),
+                ", ".join(dict.fromkeys(contacts)),
+                source,
+                _dt_version((pgi.get("properties") or {}).get("installerVersion")),
+                _dt_version((host.get("properties") or {}).get("agentVersion")),
+                found.get("state", ""),
+                zones,
+            ])
+
+    if not rows and host_filter:
+        raise RunbookError(
+            f"No process matching host {host_filter!r} needs a restart. "
+            "The host name is matched as a substring — check the spelling, or "
+            "clear the box to list every host."
+        )
+    # Unowned first: those are the ones somebody has to chase down.
+    rows.sort(key=lambda r: (r[4] != "UNOWNED", r[1].lower(), r[2].lower()))
+    return rows
+
+
 # --- The catalogue ----------------------------------------------------------
 
 _IPS_PARAM = Param(
@@ -752,6 +1067,69 @@ SCRIPTS: tuple[Script, ...] = (
             "History is the largest table in any Zabbix database. Results are "
             "capped by RUNBOOK_MAX_ROWS; keep the window tight — a day or two "
             "of a busy host is already tens of thousands of rows.",
+        ),
+    ),
+    Script(
+        slug="dt-restart-required",
+        title="Processes Requiring Restart",
+        platform="dynatrace",
+        tagline="Processes waiting on a restart, and who owns each one.",
+        purpose=(
+            "Lists every process instance Dynatrace has flagged as needing a "
+            "restart — usually because a OneAgent was upgraded underneath it, so "
+            "the running process is still instrumented by the old version. Until "
+            "someone restarts it, that process is monitored with whatever the "
+            "previous agent supported.",
+            "The point of the report is the owner column. These restarts are not "
+            "the monitoring team's to perform: each one belongs to whoever runs "
+            "the application. Resolving the owner turns a list of hundreds into "
+            "a set of short lists you can actually send to people.",
+            "Leave the host box empty for the whole estate, or type part of a "
+            "host name to see just that server's processes and their owners.",
+        ),
+        steps=(
+            "Ask Dynatrace for the processes flagged restart-required. The "
+            "deprecated v1 endpoint filters server-side, so it is tried first; "
+            "if it has been removed, every process instance's monitoring state "
+            "is scanned instead and filtered here.",
+            "Look the process instances up in batches of 50, then their parent "
+            "hosts and process groups in a second batched pass.",
+            "Resolve the owner from the most specific place it appears: the "
+            "process's own tags, then its group's, then the host's tags, then "
+            "the host's properties.",
+            "Translate team identifiers into names and contact addresses via "
+            "the tenant's ownership settings, when the token can read them.",
+        ),
+        columns=("Instance", "Host", "Process", "Process Group", "Owner",
+                 "Owner Contact", "Owner From", "Process Agent", "Host Agent",
+                 "State", "Management Zones"),
+        api_calls=("entity/infrastructure/processes", "monitoringstate",
+                   "entities", "settings/objects"),
+        params=(
+            Param(
+                name="host",
+                label="Host contains",
+                placeholder="dr-evcag1",
+                help="Substring match on the host name. Leave empty for every host.",
+            ),
+            Param(
+                name="window",
+                label="Lookback",
+                placeholder="3days",
+                help="How far back to look for processes seen running. Dynatrace "
+                     "caps this at 3days, which is also the default.",
+            ),
+        ),
+        runner=run_dt_restart_required,
+        notes=(
+            "Rows with no owner are listed first — those are the ones somebody "
+            "has to chase down before the restart can be scheduled.",
+            "Ownership names and contacts come from the tenant's ownership "
+            "settings, which need the settings.read scope on the token. Without "
+            "it the report still works and shows the raw team identifier.",
+            "The lookback is a Dynatrace limit, not ours: the v1 endpoint only "
+            "covers processes seen in the last three days, so this is 'restart "
+            "required among processes seen recently', not 'ever'.",
         ),
     ),
     # --- Documented, deliberately not runnable from the web -----------------

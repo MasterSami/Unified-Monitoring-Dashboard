@@ -466,3 +466,314 @@ def test_runner_row_width_matches_declared_columns():
         rows = runner([fake], {})
         assert rows, slug
         assert len(rows[0]) == len(SCRIPTS_BY_SLUG[slug].columns), slug
+
+
+# --- Dynatrace: processes requiring restart ---------------------------------
+
+
+class FakeDynatrace:
+    """Stands in for a live Dynatrace tenant; records calls, replays canned JSON."""
+
+    name = "dynatrace"
+
+    def __init__(self, instance="Dynatrace-TEST", **routes):
+        self.instance = instance
+        self.calls: list[tuple[str, dict]] = []
+        self._routes = routes
+
+    def _lookup(self, path, params):
+        self.calls.append((path, dict(params or {})))
+        for key, value in self._routes.items():
+            if key in path:
+                return value(params) if callable(value) else value
+        return {}
+
+    def read_api(self, path, params=None):
+        result = self._lookup(path, params)
+        if isinstance(result, tuple):
+            return result
+        return result, {}
+
+    def read_paginated(self, path, params, items_key, **kw):
+        payload = self._lookup(path, params)
+        if isinstance(payload, tuple):
+            payload = payload[0]
+        yield from (payload or {}).get(items_key, [])
+
+    class settings:  # noqa: N801 — mirrors the collector attribute
+        mock_mode = False
+        runbook_max_rows = 20000
+
+
+def _pgi(eid, name, host_id, pg_id, tags=(), zones=()):
+    return {
+        "entityId": eid,
+        "displayName": name,
+        "tags": [{"key": k, "value": v} for k, v in tags],
+        "managementZones": [{"name": z} for z in zones],
+        "properties": {"installerVersion": {"major": 1, "minor": 291, "revision": 0}},
+        "fromRelationships": {"isProcessOf": [{"id": host_id}], "runsOn": [{"id": pg_id}]},
+    }
+
+
+_HOST_ENT = {
+    "entityId": "HOST-AAA",
+    "displayName": "dr-evcag1",
+    "tags": [],
+    "properties": {"agentVersion": {"major": 1, "minor": 295, "revision": 2}},
+}
+_PG_ENT = {
+    "entityId": "PROCESS_GROUP-PG1",
+    "displayName": "AG cluster",
+    "tags": [],
+    "properties": {},
+}
+
+
+def _tenant(**over):
+    routes = {
+        "entity/infrastructure/processes": (
+            [
+                {"entityId": "PROCESS_GROUP_INSTANCE-1", "displayName": "java AG",
+                 "monitoringState": {"restartRequired": True,
+                                     "actualMonitoringState": "OFF",
+                                     "expectedMonitoringState": "ON"}},
+            ],
+            {},
+        ),
+        "/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "java AG", "HOST-AAA", "PROCESS_GROUP-PG1",
+                 tags=[("owner", "team-billing")]),
+            _HOST_ENT, _PG_ENT,
+        ]},
+        "settings/objects": {"items": [
+            {"value": {"identifier": "team-billing", "name": "Billing Platform",
+                       "contactDetails": [{"email": "billing@corp.com"}]}}
+        ]},
+    }
+    routes.update(over)
+    return FakeDynatrace(**routes)
+
+
+def test_restart_report_resolves_host_process_and_owner():
+    from app.runbook import run_dt_restart_required
+
+    rows = run_dt_restart_required([_tenant()], {})
+    assert len(rows) == 1
+    (instance, host, process, group, owner, contact, source,
+     pgi_agent, host_agent, state, zones) = rows[0]
+    assert instance == "Dynatrace-TEST"
+    assert host == "dr-evcag1"
+    assert process == "java AG"
+    assert group == "AG cluster"
+    assert owner == "Billing Platform"          # identifier translated to a name
+    assert contact == "billing@corp.com"
+    assert source == "process"                  # the most specific tag won
+    assert pgi_agent == "1.291.0" and host_agent == "1.295.2"
+    assert state == "restart_required"
+
+
+def test_owner_falls_back_through_group_host_then_property():
+    """Most specific owner wins; each level is used only when the one above is bare."""
+    from app.runbook import run_dt_restart_required
+
+    def tenant_with(pgi_tags, pg_tags, host_tags, host_props):
+        host = dict(_HOST_ENT, tags=[{"key": k, "value": v} for k, v in host_tags],
+                    properties={**_HOST_ENT["properties"], **host_props})
+        pg = dict(_PG_ENT, tags=[{"key": k, "value": v} for k, v in pg_tags])
+        return _tenant(**{"/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "p", "HOST-AAA", "PROCESS_GROUP-PG1",
+                 tags=pgi_tags),
+            host, pg,
+        ]}})
+
+    cases = [
+        ([("owner", "a")], [], [], {}, "process", "a"),
+        ([], [("owner", "b")], [], {}, "process group", "b"),
+        ([], [], [("dt.owner", "c")], {}, "host tag", "c"),
+        ([], [], [], {"owner-1": "d"}, "host property", "d"),
+    ]
+    for pgi_tags, pg_tags, host_tags, host_props, expected_source, expected_id in cases:
+        rows = run_dt_restart_required([tenant_with(pgi_tags, pg_tags, host_tags, host_props)], {})
+        assert rows[0][6] == expected_source, (expected_source, rows[0])
+        # No team entry for these ids, so the raw identifier is reported.
+        assert rows[0][4] == expected_id
+
+
+def test_owner_key_prefixes_match_dynatrace_semantics():
+    from app.runbook import _dt_owner_values
+
+    assert _dt_owner_values([("owner", "a")]) == ["a"]
+    assert _dt_owner_values([("owner-1", "b")]) == ["b"]
+    assert _dt_owner_values([("dt.owner.app", "c")]) == ["c"]
+    # A key that merely CONTAINS "owner" is not ownership.
+    assert _dt_owner_values([("downowner", "x"), ("ownership", "y")]) == []
+    # Empty values are not owners.
+    assert _dt_owner_values([("owner", "")]) == []
+
+
+def test_unowned_processes_are_listed_first():
+    """Those are the ones somebody has to chase before a restart can be booked."""
+    from app.runbook import run_dt_restart_required
+
+    tenant = _tenant(**{
+        "entity/infrastructure/processes": ([
+            {"entityId": "PROCESS_GROUP_INSTANCE-1", "displayName": "owned",
+             "monitoringState": {"restartRequired": True}},
+            {"entityId": "PROCESS_GROUP_INSTANCE-2", "displayName": "orphan",
+             "monitoringState": {"restartRequired": True}},
+        ], {}),
+        "/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "owned", "HOST-AAA", "PROCESS_GROUP-PG1",
+                 tags=[("owner", "team-billing")]),
+            _pgi("PROCESS_GROUP_INSTANCE-2", "orphan", "HOST-AAA", "PROCESS_GROUP-PG1"),
+            _HOST_ENT, _PG_ENT,
+        ]},
+    })
+    rows = run_dt_restart_required([tenant], {})
+    assert [r[4] for r in rows] == ["UNOWNED", "Billing Platform"]
+
+
+def test_search_by_host_narrows_the_report():
+    """The feature asked for: type a host, get its processes and their owners."""
+    from app.runbook import run_dt_restart_required
+
+    other_host = dict(_HOST_ENT, entityId="HOST-BBB", displayName="dr-evcbcs1")
+    tenant = _tenant(**{
+        "entity/infrastructure/processes": ([
+            {"entityId": "PROCESS_GROUP_INSTANCE-1", "displayName": "on-ag",
+             "monitoringState": {"restartRequired": True}},
+            {"entityId": "PROCESS_GROUP_INSTANCE-2", "displayName": "on-bcs",
+             "monitoringState": {"restartRequired": True}},
+        ], {}),
+        "/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "on-ag", "HOST-AAA", "PROCESS_GROUP-PG1"),
+            _pgi("PROCESS_GROUP_INSTANCE-2", "on-bcs", "HOST-BBB", "PROCESS_GROUP-PG1"),
+            _HOST_ENT, other_host, _PG_ENT,
+        ]},
+    })
+
+    assert len(run_dt_restart_required([tenant], {})) == 2
+    rows = run_dt_restart_required([tenant], {"host": "evcbcs"})
+    assert len(rows) == 1 and rows[0][1] == "dr-evcbcs1"
+    # Matching is case-insensitive.
+    assert len(run_dt_restart_required([tenant], {"host": "EVCAG"})) == 1
+
+
+def test_a_host_with_nothing_to_restart_says_so():
+    from app.runbook import RunbookError, run_dt_restart_required
+
+    with pytest.raises(RunbookError, match="No process matching host"):
+        run_dt_restart_required([_tenant()], {"host": "no-such-host"})
+
+
+def test_falls_back_to_v2_when_the_v1_endpoint_is_gone():
+    from app.runbook import run_dt_restart_required
+
+    class Gone(FakeDynatrace):
+        def read_api(self, path, params=None):
+            if "entity/infrastructure/processes" in path:
+                raise RuntimeError("HTTP 404")
+            return super().read_api(path, params)
+
+    tenant = Gone(**{
+        "monitoringstate": {"monitoringStates": [
+            {"entityId": "PROCESS_GROUP_INSTANCE-1",
+             "state": "RESTART_REQUIRED_HOST_GROUP_INCONSISTENT", "severity": "WARN"},
+            {"entityId": "PROCESS_GROUP_INSTANCE-9", "state": "MONITORED"},
+        ]},
+        "/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "java AG", "HOST-AAA", "PROCESS_GROUP-PG1"),
+            _HOST_ENT, _PG_ENT,
+        ]},
+        "settings/objects": {"items": []},
+    })
+    rows = run_dt_restart_required([tenant], {})
+    # Only the restart-required one, and the variant state still matches.
+    assert len(rows) == 1
+    assert rows[0][9] == "RESTART_REQUIRED_HOST_GROUP_INCONSISTENT"
+
+
+def test_entities_are_looked_up_in_batches_grouped_by_type():
+    """One selector may only cover one entity type, and the URL has a limit."""
+    from app.runbook import run_dt_restart_required
+
+    tenant = _tenant()
+    run_dt_restart_required([tenant], {})
+    selectors = [
+        p["entitySelector"] for path, p in tenant.calls
+        if path == "/api/v2/entities" and "entitySelector" in p
+    ]
+    assert selectors, "entities must be fetched via entitySelector"
+    for selector in selectors:
+        # Exactly one type(...) clause per selector.
+        assert selector.count('type("') == 1, selector
+
+
+def test_missing_ownership_settings_degrade_to_raw_identifiers():
+    """A token without settings.read must not fail the whole report."""
+    from app.runbook import run_dt_restart_required
+
+    class NoSettings(FakeDynatrace):
+        def read_paginated(self, path, params, items_key, **kw):
+            if "settings/objects" in path:
+                raise RuntimeError("HTTP 403 insufficient scope")
+            yield from super().read_paginated(path, params, items_key, **kw)
+
+    tenant = NoSettings(**{
+        "entity/infrastructure/processes": ([
+            {"entityId": "PROCESS_GROUP_INSTANCE-1", "displayName": "p",
+             "monitoringState": {"restartRequired": True}}], {}),
+        "/api/v2/entities": {"entities": [
+            _pgi("PROCESS_GROUP_INSTANCE-1", "p", "HOST-AAA", "PROCESS_GROUP-PG1",
+                 tags=[("owner", "team-billing")]),
+            _HOST_ENT, _PG_ENT,
+        ]},
+    })
+    rows = run_dt_restart_required([tenant], {})
+    assert rows[0][4] == "team-billing"  # raw id, not a crash
+
+
+def test_process_group_instances_are_not_mistaken_for_the_group():
+    """PGI ids also start with PROCESS_GROUP-, so they must be filtered out."""
+    from app.runbook import _dt_related
+
+    entity = {"fromRelationships": {"x": [
+        {"id": "PROCESS_GROUP_INSTANCE-9"},
+        {"id": "PROCESS_GROUP-REAL"},
+        {"id": "HOST-AAA"},
+    ]}}
+    groups = [p for p in _dt_related(entity, "PROCESS_GROUP-") if "INSTANCE" not in p]
+    assert groups == ["PROCESS_GROUP-REAL"]
+    assert _dt_related(entity, "HOST-") == ["HOST-AAA"]
+
+
+def test_entity_type_is_derived_from_the_id():
+    from app.runbook import _dt_entity_type
+
+    assert _dt_entity_type("PROCESS_GROUP_INSTANCE-6D8F") == "PROCESS_GROUP_INSTANCE"
+    assert _dt_entity_type("HOST-ABC123") == "HOST"
+
+
+def test_read_api_refuses_anything_that_is_not_an_api_path():
+    from app.collectors.base import CollectorError
+    from app.collectors.dynatrace import DynatraceCollector
+    from app.config import get_settings
+    from app.servers import ServerConfig
+
+    c = DynatraceCollector(
+        ServerConfig(name="DT", platform="dynatrace", url="https://x", token="t"),
+        get_settings(),
+    )
+    with pytest.raises(CollectorError, match="must start with /api/"):
+        c.read_api("/rest/something")
+
+
+def test_the_script_is_registered_and_documented():
+    from app.runbook import SCRIPTS_BY_SLUG
+
+    script = SCRIPTS_BY_SLUG["dt-restart-required"]
+    assert script.platform == "dynatrace"
+    assert script.read_only and script.runner is not None
+    assert {p.name for p in script.params} == {"host", "window"}
+    assert "Owner" in script.columns and "Host" in script.columns

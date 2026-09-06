@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.collectors.base import BaseCollector
+from app.collectors.base import BaseCollector, CollectorError
 from app.collectors import mock_data
 from app.config import Settings
 from app.models import HostStatus, SourcePlatform
@@ -86,6 +86,56 @@ class DynatraceCollector(BaseCollector):
             "Authorization": f"Api-Token {self.config.token}",
             "Accept": "application/json",
         }
+
+    # --- Read-only escape hatch (Runbook) -----------------------------------
+
+    def read_api(
+        self, path: str, params: dict | None = None
+    ) -> tuple[object, dict[str, str]]:
+        """GET a Dynatrace API path, reusing this instance's credentials.
+
+        The Runbook queries through here rather than opening its own connection,
+        so no token is duplicated outside ``servers.yaml``. Only GET is offered —
+        the same property :meth:`ZabbixCollector.read_rpc` gives the Zabbix
+        scripts: a Runbook script cannot change anything, whatever it is written
+        to do.
+
+        Returns ``(payload, headers)``. The headers matter: the deprecated v1
+        process endpoint paginates through a ``Next-Page-Key`` *response header*
+        rather than a field in the body, and missing it silently truncates the
+        result at one page.
+        """
+        if not path.startswith("/api/"):
+            raise CollectorError(f"read_api refuses path {path!r}; must start with /api/")
+        url = f"{self._base}{path}"
+        with self._client(headers=self._headers()) as client:
+            resp = self._request_with_retries(client, "GET", url, params=params or {})
+            if resp.status_code >= 400:
+                raise CollectorError(
+                    f"Dynatrace GET {path} -> HTTP {resp.status_code}: {resp.text[:300]}"
+                )
+            return resp.json(), dict(resp.headers)
+
+    def read_paginated(
+        self, path: str, params: dict, items_key: str, *, max_pages: int = 200
+    ):
+        """Yield every item across a v2 endpoint's pages.
+
+        Dynatrace's v2 pagination has one rule that bites: once you hold a
+        ``nextPageKey`` you must send *only* that parameter — including any
+        other query param returns HTTP 400.
+        """
+        page_params = dict(params)
+        for _ in range(max_pages):
+            payload, _headers = self.read_api(path, page_params)
+            if not isinstance(payload, dict):
+                return
+            for item in payload.get(items_key) or []:
+                yield item
+            next_key = payload.get("nextPageKey")
+            if not next_key:
+                return
+            page_params = {"nextPageKey": next_key}
 
     # --- Contract -----------------------------------------------------------
 

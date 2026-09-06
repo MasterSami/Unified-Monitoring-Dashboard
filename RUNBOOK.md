@@ -65,7 +65,7 @@ config for completeness and should stay `false`.
 
 ## What's in the catalogue
 
-All Zabbix, for now.
+Zabbix, plus the first Dynatrace report.
 
 | Script | What it answers |
 |---|---|
@@ -77,6 +77,7 @@ All Zabbix, for now.
 | **Proxy Status** | Proxy fleet health, plus how many hosts sit behind each one. |
 | **Host Group Audit (vCenter)** | Which hosts in a group are enabled but collecting nothing? |
 | **IP Metric History** | Raw numeric history for one IP over a chosen window. |
+| **Processes Requiring Restart** *(Dynatrace)* | Which processes are waiting on a restart, and who owns each one. |
 | *Bulk Add Hosts* | *(documented, CLI only — creates hosts)* |
 | *Bulk Add Users* | *(documented, CLI only — creates users)* |
 | *Bulk Disable Hosts* | *(documented, CLI only — stops monitoring)* |
