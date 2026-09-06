@@ -1781,98 +1781,110 @@ h3{
 .platform-logo .dv-mark{width:100%;height:100%;font-size:13px;border-radius:7px;}
 .platform.v::before{background:linear-gradient(90deg,#18b6c9,#3478f6);}
 
-/* --- denser slides: more content, same frame --- */
-.slide.dense h2{font-size:clamp(28px,3.05vw,44px);margin-bottom:14px;}
-.slide.dense .lead{font-size:clamp(13px,1.05vw,15.5px);line-height:1.55;max-width:1050px;}
-.slide.dense .platform-row{margin-top:22px;gap:12px;}
-.slide.dense .platform{padding:18px;min-height:0;border-radius:16px;}
-.slide.dense .platform-name{font-size:16px;margin:9px 0 6px;}
-.slide.dense .platform-desc{font-size:11px;line-height:1.5;}
-.slide.dense .platform-head{margin:10px 0 4px;}
-.slide.dense .platform-logo{width:38px;height:38px;border-radius:10px;padding:6px;}
+/* --- talking-deck sizing: few words, large type --- */
+.slide.dense h2{font-size:clamp(32px,3.7vw,54px);margin-bottom:16px;}
+.slide.dense .lead{font-size:clamp(15px,1.3vw,19px);line-height:1.55;max-width:900px;}
+.slide.dense .platform-row{margin-top:30px;gap:14px;}
+.slide.dense .platform{padding:22px;min-height:0;border-radius:18px;}
+.slide.dense .platform-name{font-size:19px;margin:10px 0 8px;}
+.slide.dense .platform-desc{font-size:12.5px;line-height:1.65;}
+.slide.dense .platform-head{margin:12px 0 4px;}
+.slide.dense .platform-logo{width:42px;height:42px;border-radius:11px;padding:7px;}
 .slide.dense .grid-3,
-.slide.dense .grid-4{margin-top:18px;gap:12px;}
-.slide.dense .card{padding:18px;border-radius:16px;}
-.slide.dense .card h3{font-size:15px;margin:8px 0 6px;}
-.slide.dense .card p{font-size:11.5px;line-height:1.55;margin:0;color:var(--muted);}
-.slide.dense .card-icon{width:34px;height:34px;border-radius:10px;font-size:12px;}
-.slide.dense .kpi-grid{margin-top:24px;gap:12px;}
-.slide.dense .kpi{padding:20px;border-radius:16px;}
-.slide.dense .value-grid{margin-top:18px;gap:12px;}
-.slide.dense .value-card{padding:18px;border-radius:16px;min-height:0;}
-.slide.dense .value-card h3{font-size:15px;margin:6px 0 6px;}
-.slide.dense .value-card p{font-size:11.5px;line-height:1.55;margin:0;}
-.slide.dense .compare{margin-top:20px;}
-.slide.dense .compare-box{padding:22px;border-radius:20px;}
-.slide.dense .compare-item{font-size:12.5px;}
-.slide.dense .architecture{margin-top:18px;}
-.slide.dense .arch-col{min-height:0;padding:10px 16px;}
-.slide.dense .arch-node{padding:9px 12px;margin-bottom:6px;border-radius:11px;}
-.slide.dense .arch-node b{font-size:11.5px;}
-.slide.dense .arch-node span{font-size:9.5px;margin-top:3px;line-height:1.45;}
-.slide.dense .arch-arrow{margin:2px 0;font-size:12px;}
-.slide.dense .safety-layout{margin-top:14px;gap:30px;}
-.slide.dense .shield{width:190px;height:220px;}
+.slide.dense .grid-4{margin-top:26px;gap:16px;}
+.slide.dense .card{padding:24px;border-radius:20px;}
+.slide.dense .card h3{font-size:18px;margin:12px 0 8px;}
+.slide.dense .card p{font-size:13.5px;line-height:1.6;margin:0;color:var(--muted);}
+.slide.dense .card-icon{width:40px;height:40px;border-radius:12px;font-size:14px;}
+.slide.dense .kpi-grid{margin-top:34px;gap:16px;}
+.slide.dense .kpi{padding:26px;border-radius:20px;}
+.slide.dense .value-grid{margin-top:26px;gap:14px;}
+.slide.dense .value-card{padding:24px;border-radius:20px;min-height:0;}
+.slide.dense .value-card h3{font-size:18px;margin:8px 0 8px;}
+.slide.dense .value-card p{font-size:13px;line-height:1.6;margin:0;}
+.slide.dense .compare{margin-top:32px;}
+.slide.dense .compare-box{padding:30px;border-radius:22px;}
+.slide.dense .compare-item{font-size:14.5px;}
+.slide.dense .architecture{margin-top:26px;}
+.slide.dense .arch-col{min-height:0;padding:16px 20px;}
+.slide.dense .arch-node{padding:13px 16px;margin-bottom:9px;border-radius:13px;}
+.slide.dense .arch-node b{font-size:13px;}
+.slide.dense .arch-node span{font-size:11px;margin-top:4px;line-height:1.5;}
+.slide.dense .arch-arrow{margin:3px 0;}
+
+/* short laptop screens: give the architecture slide room */
+@media (max-height:820px){
+  .slide.dense .architecture{margin-top:18px;}
+  .slide.dense .arch-col{padding:10px 16px;}
+  .slide.dense .arch-node{padding:10px 13px;margin-bottom:6px;}
+  .slide.dense .arch-node span{font-size:10px;}
+  .slide.dense .facts{margin-top:18px;}
+}
+@media (max-height:750px){
+  .slide.dense .architecture{margin-top:12px;}
+  .slide.dense .arch-col{padding:6px 14px;}
+  .slide.dense .arch-node{padding:8px 11px;margin-bottom:5px;}
+  .slide.dense .arch-node b{font-size:12px;}
+  .slide.dense .arch-node span{font-size:9.5px;line-height:1.4;}
+  .slide.dense .arch-arrow{margin:0;font-size:11px;}
+  .slide.dense .facts{margin-top:14px;gap:8px;}
+  .slide.dense .fact{padding:8px 12px;font-size:11.5px;}
+}
 
 /* --- view / tab strip --- */
-.views{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-top:22px;}
+.views{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:32px;}
 .view{
-  background:#fff;border:1px solid var(--border);border-radius:16px;
-  padding:15px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden;
+  background:#fff;border:1px solid var(--border);border-radius:18px;
+  padding:20px 22px;box-shadow:var(--shadow);position:relative;overflow:hidden;
 }
 .view::before{content:"";position:absolute;left:0;top:0;width:3px;height:100%;background:var(--we-purple);}
 .view .vi{
-  width:28px;height:28px;border-radius:9px;display:grid;place-items:center;
-  background:var(--we-lilac);color:var(--we-purple);font-size:13px;font-weight:900;margin-bottom:9px;
+  width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
+  background:var(--we-lilac);color:var(--we-purple);font-size:15px;font-weight:900;margin-bottom:12px;
 }
-.view b{display:block;font-size:13.5px;color:var(--navy);letter-spacing:-.01em;}
-.view span{display:block;margin-top:5px;font-size:10.5px;line-height:1.5;color:var(--muted);}
+.view b{display:block;font-size:16px;color:var(--navy);letter-spacing:-.015em;}
+.view span{display:block;margin-top:7px;font-size:12.5px;line-height:1.55;color:var(--muted);}
 .view.new::after{
-  content:"NEW";position:absolute;right:10px;top:11px;
-  font-size:8px;font-weight:900;letter-spacing:.1em;
-  color:#fff;background:var(--green);padding:2px 6px;border-radius:6px;
+  content:"NEW";position:absolute;right:12px;top:14px;
+  font-size:8.5px;font-weight:900;letter-spacing:.1em;
+  color:#fff;background:var(--green);padding:3px 7px;border-radius:6px;
 }
 
 /* --- capability list (features slide) --- */
-.caps{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:20px;}
+.caps{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:30px;}
 .cap{
-  display:grid;grid-template-columns:38px 1fr;gap:13px;align-items:start;
-  background:#fff;border:1px solid var(--border);border-radius:16px;
-  padding:15px 17px;box-shadow:var(--shadow);
+  display:grid;grid-template-columns:44px 1fr;gap:16px;align-items:center;
+  background:#fff;border:1px solid var(--border);border-radius:18px;
+  padding:20px 22px;box-shadow:var(--shadow);
 }
 .cap .ci{
-  width:38px;height:38px;border-radius:12px;display:grid;place-items:center;
-  background:linear-gradient(145deg,#6f2cff,#4520a8);color:#fff;font-size:15px;font-weight:900;
+  width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
+  background:linear-gradient(145deg,#6f2cff,#4520a8);color:#fff;font-size:17px;font-weight:900;
 }
-.cap b{display:block;font-size:13.5px;color:var(--navy);}
-.cap span{display:block;margin-top:4px;font-size:11px;line-height:1.55;color:var(--muted);}
-.cap em{font-style:normal;color:var(--we-purple);font-weight:800;}
+.cap b{display:block;font-size:16px;color:var(--navy);letter-spacing:-.015em;}
+.cap span{display:block;margin-top:5px;font-size:12.5px;line-height:1.55;color:var(--muted);}
 
 /* --- inline strip of facts --- */
-.facts{
-  display:flex;flex-wrap:wrap;gap:9px;margin-top:18px;
-}
+.facts{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px;}
 .fact{
-  background:var(--we-lilac);border:1px solid #ddd0ff;border-radius:11px;
-  padding:8px 13px;font-size:11px;font-weight:800;color:var(--we-purple-dark);
+  background:var(--we-lilac);border:1px solid #ddd0ff;border-radius:12px;
+  padding:10px 15px;font-size:12.5px;font-weight:800;color:var(--we-purple-dark);
 }
 .fact b{color:var(--navy);}
 
 /* --- quality bar --- */
-.quality{
-  display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-top:16px;
-}
+.quality{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;}
 .q{
-  background:#fff;border:1px solid var(--border);border-radius:14px;
-  padding:14px 16px;box-shadow:var(--shadow);
+  background:#fff;border:1px solid var(--border);border-radius:16px;
+  padding:18px 22px;box-shadow:var(--shadow);
 }
-.q b{display:block;font-size:22px;font-weight:900;color:var(--we-purple);letter-spacing:-.03em;}
-.q span{display:block;margin-top:3px;font-size:9.5px;font-weight:800;letter-spacing:.11em;color:var(--muted);text-transform:uppercase;}
+.q b{display:block;font-size:30px;font-weight:900;color:var(--we-purple);letter-spacing:-.04em;}
+.q span{display:block;margin-top:5px;font-size:10.5px;font-weight:800;letter-spacing:.11em;color:var(--muted);text-transform:uppercase;}
 
 /* --- footnote --- */
 .foot-note{
-  margin-top:16px;font-size:11px;color:var(--muted);
-  border-left:3px solid var(--we-purple);padding-left:12px;line-height:1.6;
+  margin-top:24px;font-size:12.5px;color:var(--muted);
+  border-left:3px solid var(--we-purple);padding-left:14px;line-height:1.6;
 }
 
 </style>
@@ -1920,9 +1932,8 @@ h3{
       </h1>
 
       <p class="lead">
-        One operational view across Zabbix, Dynatrace, NNMi, SiteScope and
-        DigitalView &mdash; turning fragmented monitoring into a single source of
-        operational truth, with the tools to act on it.
+        Zabbix &middot; Dynatrace &middot; NNMi &middot; SiteScope &middot; DigitalView
+        <br>&mdash; in one operational view.
       </p>
 
     </div>
@@ -1989,22 +2000,15 @@ h3{
   <div class="accent-line"></div>
 
   <h2>
-    From five monitoring tools<br>
-    <span class="gradient-text">to one operational view.</span>
+    Five monitoring tools.<br>
+    <span class="gradient-text">One operational view.</span>
   </h2>
-
-  <p class="lead">
-    SAMI'X is a unified operations layer built on top of the monitoring platforms
-    Telecom Egypt already owns. It does not replace them and does not compete with
-    them &mdash; it reads from them, normalizes what they report, and presents one
-    consolidated picture that Operations can act on directly.
-  </p>
 
   <div class="kpi-grid">
 
     <div class="kpi">
       <div class="kpi-value">5</div>
-      <div class="kpi-label">MONITORING SOURCES INTEGRATED</div>
+      <div class="kpi-label">SOURCES INTEGRATED</div>
     </div>
 
     <div class="kpi">
@@ -2019,7 +2023,7 @@ h3{
 
     <div class="kpi">
       <div class="kpi-value">0</div>
-      <div class="kpi-label">PRODUCTION CHANGES REQUIRED</div>
+      <div class="kpi-label">PRODUCTION CHANGES</div>
     </div>
 
   </div>
@@ -2028,29 +2032,20 @@ h3{
 
     <div class="card">
       <div class="card-icon">&rarr;</div>
-      <h3>Not another monitoring tool</h3>
-      <p>
-        Zabbix, Dynatrace, NNMi and SiteScope remain the systems of record.
-        SAMI'X sits above them as the operational layer.
-      </p>
+      <h3>Not a replacement</h3>
+      <p>The existing tools stay the systems of record.</p>
     </div>
 
     <div class="card">
       <div class="card-icon">&#10003;</div>
       <h3>Built and running</h3>
-      <p>
-        Collectors, normalization, dashboard, reporting, escalation and the
-        Runbook script library are implemented, tested and in use.
-      </p>
+      <p>Delivered and in daily use &mdash; not a proposal.</p>
     </div>
 
     <div class="card">
       <div class="card-icon">&#8734;</div>
-      <h3>Designed to extend</h3>
-      <p>
-        Adding a monitoring source means writing one collector. The views, the
-        exports and the data model do not change.
-      </p>
+      <h3>Built to extend</h3>
+      <p>A new source means one collector. Nothing else changes.</p>
     </div>
 
   </div>
@@ -2078,12 +2073,6 @@ h3{
     <span class="gradient-text">It is fragmentation.</span>
   </h2>
 
-  <p class="lead">
-    Every platform in the estate collects good data. The cost is paid when an
-    engineer has to assemble one incident picture out of four consoles that
-    disagree on names, severities and even on how many servers exist.
-  </p>
-
   <div class="compare">
 
     <div class="compare-box before">
@@ -2094,32 +2083,32 @@ h3{
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>Four consoles, four logins, four mental models for one incident.</div>
+          <div>Four consoles for one incident.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>Severity means something different in each tool &mdash; totals cannot be compared.</div>
+          <div>Severity means something different in each tool.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>The same server is counted two or three times across platforms.</div>
+          <div>The same server counted two or three times.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>Finding the owner of a failing host is a manual search.</div>
+          <div>Finding the owner is a manual search.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>A collector that stops looks exactly like a healthy environment.</div>
+          <div>A dead collector looks like a quiet night.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&times;</div>
-          <div>Routine questions are answered by scripts that live on one laptop.</div>
+          <div>Admin scripts live on one laptop.</div>
         </div>
 
       </div>
@@ -2136,32 +2125,32 @@ h3{
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>One dashboard as the starting point for every investigation.</div>
+          <div>One dashboard to start from.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>A common structure, with each platform's native severity preserved and shown.</div>
+          <div>Common structure, native severity kept.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>Servers de-duplicated across sources &mdash; one honest fleet number.</div>
+          <div>De-duplicated &mdash; one honest fleet number.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>Owner resolved automatically, escalation sent in one click.</div>
+          <div>Owner resolved. Escalation in one click.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>Collector health and data freshness shown next to the data itself.</div>
+          <div>Collector health always on screen.</div>
         </div>
 
         <div class="compare-item">
           <div class="bullet">&#10003;</div>
-          <div>Team scripts published as a shared, documented, auditable library.</div>
+          <div>Scripts shared, documented, auditable.</div>
         </div>
 
       </div>
@@ -2194,21 +2183,16 @@ h3{
     <span class="gradient-text">SAMI'X manages operations.</span>
   </h2>
 
-  <p class="lead">
-    The two are complementary, not competing. Event consolidation stays where it
-    belongs; SAMI'X adds the operational layer that sits around it.
-  </p>
-
   <div class="nx-compare">
 
     <div class="nx-card">
       <div class="nx-card-title">Netcool &middot; OMNIbus</div>
       <div class="nx-card-sub">Event &amp; fault consolidation</div>
       <div class="nx-list">
-        <div class="nx-item"><div class="nx-icon">&#8599;</div><div><b>Event collection</b><span>Centralizes operational events from many probes.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#8779;</div><div><b>Deduplication &amp; correlation</b><span>Reduces noise and links related events.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">!</div><div><b>Escalation &amp; reporting</b><span>Policy-based workflows; reporting requires extensions.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#9633;</div><div><b>Scope</b><span>Events. Capacity, inventory and day-to-day admin tasks sit outside it.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#8599;</div><div><b>Event collection</b><span>Centralizes events from many probes.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#8779;</div><div><b>Deduplication &amp; correlation</b><span>Reduces noise.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">!</div><div><b>Escalation &amp; reporting</b><span>Reporting needs extensions.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9633;</div><div><b>Scope</b><span>Events. Capacity and admin work sit outside.</span></div></div>
       </div>
       <div class="nx-foot">FOCUS &rarr; EVENT MANAGEMENT</div>
     </div>
@@ -2217,11 +2201,11 @@ h3{
       <div class="nx-card-title">SAMI'X</div>
       <div class="nx-card-sub">Events + capacity + inventory + action + reporting</div>
       <div class="nx-list">
-        <div class="nx-item"><div class="nx-icon">&#9672;</div><div><b>Capacity &amp; resource utilization</b><span>CPU, memory and disk &mdash; per partition, per server, exportable.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&rarr;</div><div><b>One-click escalation</b><span>Owner resolved from Zabbix and Dynatrace, then straight to Outlook.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#9646;</div><div><b>Cross-tool operations</b><span>Alerts, capacity, agents, topology and shared hosts in one place.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#9655;</div><div><b>Runbook automation</b><span>The team's admin scripts, documented and runnable from the browser.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#10003;</div><div><b>Reporting &amp; smart export</b><span>Branded Excel from every view, with cross-tool duplicates excluded.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9672;</div><div><b>Capacity</b><span>CPU, memory, disk &mdash; per partition.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&rarr;</div><div><b>One-click escalation</b><span>Owner resolved &rarr; Outlook.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9646;</div><div><b>Cross-tool operations</b><span>Alerts, capacity, agents, topology.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9655;</div><div><b>Runbook automation</b><span>Admin scripts from the browser.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#10003;</div><div><b>Reporting &amp; export</b><span>Branded Excel, duplicates excluded.</span></div></div>
       </div>
       <div class="nx-foot">FOCUS &rarr; EVENTS + CAPACITY + ACTION + REPORTING</div>
     </div>
@@ -2248,14 +2232,8 @@ h3{
 
   <h2>
     Five sources.<br>
-    <span class="gradient-text">One consistent data model.</span>
+    <span class="gradient-text">One data model.</span>
   </h2>
-
-  <p class="lead">
-    Each platform contributes what it is genuinely good at. Everything lands in the
-    same Host / Alert / Capacity / Topology schema, so a view written once works
-    for every source &mdash; including the ones added later.
-  </p>
 
   <div class="platform-row" style="grid-template-columns:repeat(5,1fr)">
 
@@ -2266,8 +2244,7 @@ h3{
         <div class="platform-name">Zabbix</div>
       </div>
       <div class="platform-desc">
-        Hosts, availability, alerts, per-partition capacity and proxy fleet.
-        Multiple instances supported side by side.
+        Hosts &middot; availability &middot; alerts &middot; capacity &middot; proxies
       </div>
     </div>
 
@@ -2278,8 +2255,7 @@ h3{
         <div class="platform-name">Dynatrace</div>
       </div>
       <div class="platform-desc">
-        OneAgent hosts, services, problems, process ownership and
-        restart-required detection.
+        OneAgent hosts &middot; problems &middot; processes &middot; owners
       </div>
     </div>
 
@@ -2290,8 +2266,7 @@ h3{
         <div class="platform-name">NNMi</div>
       </div>
       <div class="platform-desc">
-        Network devices, incidents and Layer-2 topology feeding the
-        topology graph and table.
+        Devices &middot; incidents &middot; Layer-2 topology
       </div>
     </div>
 
@@ -2302,8 +2277,7 @@ h3{
         <div class="platform-name">SiteScope</div>
       </div>
       <div class="platform-desc">
-        Hosts and operational events delivered through a controlled,
-        read-only forwarder on the SiteScope server.
+        Hosts &middot; events, via a read-only forwarder
       </div>
     </div>
 
@@ -2314,23 +2288,21 @@ h3{
         <div class="platform-name">DigitalView</div>
       </div>
       <div class="platform-desc">
-        Huawei asset inventory imported from the vendor export &mdash; virtual
-        machines, physical servers, racks and storage.
+        Huawei assets &mdash; VMs &middot; servers &middot; racks &middot; storage
       </div>
     </div>
 
   </div>
 
   <div class="facts">
-    <div class="fact">MODEL &nbsp;<b>hosts &middot; alerts &middot; capacity &middot; collector_runs &middot; topology_nodes &middot; topology_edges</b></div>
-    <div class="fact">KEY &nbsp;<b>UNIQUE(source_platform, source_instance, external_id)</b> &rarr; idempotent, no duplicates</div>
-    <div class="fact">SEVERITY &nbsp;<b>normalized for totals, native label always preserved</b></div>
+    <div class="fact">MODEL &nbsp;<b>hosts &middot; alerts &middot; capacity &middot; collector_runs &middot; topology</b></div>
+    <div class="fact">KEY &nbsp;<b>UNIQUE(platform, instance, external_id)</b> &rarr; no duplicates</div>
+    <div class="fact">SEVERITY &nbsp;<b>normalized for totals, native label kept</b></div>
   </div>
 
   <div class="foot-note">
-    DigitalView is an inventory source, not a live monitor. Its hosts are labelled
-    as inventory and are deliberately excluded from availability figures &mdash;
-    the dashboard never inflates an uptime number with data nothing is actually watching.
+    DigitalView is inventory, not live monitoring &mdash; deliberately excluded
+    from availability figures.
   </div>
 
   <div class="page-number">05 / 10</div>
@@ -2356,71 +2328,61 @@ h3{
     <span class="gradient-text">Every operational signal.</span>
   </h2>
 
-  <p class="lead">
-    Seven views plus an always-on source-health strip &mdash; one navigation, one
-    login. Each view filters by platform and by instance, refreshes itself in
-    place, and exports to the standard Telecom Egypt Excel template.
-  </p>
-
   <div class="views">
 
     <div class="view">
       <div class="vi">&#9638;</div>
       <b>Overview</b>
-      <span>Executive KPIs: active servers de-duplicated across tools, critical
-      alerts only, and per-platform host health. Written for management reading,
-      not for engineers.</span>
+      <span>De-duplicated servers. Critical alerts only.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9636;</div>
       <b>Capacity</b>
-      <span>CPU, memory and disk per server &mdash; and per partition, which is
-      where disk problems actually live. Sorted by pressure, exportable.</span>
+      <span>CPU, memory, disk &mdash; per partition.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#8644;</div>
       <b>Shared</b>
-      <span>Hosts seen by more than one platform, ranked by coverage. Shows where
-      monitoring overlaps and where it does not.</span>
+      <span>Hosts seen by more than one tool.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9672;</div>
       <b>Alerts</b>
-      <span>Every source in one stream with native severity kept intact,
-      full-text search, and one-click escalation to the resolved owner.</span>
+      <span>All sources. Native severity. One-click escalate.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#11041;</div>
       <b>Agents</b>
-      <span>Agent and host inventory across all sources, with drill-down into a
-      single host and the alerts currently open against it.</span>
+      <span>Host inventory with drill-down.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9673;</div>
       <b>Topology</b>
-      <span>Network and service relationships as a table by default and as a graph
-      on demand &mdash; and it can be switched off entirely per deployment.</span>
+      <span>Table by default, graph on demand.</span>
     </div>
 
     <div class="view new">
       <div class="vi">&#9655;</div>
       <b>Runbook</b>
-      <span>The admin team's script library behind its own sign-in: pick a script,
-      read exactly what it does, run it, export the result.</span>
+      <span>The team's scripts, behind a sign-in.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9678;</div>
       <b>Sources Health</b>
-      <span>Always visible in the sidebar: last successful run, failure reason and
-      freshness for every collector, so a silent source is never mistaken for calm.</span>
+      <span>Last run and freshness, always visible.</span>
     </div>
 
+  </div>
+
+  <div class="foot-note">
+    Every view filters by platform and by instance &mdash; and exports to the
+    standard Telecom Egypt template.
   </div>
 
   <div class="page-number">06 / 10</div>
@@ -2447,54 +2409,37 @@ h3{
     <span class="gradient-text">These close the other half.</span>
   </h2>
 
-  <p class="lead">
-    The capabilities below are what separate SAMI'X from a read-only console.
-    They were built from the team's own daily work, not from a feature list.
-  </p>
-
   <div class="caps">
 
     <div class="cap">
       <div class="ci">&rarr;</div>
       <div>
-        <b>One-click escalate to owner</b>
-        <span>From any alert, the owner is resolved out of Zabbix inventory and
-        Dynatrace ownership metadata, and a pre-filled mail opens in Outlook with
-        the host, the alert and the timestamps already written.
-        <em>Manual owner lookup disappears.</em></span>
+        <b>Escalate to owner</b>
+        <span>Owner resolved automatically &rarr; mail ready in Outlook.</span>
       </div>
     </div>
 
     <div class="cap">
       <div class="ci">&#9655;</div>
       <div>
-        <b>Runbook &mdash; the team's script library</b>
-        <span>Behind its own username and password. Nine read-only reports run from
-        the browser with no shell, no Python and no copy of the credentials; every
-        one documents its steps, its columns and the API calls it makes.
-        <em>Knowledge stops living on one laptop.</em></span>
+        <b>Runbook script library</b>
+        <span>Nine read-only reports. No shell, no credentials.</span>
       </div>
     </div>
 
     <div class="cap">
       <div class="ci">&#9635;</div>
       <div>
-        <b>Branded Excel reporting</b>
-        <span>Every view and every Runbook result exports in the standard Telecom
-        Egypt template, carrying the filters that produced it and crediting the
-        script author. Cross-tool duplicates are excluded, with Zabbix as primary.
-        <em>Reports become repeatable.</em></span>
+        <b>Branded Excel export</b>
+        <span>Every view. Duplicates excluded across tools.</span>
       </div>
     </div>
 
     <div class="cap">
       <div class="ci">&#9993;</div>
       <div>
-        <b>Server-side mail verification</b>
-        <span>The test mail is sent by the Zabbix server itself, not from the
-        engineer's machine &mdash; so it proves the real alerting path works, even
-        when the engineer is on VPN from home.
-        <em>Tests the path that matters.</em></span>
+        <b>Server-side mail test</b>
+        <span>Zabbix sends it &mdash; proves the real alerting path.</span>
       </div>
     </div>
 
@@ -2502,9 +2447,7 @@ h3{
       <div class="ci">&#8635;</div>
       <div>
         <b>Processes requiring restart</b>
-        <span>A Dynatrace report listing every process still waiting on a restart
-        after patching, each with its resolved owner, searchable by host name.
-        <em>Turns a patch-window guess into a list.</em></span>
+        <span>Dynatrace, with owner, searchable by host.</span>
       </div>
     </div>
 
@@ -2512,21 +2455,14 @@ h3{
       <div class="ci">&#9881;</div>
       <div>
         <b>Operable by configuration</b>
-        <span>Topology, Runbook, export, mail mode, refresh intervals and page
-        sizes are all environment settings. Features are switched on per deployment
-        without touching code.
-        <em>One build, many environments.</em></span>
+        <span>Features switched on per deployment, no code change.</span>
       </div>
     </div>
 
   </div>
 
   <div class="foot-note">
-    Scripts that change configuration &mdash; bulk host creation, user creation,
-    bulk disable &mdash; are catalogued and fully documented but deliberately have
-    no Run button. Bulk-disabling monitoring from a dashboard is the kind of
-    mistake discovered a week later; those stay on the command line, where the
-    target list is explicit and reviewable.
+    Scripts that change configuration are documented &mdash; with no Run button.
   </div>
 
   <div class="page-number">07 / 10</div>
@@ -2556,101 +2492,95 @@ h3{
 
     <div class="arch-col">
 
-      <div class="arch-label">01 &middot; Data Sources</div>
+      <div class="arch-label">01 &middot; Sources</div>
 
       <div class="arch-node">
         <b>Zabbix API</b>
-        <span>Hosts &middot; alerts &middot; capacity &middot; proxies</span>
+        <span>Hosts &middot; alerts &middot; capacity</span>
       </div>
 
       <div class="arch-node">
         <b>Dynatrace API</b>
-        <span>Hosts &middot; problems &middot; processes &middot; ownership</span>
+        <span>Hosts &middot; problems &middot; owners</span>
       </div>
 
       <div class="arch-node">
         <b>NNMi SOAP</b>
-        <span>Devices &middot; incidents &middot; L2 topology</span>
+        <span>Devices &middot; incidents &middot; L2</span>
       </div>
 
       <div class="arch-node">
         <b>SiteScope forwarder</b>
-        <span>Controlled push, redacted at source</span>
+        <span>Read-only push, redacted at source</span>
       </div>
 
       <div class="arch-node">
         <b>DigitalView export</b>
-        <span>Vendor asset workbook, imported</span>
+        <span>Vendor asset workbook</span>
       </div>
 
     </div>
 
     <div class="arch-col">
 
-      <div class="arch-label">02 &middot; Integration Layer</div>
+      <div class="arch-label">02 &middot; Integration</div>
 
       <div class="arch-node">
         <b>Scheduler</b>
-        <span>Runs each collector on its own interval; a slow or failing source
-        never blocks the others</span>
+        <span>Own interval per source &mdash; one failure blocks nothing</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>Collectors</b>
-        <span>One per platform. Every call goes through a read-only transport that
-        rejects anything but a read</span>
+        <span>Read-only transport, enforced</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>Normalizer</b>
-        <span>Maps each vendor's fields and severities into the shared schema,
-        keeping the native label alongside</span>
+        <span>One schema, native label kept</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>Idempotent upsert</b>
-        <span>Re-running a collector updates, never duplicates</span>
+        <span>Update, never duplicate</span>
       </div>
 
     </div>
 
     <div class="arch-col">
 
-      <div class="arch-label">03 &middot; Operational Layer</div>
+      <div class="arch-label">03 &middot; Operations</div>
 
       <div class="arch-node">
         <b>Unified repository</b>
-        <span>SQLite today, PostgreSQL-ready; indexed for the dashboard's own
-        queries</span>
+        <span>SQLite today, PostgreSQL-ready</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>FastAPI + HTMX</b>
-        <span>Server-rendered, partial refresh &mdash; light enough for an
-        ordinary office laptop</span>
+        <span>Partial refresh &mdash; runs on an office laptop</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>Views &amp; exports</b>
-        <span>Overview &middot; Capacity &middot; Shared &middot; Alerts &middot;
-        Agents &middot; Topology &middot; Runbook</span>
+        <span>Seven views, one template</span>
       </div>
 
       <div class="arch-arrow">&darr;</div>
 
       <div class="arch-node">
         <b>Collector health</b>
-        <span>Every run recorded, success or failure, and surfaced in the UI</span>
+        <span>Every run recorded and shown</span>
       </div>
 
     </div>
@@ -2658,11 +2588,11 @@ h3{
   </div>
 
   <div class="facts">
-    <div class="fact">&#10003; <b>No production service restarted, reconfigured or written to</b></div>
-    <div class="fact">&#10003; <b>Zabbix transport: only <span style="font-family:monospace">*.get</span></b></div>
-    <div class="fact">&#10003; <b>Dynatrace transport: only GET</b></div>
-    <div class="fact">&#10003; <b>Credentials redacted at the source server</b></div>
-    <div class="fact">&#10003; <b>Collector failures surfaced, never swallowed</b></div>
+    <div class="fact">&#10003; <b>Nothing restarted, reconfigured or written to</b></div>
+    <div class="fact">&#10003; <b>Zabbix: only <span style="font-family:monospace">*.get</span></b></div>
+    <div class="fact">&#10003; <b>Dynatrace: only GET</b></div>
+    <div class="fact">&#10003; <b>Credentials redacted at source</b></div>
+    <div class="fact">&#10003; <b>Failures surfaced, never swallowed</b></div>
   </div>
 
   <div class="page-number">08 / 10</div>
@@ -2671,7 +2601,7 @@ h3{
 
 
 <!-- =====================================================
-     SLIDE 09 - VALUE &amp; ENGINEERING QUALITY
+     SLIDE 09 - VALUE &amp; DELIVERY
 ===================================================== -->
 
 <section class="slide dense">
@@ -2685,7 +2615,7 @@ h3{
 
   <h2>
     What changes for<br>
-    <span class="gradient-text">Operations and for management.</span>
+    <span class="gradient-text">Operations and management.</span>
   </h2>
 
   <div class="value-grid">
@@ -2693,43 +2623,37 @@ h3{
     <div class="value-card">
       <div class="value-number">01 / VISIBILITY</div>
       <h3>One starting point</h3>
-      <p>Engineers open one dashboard instead of navigating four consoles to build
-      the same picture.</p>
+      <p>One dashboard instead of four consoles.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">02 / RESPONSE</div>
-      <h3>Faster incident context</h3>
-      <p>Host, alert, capacity and owner appear together &mdash; escalation is a
-      click, not a search.</p>
+      <h3>Faster context</h3>
+      <p>Host, alert, capacity and owner together.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">03 / TRUST</div>
-      <h3>Numbers that survive review</h3>
-      <p>Servers de-duplicated across tools, inventory-only sources excluded from
-      availability. Figures hold up in a management meeting.</p>
+      <h3>Numbers that hold up</h3>
+      <p>De-duplicated. Inventory excluded from availability.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">04 / CONTROL</div>
-      <h3>Source health awareness</h3>
-      <p>A monitoring source that stops reporting is visible immediately instead of
-      resembling a quiet night.</p>
+      <h3>Source health</h3>
+      <p>A source that stops reporting is visible immediately.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">05 / CONTINUITY</div>
       <h3>Knowledge that stays</h3>
-      <p>The Runbook turns personal admin scripts into a documented, shared and
-      auditable team asset.</p>
+      <p>Personal scripts become a team asset.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">06 / GOVERNANCE</div>
       <h3>Consistent reporting</h3>
-      <p>One template, one data layer &mdash; the same report produces the same
-      shape every month.</p>
+      <p>One template, one data layer, every month.</p>
     </div>
 
   </div>
@@ -2739,13 +2663,6 @@ h3{
     <div class="q"><b>0</b><span>Production changes required</span></div>
     <div class="q"><b>5</b><span>Sources live in the model</span></div>
     <div class="q"><b>Next</b><span>SiteScope API &middot; unified alerting &middot; capacity KPIs</span></div>
-  </div>
-
-  <div class="foot-note">
-    <b>Direction:</b> the foundation and unified visibility are delivered. The next
-    step is to move from aggregation toward operational intelligence &mdash;
-    capacity forecasting for management, cross-source alert correlation, and
-    trend reporting on the data the platform is already collecting.
   </div>
 
   <div class="page-number">09 / 10</div>
@@ -2778,9 +2695,7 @@ h3{
   </h2>
 
   <p class="lead">
-    A unified monitoring and operations layer &mdash; visibility today,
-    automation already in the hands of the team, and safe integration with the
-    Telecom Egypt production environment.
+    Visibility today. Automation already in the team's hands.
   </p>
 
   <div style="margin-top:42px">
