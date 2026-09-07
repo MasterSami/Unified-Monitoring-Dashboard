@@ -1758,7 +1758,7 @@ h3{
 
 
 /* =========================================================
-   v2 ADDITIONS - 10-slide executive deck
+   v3 ADDITIONS - 10-slide executive deck
 ========================================================= */
 
 /* --- five sources on the hero orbit (0 / 72 / 144 / 216 / 288 deg) --- */
@@ -1769,43 +1769,55 @@ h3{
 .source.s{left:20.6%; top:90.5%;  transform:translate(-50%,-50%);}
 .source.v{left:2.5%;  top:34.5%;  transform:translate(-50%,-50%);}
 
-/* --- DigitalView word-mark (no vendor logo available) --- */
-.dv-mark{
-  display:grid;place-items:center;
+/* --- DigitalView lockup ------------------------------------------------
+   The supplied mark is a white wordmark on transparency, drawn for dark
+   surfaces. These slides are light, so it sits on a navy chip rather than
+   being recoloured - the brand stays intact and the placement reads as
+   deliberate.                                                            */
+.dv-chip{
+  display:inline-grid;place-items:center;
+  background:var(--navy);
   border-radius:9px;
-  background:linear-gradient(140deg,#18b6c9,#3478f6);
-  color:#fff;font-weight:900;letter-spacing:.02em;
-  box-shadow:0 6px 16px rgba(52,120,246,.28);
+  box-shadow:0 6px 16px rgba(17,21,43,.22);
 }
-.source .dv-mark{width:46px;height:26px;font-size:11px;margin-bottom:6px;}
-.platform-logo .dv-mark{width:100%;height:100%;font-size:13px;border-radius:7px;}
-.platform.v::before{background:linear-gradient(90deg,#18b6c9,#3478f6);}
+.dv-chip img{display:block;width:100%;height:auto;}
+.source .dv-chip{width:62px;padding:7px 8px;margin-bottom:7px;}
+/* The .slide.dense sizing below is more specific than a bare .platform-logo,
+   so the DigitalView pill has to match its weight to keep its own width. */
+.slide.dense .platform-logo.dv,
+.platform-logo.dv{
+  width:auto;height:42px;padding:0 11px;border-radius:11px;
+  background:var(--navy);border-color:var(--navy);
+  box-shadow:0 6px 16px rgba(17,21,43,.22);
+}
+.platform-logo.dv img{width:auto;height:16px;display:block;}
+.platform.v::before{background:linear-gradient(90deg,#35c3b5,#0cb0e7);}
 
 /* --- talking-deck sizing: few words, large type --- */
 .slide.dense h2{font-size:clamp(32px,3.7vw,54px);margin-bottom:16px;}
 .slide.dense .lead{font-size:clamp(15px,1.3vw,19px);line-height:1.55;max-width:900px;}
-.slide.dense .platform-row{margin-top:30px;gap:14px;}
+.slide.dense .platform-row{margin-top:34px;gap:14px;}
 .slide.dense .platform{padding:22px;min-height:0;border-radius:18px;}
 .slide.dense .platform-name{font-size:19px;margin:10px 0 8px;}
-.slide.dense .platform-desc{font-size:12.5px;line-height:1.65;}
+.slide.dense .platform-desc{font-size:12.5px;line-height:1.7;}
 .slide.dense .platform-head{margin:12px 0 4px;}
 .slide.dense .platform-logo{width:42px;height:42px;border-radius:11px;padding:7px;}
 .slide.dense .grid-3,
-.slide.dense .grid-4{margin-top:26px;gap:16px;}
-.slide.dense .card{padding:24px;border-radius:20px;}
-.slide.dense .card h3{font-size:18px;margin:12px 0 8px;}
-.slide.dense .card p{font-size:13.5px;line-height:1.6;margin:0;color:var(--muted);}
+.slide.dense .grid-4{margin-top:30px;gap:16px;}
+.slide.dense .card{padding:26px;border-radius:20px;}
+.slide.dense .card h3{font-size:19px;margin:14px 0 8px;}
+.slide.dense .card p{font-size:14px;line-height:1.6;margin:0;color:var(--muted);}
 .slide.dense .card-icon{width:40px;height:40px;border-radius:12px;font-size:14px;}
-.slide.dense .kpi-grid{margin-top:34px;gap:16px;}
-.slide.dense .kpi{padding:26px;border-radius:20px;}
-.slide.dense .value-grid{margin-top:26px;gap:14px;}
+.slide.dense .kpi-grid{margin-top:40px;gap:16px;}
+.slide.dense .kpi{padding:30px;border-radius:20px;}
+.slide.dense .value-grid{margin-top:30px;gap:14px;}
 .slide.dense .value-card{padding:24px;border-radius:20px;min-height:0;}
-.slide.dense .value-card h3{font-size:18px;margin:8px 0 8px;}
-.slide.dense .value-card p{font-size:13px;line-height:1.6;margin:0;}
-.slide.dense .compare{margin-top:32px;}
-.slide.dense .compare-box{padding:30px;border-radius:22px;}
-.slide.dense .compare-item{font-size:14.5px;}
-.slide.dense .architecture{margin-top:26px;}
+.slide.dense .value-card h3{font-size:19px;margin:10px 0 8px;}
+.slide.dense .value-card p{font-size:13.5px;line-height:1.6;margin:0;}
+.slide.dense .compare{margin-top:36px;}
+.slide.dense .compare-box{padding:32px;border-radius:22px;}
+.slide.dense .compare-item{font-size:15px;}
+.slide.dense .architecture{margin-top:30px;}
 .slide.dense .arch-col{min-height:0;padding:16px 20px;}
 .slide.dense .arch-node{padding:13px 16px;margin-bottom:9px;border-radius:13px;}
 .slide.dense .arch-node b{font-size:13px;}
@@ -1814,78 +1826,72 @@ h3{
 
 /* short laptop screens: give the architecture slide room */
 @media (max-height:820px){
-  .slide.dense .architecture{margin-top:18px;}
+  .slide.dense .architecture{margin-top:20px;}
   .slide.dense .arch-col{padding:10px 16px;}
   .slide.dense .arch-node{padding:10px 13px;margin-bottom:6px;}
   .slide.dense .arch-node span{font-size:10px;}
-  .slide.dense .facts{margin-top:18px;}
+  .slide.dense .facts{margin-top:20px;}
 }
 @media (max-height:750px){
-  .slide.dense .architecture{margin-top:12px;}
+  .slide.dense .architecture{margin-top:14px;}
   .slide.dense .arch-col{padding:6px 14px;}
   .slide.dense .arch-node{padding:8px 11px;margin-bottom:5px;}
   .slide.dense .arch-node b{font-size:12px;}
   .slide.dense .arch-node span{font-size:9.5px;line-height:1.4;}
   .slide.dense .arch-arrow{margin:0;font-size:11px;}
-  .slide.dense .facts{margin-top:14px;gap:8px;}
+  .slide.dense .facts{margin-top:15px;gap:8px;}
   .slide.dense .fact{padding:8px 12px;font-size:11.5px;}
 }
 
 /* --- view / tab strip --- */
-.views{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:32px;}
+.views{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:34px;}
 .view{
   background:#fff;border:1px solid var(--border);border-radius:18px;
-  padding:20px 22px;box-shadow:var(--shadow);position:relative;overflow:hidden;
+  padding:22px;box-shadow:var(--shadow);position:relative;overflow:hidden;
 }
 .view::before{content:"";position:absolute;left:0;top:0;width:3px;height:100%;background:var(--we-purple);}
 .view .vi{
   width:34px;height:34px;border-radius:11px;display:grid;place-items:center;
-  background:var(--we-lilac);color:var(--we-purple);font-size:15px;font-weight:900;margin-bottom:12px;
+  background:var(--we-lilac);color:var(--we-purple);font-size:15px;font-weight:900;margin-bottom:14px;
 }
-.view b{display:block;font-size:16px;color:var(--navy);letter-spacing:-.015em;}
-.view span{display:block;margin-top:7px;font-size:12.5px;line-height:1.55;color:var(--muted);}
+.view b{display:block;font-size:16.5px;color:var(--navy);letter-spacing:-.015em;}
+.view span{display:block;margin-top:7px;font-size:13px;line-height:1.5;color:var(--muted);}
 .view.new::after{
-  content:"NEW";position:absolute;right:12px;top:14px;
+  content:"NEW";position:absolute;right:14px;top:16px;
   font-size:8.5px;font-weight:900;letter-spacing:.1em;
   color:#fff;background:var(--green);padding:3px 7px;border-radius:6px;
 }
 
 /* --- capability list (features slide) --- */
-.caps{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:30px;}
+.caps{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:34px;}
 .cap{
   display:grid;grid-template-columns:44px 1fr;gap:16px;align-items:center;
   background:#fff;border:1px solid var(--border);border-radius:18px;
-  padding:20px 22px;box-shadow:var(--shadow);
+  padding:22px;box-shadow:var(--shadow);
 }
 .cap .ci{
   width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
   background:linear-gradient(145deg,#6f2cff,#4520a8);color:#fff;font-size:17px;font-weight:900;
 }
-.cap b{display:block;font-size:16px;color:var(--navy);letter-spacing:-.015em;}
-.cap span{display:block;margin-top:5px;font-size:12.5px;line-height:1.55;color:var(--muted);}
+.cap b{display:block;font-size:16.5px;color:var(--navy);letter-spacing:-.015em;}
+.cap span{display:block;margin-top:5px;font-size:13px;line-height:1.5;color:var(--muted);}
 
 /* --- inline strip of facts --- */
-.facts{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px;}
+.facts{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px;}
 .fact{
   background:var(--we-lilac);border:1px solid #ddd0ff;border-radius:12px;
-  padding:10px 15px;font-size:12.5px;font-weight:800;color:var(--we-purple-dark);
+  padding:11px 16px;font-size:12.5px;font-weight:800;color:var(--we-purple-dark);
 }
 .fact b{color:var(--navy);}
 
 /* --- quality bar --- */
-.quality{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px;}
+.quality{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:26px;}
 .q{
   background:#fff;border:1px solid var(--border);border-radius:16px;
-  padding:18px 22px;box-shadow:var(--shadow);
+  padding:20px 24px;box-shadow:var(--shadow);
 }
-.q b{display:block;font-size:30px;font-weight:900;color:var(--we-purple);letter-spacing:-.04em;}
+.q b{display:block;font-size:32px;font-weight:900;color:var(--we-purple);letter-spacing:-.04em;}
 .q span{display:block;margin-top:5px;font-size:10.5px;font-weight:800;letter-spacing:.11em;color:var(--muted);text-transform:uppercase;}
-
-/* --- footnote --- */
-.foot-note{
-  margin-top:24px;font-size:12.5px;color:var(--muted);
-  border-left:3px solid var(--we-purple);padding-left:14px;line-height:1.6;
-}
 
 </style>
 </head>
@@ -1932,8 +1938,8 @@ h3{
       </h1>
 
       <p class="lead">
-        Zabbix &middot; Dynatrace &middot; NNMi &middot; SiteScope &middot; DigitalView
-        <br>&mdash; in one operational view.
+        Five monitoring platforms.<br>
+        One operational view.
       </p>
 
     </div>
@@ -1971,7 +1977,7 @@ h3{
         </div>
 
         <div class="source v">
-          <div class="dv-mark">DV</div>
+          <span class="dv-chip"><img src="data:image/png;base64,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" alt="DigitalView"></span>
           <small>Asset Inventory</small>
         </div>
 
@@ -2033,19 +2039,19 @@ h3{
     <div class="card">
       <div class="card-icon">&rarr;</div>
       <h3>Not a replacement</h3>
-      <p>The existing tools stay the systems of record.</p>
+      <p>The tools stay the system of record.</p>
     </div>
 
     <div class="card">
       <div class="card-icon">&#10003;</div>
       <h3>Built and running</h3>
-      <p>Delivered and in daily use &mdash; not a proposal.</p>
+      <p>Delivered. In daily use.</p>
     </div>
 
     <div class="card">
       <div class="card-icon">&#8734;</div>
       <h3>Built to extend</h3>
-      <p>A new source means one collector. Nothing else changes.</p>
+      <p>A new source is one collector.</p>
     </div>
 
   </div>
@@ -2081,35 +2087,12 @@ h3{
 
       <div class="compare-list">
 
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>Four consoles for one incident.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>Severity means something different in each tool.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>The same server counted two or three times.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>Finding the owner is a manual search.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>A dead collector looks like a quiet night.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&times;</div>
-          <div>Admin scripts live on one laptop.</div>
-        </div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>Four consoles per incident.</div></div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>Four severity models.</div></div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>One server counted three times.</div></div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>Owner lookup is manual.</div></div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>A dead collector looks healthy.</div></div>
+        <div class="compare-item"><div class="bullet">&times;</div><div>Scripts live on one laptop.</div></div>
 
       </div>
 
@@ -2123,35 +2106,12 @@ h3{
 
       <div class="compare-list">
 
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>One dashboard to start from.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>Common structure, native severity kept.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>De-duplicated &mdash; one honest fleet number.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>Owner resolved. Escalation in one click.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>Collector health always on screen.</div>
-        </div>
-
-        <div class="compare-item">
-          <div class="bullet">&#10003;</div>
-          <div>Scripts shared, documented, auditable.</div>
-        </div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>One dashboard.</div></div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>One structure. Native severity kept.</div></div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>De-duplicated fleet count.</div></div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>Owner resolved. One click.</div></div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>Collector health on screen.</div></div>
+        <div class="compare-item"><div class="bullet">&#10003;</div><div>Scripts shared and documented.</div></div>
 
       </div>
 
@@ -2172,7 +2132,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">03 &middot; POSITIONING &middot; NETCOOL COMPARISON</div>
+    <div class="section-label">03 &middot; POSITIONING</div>
   </div>
 
   <div class="corner-glow"></div>
@@ -2189,25 +2149,25 @@ h3{
       <div class="nx-card-title">Netcool &middot; OMNIbus</div>
       <div class="nx-card-sub">Event &amp; fault consolidation</div>
       <div class="nx-list">
-        <div class="nx-item"><div class="nx-icon">&#8599;</div><div><b>Event collection</b><span>Centralizes events from many probes.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#8779;</div><div><b>Deduplication &amp; correlation</b><span>Reduces noise.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">!</div><div><b>Escalation &amp; reporting</b><span>Reporting needs extensions.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#9633;</div><div><b>Scope</b><span>Events. Capacity and admin work sit outside.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#8599;</div><div><b>Event collection</b><span>Centralizes events.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#8779;</div><div><b>Deduplication</b><span>Reduces noise.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">!</div><div><b>Reporting</b><span>Needs extensions.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9633;</div><div><b>Scope</b><span>Events only.</span></div></div>
       </div>
       <div class="nx-foot">FOCUS &rarr; EVENT MANAGEMENT</div>
     </div>
 
     <div class="nx-card samix">
       <div class="nx-card-title">SAMI'X</div>
-      <div class="nx-card-sub">Events + capacity + inventory + action + reporting</div>
+      <div class="nx-card-sub">Events &middot; capacity &middot; inventory &middot; action</div>
       <div class="nx-list">
-        <div class="nx-item"><div class="nx-icon">&#9672;</div><div><b>Capacity</b><span>CPU, memory, disk &mdash; per partition.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&rarr;</div><div><b>One-click escalation</b><span>Owner resolved &rarr; Outlook.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9672;</div><div><b>Capacity</b><span>CPU, memory, disk. Per partition.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&rarr;</div><div><b>Escalation</b><span>Owner resolved. Straight to Outlook.</span></div></div>
         <div class="nx-item"><div class="nx-icon">&#9646;</div><div><b>Cross-tool operations</b><span>Alerts, capacity, agents, topology.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#9655;</div><div><b>Runbook automation</b><span>Admin scripts from the browser.</span></div></div>
-        <div class="nx-item"><div class="nx-icon">&#10003;</div><div><b>Reporting &amp; export</b><span>Branded Excel, duplicates excluded.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#9655;</div><div><b>Runbook</b><span>Admin scripts in the browser.</span></div></div>
+        <div class="nx-item"><div class="nx-icon">&#10003;</div><div><b>Reporting</b><span>Branded Excel. Duplicates excluded.</span></div></div>
       </div>
-      <div class="nx-foot">FOCUS &rarr; EVENTS + CAPACITY + ACTION + REPORTING</div>
+      <div class="nx-foot">FOCUS &rarr; OPERATIONS</div>
     </div>
 
   </div>
@@ -2225,7 +2185,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">04 &middot; SOURCES &amp; UNIFIED DATA MODEL</div>
+    <div class="section-label">04 &middot; SOURCES &amp; DATA MODEL</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2244,7 +2204,7 @@ h3{
         <div class="platform-name">Zabbix</div>
       </div>
       <div class="platform-desc">
-        Hosts &middot; availability &middot; alerts &middot; capacity &middot; proxies
+        Hosts &middot; availability<br>Alerts &middot; capacity
       </div>
     </div>
 
@@ -2255,7 +2215,7 @@ h3{
         <div class="platform-name">Dynatrace</div>
       </div>
       <div class="platform-desc">
-        OneAgent hosts &middot; problems &middot; processes &middot; owners
+        Hosts &middot; problems<br>Processes &middot; owners
       </div>
     </div>
 
@@ -2266,7 +2226,7 @@ h3{
         <div class="platform-name">NNMi</div>
       </div>
       <div class="platform-desc">
-        Devices &middot; incidents &middot; Layer-2 topology
+        Devices &middot; incidents<br>Layer-2 topology
       </div>
     </div>
 
@@ -2277,32 +2237,27 @@ h3{
         <div class="platform-name">SiteScope</div>
       </div>
       <div class="platform-desc">
-        Hosts &middot; events, via a read-only forwarder
+        Hosts &middot; events<br>Read-only forwarder
       </div>
     </div>
 
     <div class="platform v">
       <div class="platform-code">05 / ASSET INVENTORY</div>
       <div class="platform-head">
-        <div class="platform-logo"><div class="dv-mark">DV</div></div>
-        <div class="platform-name">DigitalView</div>
+        <div class="platform-logo dv"><img src="data:image/png;base64,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" alt="DigitalView"></div>
       </div>
-      <div class="platform-desc">
-        Huawei assets &mdash; VMs &middot; servers &middot; racks &middot; storage
+      <div class="platform-desc" style="margin-top:14px">
+        VMs &middot; servers<br>Racks &middot; storage
       </div>
     </div>
 
   </div>
 
   <div class="facts">
-    <div class="fact">MODEL &nbsp;<b>hosts &middot; alerts &middot; capacity &middot; collector_runs &middot; topology</b></div>
-    <div class="fact">KEY &nbsp;<b>UNIQUE(platform, instance, external_id)</b> &rarr; no duplicates</div>
-    <div class="fact">SEVERITY &nbsp;<b>normalized for totals, native label kept</b></div>
-  </div>
-
-  <div class="foot-note">
-    DigitalView is inventory, not live monitoring &mdash; deliberately excluded
-    from availability figures.
+    <div class="fact">MODEL &nbsp;<b>hosts &middot; alerts &middot; capacity &middot; topology</b></div>
+    <div class="fact">KEY &nbsp;<b>platform + instance + id</b> &rarr; no duplicates</div>
+    <div class="fact">SEVERITY &nbsp;<b>normalized, native label kept</b></div>
+    <div class="fact">DIGITALVIEW &nbsp;<b>inventory only &mdash; not counted as availability</b></div>
   </div>
 
   <div class="page-number">05 / 10</div>
@@ -2318,7 +2273,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">05 &middot; THE OPERATIONAL EXPERIENCE</div>
+    <div class="section-label">05 &middot; OPERATIONAL EXPERIENCE</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2333,56 +2288,56 @@ h3{
     <div class="view">
       <div class="vi">&#9638;</div>
       <b>Overview</b>
-      <span>De-duplicated servers. Critical alerts only.</span>
+      <span>De-duplicated servers. Critical alerts.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9636;</div>
       <b>Capacity</b>
-      <span>CPU, memory, disk &mdash; per partition.</span>
+      <span>CPU, memory, disk. Per partition.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#8644;</div>
       <b>Shared</b>
-      <span>Hosts seen by more than one tool.</span>
+      <span>Hosts seen by multiple tools.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9672;</div>
       <b>Alerts</b>
-      <span>All sources. Native severity. One-click escalate.</span>
+      <span>All sources. One-click escalate.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#11041;</div>
       <b>Agents</b>
-      <span>Host inventory with drill-down.</span>
+      <span>Host inventory. Drill-down.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9673;</div>
       <b>Topology</b>
-      <span>Table by default, graph on demand.</span>
+      <span>Table by default. Graph on demand.</span>
     </div>
 
     <div class="view new">
       <div class="vi">&#9655;</div>
       <b>Runbook</b>
-      <span>The team's scripts, behind a sign-in.</span>
+      <span>Team scripts. Behind a sign-in.</span>
     </div>
 
     <div class="view">
       <div class="vi">&#9678;</div>
       <b>Sources Health</b>
-      <span>Last run and freshness, always visible.</span>
+      <span>Last run. Freshness. Always visible.</span>
     </div>
 
   </div>
 
-  <div class="foot-note">
-    Every view filters by platform and by instance &mdash; and exports to the
-    standard Telecom Egypt template.
+  <div class="facts">
+    <div class="fact">FILTER &nbsp;<b>by platform &middot; by instance</b></div>
+    <div class="fact">EXPORT &nbsp;<b>branded Excel from every view</b></div>
   </div>
 
   <div class="page-number">06 / 10</div>
@@ -2398,7 +2353,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">06 &middot; ACTION, AUTOMATION &amp; REPORTING</div>
+    <div class="section-label">06 &middot; ACTION &amp; AUTOMATION</div>
   </div>
 
   <div class="corner-glow"></div>
@@ -2415,15 +2370,15 @@ h3{
       <div class="ci">&rarr;</div>
       <div>
         <b>Escalate to owner</b>
-        <span>Owner resolved automatically &rarr; mail ready in Outlook.</span>
+        <span>Owner resolved. Mail ready in Outlook.</span>
       </div>
     </div>
 
     <div class="cap">
       <div class="ci">&#9655;</div>
       <div>
-        <b>Runbook script library</b>
-        <span>Nine read-only reports. No shell, no credentials.</span>
+        <b>Runbook</b>
+        <span>Nine reports. No shell. No credentials.</span>
       </div>
     </div>
 
@@ -2431,7 +2386,7 @@ h3{
       <div class="ci">&#9635;</div>
       <div>
         <b>Branded Excel export</b>
-        <span>Every view. Duplicates excluded across tools.</span>
+        <span>Every view. Duplicates excluded.</span>
       </div>
     </div>
 
@@ -2439,7 +2394,7 @@ h3{
       <div class="ci">&#9993;</div>
       <div>
         <b>Server-side mail test</b>
-        <span>Zabbix sends it &mdash; proves the real alerting path.</span>
+        <span>Zabbix sends it. The real path, proven.</span>
       </div>
     </div>
 
@@ -2447,7 +2402,7 @@ h3{
       <div class="ci">&#8635;</div>
       <div>
         <b>Processes requiring restart</b>
-        <span>Dynatrace, with owner, searchable by host.</span>
+        <span>Dynatrace. With owner. Searchable by host.</span>
       </div>
     </div>
 
@@ -2455,14 +2410,14 @@ h3{
       <div class="ci">&#9881;</div>
       <div>
         <b>Operable by configuration</b>
-        <span>Features switched on per deployment, no code change.</span>
+        <span>Features toggled per deployment.</span>
       </div>
     </div>
 
   </div>
 
-  <div class="foot-note">
-    Scripts that change configuration are documented &mdash; with no Run button.
+  <div class="facts">
+    <div class="fact">GUARDRAIL &nbsp;<b>config-changing scripts: documented, no Run button</b></div>
   </div>
 
   <div class="page-number">07 / 10</div>
@@ -2478,7 +2433,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">07 &middot; ARCHITECTURE &amp; PRODUCTION SAFETY</div>
+    <div class="section-label">07 &middot; ARCHITECTURE &amp; SAFETY</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2494,30 +2449,11 @@ h3{
 
       <div class="arch-label">01 &middot; Sources</div>
 
-      <div class="arch-node">
-        <b>Zabbix API</b>
-        <span>Hosts &middot; alerts &middot; capacity</span>
-      </div>
-
-      <div class="arch-node">
-        <b>Dynatrace API</b>
-        <span>Hosts &middot; problems &middot; owners</span>
-      </div>
-
-      <div class="arch-node">
-        <b>NNMi SOAP</b>
-        <span>Devices &middot; incidents &middot; L2</span>
-      </div>
-
-      <div class="arch-node">
-        <b>SiteScope forwarder</b>
-        <span>Read-only push, redacted at source</span>
-      </div>
-
-      <div class="arch-node">
-        <b>DigitalView export</b>
-        <span>Vendor asset workbook</span>
-      </div>
+      <div class="arch-node"><b>Zabbix API</b><span>Hosts &middot; alerts &middot; capacity</span></div>
+      <div class="arch-node"><b>Dynatrace API</b><span>Hosts &middot; problems &middot; owners</span></div>
+      <div class="arch-node"><b>NNMi SOAP</b><span>Devices &middot; incidents &middot; L2</span></div>
+      <div class="arch-node"><b>SiteScope forwarder</b><span>Read-only push</span></div>
+      <div class="arch-node"><b>DigitalView export</b><span>Asset workbook</span></div>
 
     </div>
 
@@ -2525,31 +2461,13 @@ h3{
 
       <div class="arch-label">02 &middot; Integration</div>
 
-      <div class="arch-node">
-        <b>Scheduler</b>
-        <span>Own interval per source &mdash; one failure blocks nothing</span>
-      </div>
-
+      <div class="arch-node"><b>Scheduler</b><span>One interval per source</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>Collectors</b>
-        <span>Read-only transport, enforced</span>
-      </div>
-
+      <div class="arch-node"><b>Collectors</b><span>Read-only transport</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>Normalizer</b>
-        <span>One schema, native label kept</span>
-      </div>
-
+      <div class="arch-node"><b>Normalizer</b><span>One schema. Native label kept.</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>Idempotent upsert</b>
-        <span>Update, never duplicate</span>
-      </div>
+      <div class="arch-node"><b>Idempotent upsert</b><span>Update, never duplicate</span></div>
 
     </div>
 
@@ -2557,38 +2475,20 @@ h3{
 
       <div class="arch-label">03 &middot; Operations</div>
 
-      <div class="arch-node">
-        <b>Unified repository</b>
-        <span>SQLite today, PostgreSQL-ready</span>
-      </div>
-
+      <div class="arch-node"><b>Unified repository</b><span>SQLite &middot; PostgreSQL-ready</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>FastAPI + HTMX</b>
-        <span>Partial refresh &mdash; runs on an office laptop</span>
-      </div>
-
+      <div class="arch-node"><b>FastAPI + HTMX</b><span>Partial refresh. Laptop-friendly.</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>Views &amp; exports</b>
-        <span>Seven views, one template</span>
-      </div>
-
+      <div class="arch-node"><b>Views &amp; exports</b><span>Seven views. One template.</span></div>
       <div class="arch-arrow">&darr;</div>
-
-      <div class="arch-node">
-        <b>Collector health</b>
-        <span>Every run recorded and shown</span>
-      </div>
+      <div class="arch-node"><b>Collector health</b><span>Every run recorded</span></div>
 
     </div>
 
   </div>
 
   <div class="facts">
-    <div class="fact">&#10003; <b>Nothing restarted, reconfigured or written to</b></div>
+    <div class="fact">&#10003; <b>Nothing restarted or reconfigured</b></div>
     <div class="fact">&#10003; <b>Zabbix: only <span style="font-family:monospace">*.get</span></b></div>
     <div class="fact">&#10003; <b>Dynatrace: only GET</b></div>
     <div class="fact">&#10003; <b>Credentials redacted at source</b></div>
@@ -2608,7 +2508,7 @@ h3{
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">08 &middot; OPERATIONAL VALUE &amp; DELIVERY</div>
+    <div class="section-label">08 &middot; VALUE &amp; DELIVERY</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2623,7 +2523,7 @@ h3{
     <div class="value-card">
       <div class="value-number">01 / VISIBILITY</div>
       <h3>One starting point</h3>
-      <p>One dashboard instead of four consoles.</p>
+      <p>One dashboard, not four consoles.</p>
     </div>
 
     <div class="value-card">
@@ -2635,13 +2535,13 @@ h3{
     <div class="value-card">
       <div class="value-number">03 / TRUST</div>
       <h3>Numbers that hold up</h3>
-      <p>De-duplicated. Inventory excluded from availability.</p>
+      <p>De-duplicated. Inventory excluded.</p>
     </div>
 
     <div class="value-card">
       <div class="value-number">04 / CONTROL</div>
       <h3>Source health</h3>
-      <p>A source that stops reporting is visible immediately.</p>
+      <p>A silent source is visible immediately.</p>
     </div>
 
     <div class="value-card">
@@ -2653,16 +2553,16 @@ h3{
     <div class="value-card">
       <div class="value-number">06 / GOVERNANCE</div>
       <h3>Consistent reporting</h3>
-      <p>One template, one data layer, every month.</p>
+      <p>One template. One data layer.</p>
     </div>
 
   </div>
 
   <div class="quality">
-    <div class="q"><b>216</b><span>Automated tests passing</span></div>
+    <div class="q"><b>225</b><span>Automated tests passing</span></div>
     <div class="q"><b>0</b><span>Production changes required</span></div>
     <div class="q"><b>5</b><span>Sources live in the model</span></div>
-    <div class="q"><b>Next</b><span>SiteScope API &middot; unified alerting &middot; capacity KPIs</span></div>
+    <div class="q"><b>Next</b><span>SiteScope API &middot; unified alerting</span></div>
   </div>
 
   <div class="page-number">09 / 10</div>
@@ -2695,7 +2595,7 @@ h3{
   </h2>
 
   <p class="lead">
-    Visibility today. Automation already in the team's hands.
+    Visibility today. Automation already delivered.
   </p>
 
   <div style="margin-top:42px">
