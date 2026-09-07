@@ -20,6 +20,7 @@ Three rules the layout depends on:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -184,6 +185,21 @@ Sent:  {stamp}
 {BRAND_LONG}
 No action is needed.
 """
+
+
+def inline_logo_stripped(html: str) -> str:
+    """Return ``html`` with the CID logo swapped for the text wordmark.
+
+    Some transports carry a single body string and have nowhere to put an
+    attachment — the Zabbix frontend controller is one. A ``cid:`` reference
+    sent that way renders as a broken image, which is worse than the wordmark
+    it replaced, so it is put back.
+    """
+    return re.sub(
+        r"<img[^>]*?src=\"cid:" + re.escape(_LOGO_CID) + r"\"[^>]*?>",
+        _wordmark_html(False),
+        html,
+    )
 
 
 def build_test_mail(

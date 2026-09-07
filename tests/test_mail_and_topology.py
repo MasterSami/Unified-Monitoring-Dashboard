@@ -354,6 +354,88 @@ def test_frontend_is_preferred_so_the_zabbix_server_sends_the_mail(monkeypatch):
     assert "Content-Type" not in message
 
 
+def _capture_frontend_body(monkeypatch, media):
+    """Run the frontend path against ``media`` and return (body, result)."""
+    import app.collectors.zabbix_ui as ui_mod
+
+    collector = _collector(monkeypatch)
+    monkeypatch.setattr(collector, "_rpc", lambda *a, **k: media)
+    sent = {}
+
+    class FakeUI:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return None
+
+        def login(self):
+            pass
+
+        def discover(self, mediatypeid):
+            pass
+
+        def send_test(self, mediatypeid, sendto, subject, message):
+            sent["body"] = message
+            return "Media type test successful."
+
+    monkeypatch.setattr(ui_mod, "ZabbixFrontend", FakeUI)
+    monkeypatch.setattr("smtplib.SMTP", lambda *a, **k: pytest.fail("no SMTP here"))
+    result = collector.send_test_mail("ahmed@corp.com")
+    return sent["body"], result
+
+
+def test_html_media_type_receives_the_branded_html_body(monkeypatch):
+    """The whole point of the branded template is that it arrives branded.
+
+    The controller carries one body string and Zabbix sends it in the media
+    type's own format. Handing it the plain part while the media type is HTML
+    delivered the memo as bare text.
+    """
+    media = [dict(_MEDIA[0], content_type="1")]
+    body, result = _capture_frontend_body(monkeypatch, media)
+
+    assert "<table" in body                       # the memo layout survived
+    assert "Email alerting is working" in body
+    assert "border-radius:10px" in body           # inline styles, not stripped
+    assert result["ok"] is True
+    assert "plain text" not in result["message"]
+
+
+def test_plain_media_type_still_receives_plain_text(monkeypatch):
+    """Sending HTML to a plain-text media type would show the reader raw tags."""
+    media = [dict(_MEDIA[0], content_type="0")]
+    body, result = _capture_frontend_body(monkeypatch, media)
+
+    assert "<table" not in body
+    assert body.lstrip().startswith("SAMI'X")
+    # The result says why it looks unstyled and what to change.
+    assert "message format" in result["message"]
+
+
+def test_unknown_content_type_stays_on_plain_text(monkeypatch):
+    """An absent field must not gamble on HTML — raw tags are the worse loss."""
+    body, _ = _capture_frontend_body(monkeypatch, _MEDIA)
+    assert "<table" not in body
+
+
+def test_a_cid_logo_is_swapped_for_the_wordmark_not_left_broken():
+    """The frontend has no attachment, so cid: would render as a broken image."""
+    from app.mail_template import inline_logo_stripped
+
+    html = (
+        '<td><img src="cid:samix-logo" width="34" height="34" alt="SAMI\'X" '
+        'style="display:block;" /></td>'
+    )
+    out = inline_logo_stripped(html)
+    assert "cid:" not in out
+    assert "<img" not in out
+    assert "SAMI'X" in out
+
+
 def test_falls_back_to_smtp_when_the_frontend_fails(monkeypatch):
     import app.collectors.zabbix_ui as ui_mod
 

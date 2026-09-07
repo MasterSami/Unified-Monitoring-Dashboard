@@ -21,7 +21,7 @@ import httpx
 from app.collectors import mock_data
 from app.collectors.base import BaseCollector, CollectorError
 from app.config import Settings
-from app.mail_template import build_test_mail
+from app.mail_template import build_test_mail, inline_logo_stripped
 from app.models import HostStatus, SourcePlatform
 from app.normalizer import normalize_zabbix_severity, zabbix_severity_label
 from app.owners import resolve_owner
@@ -33,6 +33,32 @@ def _to_float_or_none(v: object) -> float | None:
         return float(v)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+
+
+def _frontend_body(media_type: dict, msg) -> tuple[str, bool]:
+    """Pick the body part the frontend controller should carry.
+
+    Returns ``(body, sent_as_html)``.
+
+    The controller takes one body string, and Zabbix delivers it in whatever
+    format the media type itself declares — ``content_type`` is ``1`` for HTML
+    and ``0`` for plain text. Handing it the plain part while the media type is
+    set to HTML is what made the branded mail arrive as bare text; handing it
+    HTML while the media type is plain would show the reader raw tags. So the
+    media type decides, and an unknown value stays on the safe side.
+
+    An embedded logo cannot travel this way — there is no attachment — so a
+    ``cid:`` reference is swapped back for the text wordmark.
+    """
+    wants_html = str(media_type.get("content_type", "")) == "1"
+    if wants_html:
+        html = msg.get_body(preferencelist=("html",))
+        if html is not None:
+            content = html.get_content()
+            if "cid:" in content:
+                content = inline_logo_stripped(content)
+            return content, True
+    return msg.get_body(preferencelist=("plain",)).get_content(), False
 
 
 class ZabbixCollector(BaseCollector):
@@ -594,8 +620,7 @@ class ZabbixCollector(BaseCollector):
 
         base = self.config.url.rstrip("/")
         subject = msg["Subject"]
-        # The frontend controller takes plain text, not a MIME message.
-        body = msg.get_body(preferencelist=("plain",)).get_content()
+        body, as_html = _frontend_body(media_type, msg)
 
         try:
             with ZabbixFrontend(
@@ -609,13 +634,17 @@ class ZabbixCollector(BaseCollector):
                 note = ui.send_test(
                     str(media_type.get("mediatypeid")), sendto, subject, body
                 )
-            return {
-                "ok": True,
-                "message": (
-                    f"Sent by {self.instance} itself to {sendto} "
-                    f"via '{media_type.get('name')}' — {note}"
-                ),
-            }
+            message = (
+                f"Sent by {self.instance} itself to {sendto} "
+                f"via '{media_type.get('name')}' — {note}"
+            )
+            if not as_html:
+                message += (
+                    f" (plain text — '{media_type.get('name')}' has its message "
+                    "format set to Plain text in Zabbix; switch it to HTML for "
+                    "the branded layout)"
+                )
+            return {"ok": True, "message": message}
         except FrontendError as exc:
             self.logger.warning("test mail via frontend failed: %s", exc)
             return {"ok": False, "message": f"Zabbix frontend test failed: {exc}"}
