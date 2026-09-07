@@ -1758,7 +1758,7 @@ h3{
 
 
 /* =========================================================
-   v3 ADDITIONS - 10-slide executive deck
+   v3 ADDITIONS - 9-slide executive deck
 ========================================================= */
 
 /* --- five sources on the hero orbit (0 / 72 / 144 / 216 / 288 deg) --- */
@@ -1884,8 +1884,8 @@ h3{
 }
 .fact b{color:var(--navy);}
 
-/* --- quality bar --- */
-.quality{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:26px;}
+/* --- quality bar: two compact tiles, left-aligned under the value grid --- */
+.quality{display:grid;grid-template-columns:repeat(2,minmax(0,300px));gap:14px;margin-top:26px;}
 .q{
   background:#fff;border:1px solid var(--border);border-radius:16px;
   padding:20px 24px;box-shadow:var(--shadow);
@@ -1987,7 +1987,7 @@ h3{
 
   </div>
 
-  <div class="page-number">01 / 10</div>
+  <div class="page-number">01 / 09</div>
 
 </section>
 
@@ -2056,7 +2056,7 @@ h3{
 
   </div>
 
-  <div class="page-number">02 / 10</div>
+  <div class="page-number">02 / 09</div>
 
 </section>
 
@@ -2119,7 +2119,7 @@ h3{
 
   </div>
 
-  <div class="page-number">03 / 10</div>
+  <div class="page-number">03 / 09</div>
 
 </section>
 
@@ -2172,7 +2172,7 @@ h3{
 
   </div>
 
-  <div class="page-number">04 / 10</div>
+  <div class="page-number">04 / 09</div>
 
 </section>
 
@@ -2215,7 +2215,7 @@ h3{
         <div class="platform-name">Dynatrace</div>
       </div>
       <div class="platform-desc">
-        Hosts &middot; problems<br>Processes &middot; owners
+        Hosts &middot; problems<br>Processes &middot; owners<br>Service topology
       </div>
     </div>
 
@@ -2260,7 +2260,7 @@ h3{
     <div class="fact">DIGITALVIEW &nbsp;<b>inventory only &mdash; not counted as availability</b></div>
   </div>
 
-  <div class="page-number">05 / 10</div>
+  <div class="page-number">05 / 09</div>
 
 </section>
 
@@ -2340,100 +2340,20 @@ h3{
     <div class="fact">EXPORT &nbsp;<b>branded Excel from every view</b></div>
   </div>
 
-  <div class="page-number">06 / 10</div>
+  <div class="page-number">06 / 09</div>
 
 </section>
 
 
 <!-- =====================================================
-     SLIDE 07 - BEYOND MONITORING
+     SLIDE 07 - ARCHITECTURE &amp; PRODUCTION SAFETY
 ===================================================== -->
 
 <section class="slide dense">
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">06 &middot; ACTION &amp; AUTOMATION</div>
-  </div>
-
-  <div class="corner-glow"></div>
-  <div class="accent-line"></div>
-
-  <h2>
-    Seeing the problem is half.<br>
-    <span class="gradient-text">These close the other half.</span>
-  </h2>
-
-  <div class="caps">
-
-    <div class="cap">
-      <div class="ci">&rarr;</div>
-      <div>
-        <b>Escalate to owner</b>
-        <span>Owner resolved. Mail ready in Outlook.</span>
-      </div>
-    </div>
-
-    <div class="cap">
-      <div class="ci">&#9655;</div>
-      <div>
-        <b>Runbook</b>
-        <span>Nine reports. No shell. No credentials.</span>
-      </div>
-    </div>
-
-    <div class="cap">
-      <div class="ci">&#9635;</div>
-      <div>
-        <b>Branded Excel export</b>
-        <span>Every view. Duplicates excluded.</span>
-      </div>
-    </div>
-
-    <div class="cap">
-      <div class="ci">&#9993;</div>
-      <div>
-        <b>Server-side mail test</b>
-        <span>Zabbix sends it. The real path, proven.</span>
-      </div>
-    </div>
-
-    <div class="cap">
-      <div class="ci">&#8635;</div>
-      <div>
-        <b>Processes requiring restart</b>
-        <span>Dynatrace. With owner. Searchable by host.</span>
-      </div>
-    </div>
-
-    <div class="cap">
-      <div class="ci">&#9881;</div>
-      <div>
-        <b>Operable by configuration</b>
-        <span>Features toggled per deployment.</span>
-      </div>
-    </div>
-
-  </div>
-
-  <div class="facts">
-    <div class="fact">GUARDRAIL &nbsp;<b>config-changing scripts: documented, no Run button</b></div>
-  </div>
-
-  <div class="page-number">07 / 10</div>
-
-</section>
-
-
-<!-- =====================================================
-     SLIDE 08 - ARCHITECTURE &amp; PRODUCTION SAFETY
-===================================================== -->
-
-<section class="slide dense">
-
-  <div class="topbar">
-    <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">07 &middot; ARCHITECTURE &amp; SAFETY</div>
+    <div class="section-label">06 &middot; ARCHITECTURE &amp; SAFETY</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2495,20 +2415,20 @@ h3{
     <div class="fact">&#10003; <b>Failures surfaced, never swallowed</b></div>
   </div>
 
-  <div class="page-number">08 / 10</div>
+  <div class="page-number">07 / 09</div>
 
 </section>
 
 
 <!-- =====================================================
-     SLIDE 09 - VALUE &amp; DELIVERY
+     SLIDE 08 - VALUE &amp; DELIVERY
 ===================================================== -->
 
 <section class="slide dense">
 
   <div class="topbar">
     <div class="brand"><div class="we-mark">WE</div><div><div class="brand-text">TELECOM EGYPT</div><div class="brand-sub">IT SERVICE MANAGMENT</div></div></div>
-    <div class="section-label">08 &middot; VALUE &amp; DELIVERY</div>
+    <div class="section-label">07 &middot; VALUE &amp; DELIVERY</div>
   </div>
 
   <div class="accent-line"></div>
@@ -2559,19 +2479,17 @@ h3{
   </div>
 
   <div class="quality">
-    <div class="q"><b>225</b><span>Automated tests passing</span></div>
     <div class="q"><b>0</b><span>Production changes required</span></div>
     <div class="q"><b>5</b><span>Sources live in the model</span></div>
-    <div class="q"><b>Next</b><span>SiteScope API &middot; unified alerting</span></div>
   </div>
 
-  <div class="page-number">09 / 10</div>
+  <div class="page-number">08 / 09</div>
 
 </section>
 
 
 <!-- =====================================================
-     SLIDE 10 - CLOSING
+     SLIDE 09 - CLOSING
 ===================================================== -->
 
 <section class="slide final">
@@ -2630,7 +2548,7 @@ h3{
     THANK YOU &middot; QUESTIONS
   </div>
 
-  <div class="page-number" style="color:#8e83a7">10 / 10</div>
+  <div class="page-number" style="color:#8e83a7">09 / 09</div>
 
 </section>
 
@@ -2649,7 +2567,7 @@ h3{
   <div class="counter">
     <span id="current">01</span>
     /
-    <span id="total">10</span>
+    <span id="total">9</span>
   </div>
 
   <button class="nav-btn" id="next">›</button>
