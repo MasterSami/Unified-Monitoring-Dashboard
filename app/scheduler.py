@@ -189,6 +189,29 @@ def get_service() -> CollectorService:
 _SITESCOPE_DEMO_JOB_ID = "sitescope_demo_load"
 
 
+def _record_feed_failure(platform: str, instance: str, reason: str) -> None:
+    """Persist a failed run for a file/push feed so the UI can show the reason."""
+    db: Session = SessionLocal()
+    try:
+        now = datetime.now(timezone.utc)
+        db.add(
+            CollectorRun(
+                platform=platform,
+                instance=instance,
+                started_at=now,
+                finished_at=now,
+                status=RunStatus.failed,
+                items_collected=0,
+                error_message=reason[:2048],
+            )
+        )
+        db.commit()
+    except Exception:  # pragma: no cover - reporting must never raise
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _load_sitescope_file(instance: str, path: str) -> None:
     """Load one redacted SiteScope .tsv through the shared ingest path.
 
@@ -203,6 +226,13 @@ def _load_sitescope_file(instance: str, path: str) -> None:
             lines = [ln.rstrip("\r\n") for ln in fh if ln.strip()]
     except OSError as exc:
         logger.warning("sitescope file unreadable (%s -> %s): %s", instance, path, exc)
+        # Record the failure rather than only logging it. A moved or mistyped
+        # path used to make the instance vanish from the dashboard entirely,
+        # which reads as "SiteScope has no data" instead of "SiteScope cannot
+        # find its file" — the same trap Digital View used to have.
+        _record_feed_failure(
+            "sitescope", instance, f"cannot read {path}: {exc}"
+        )
         return
 
     db: Session = SessionLocal()
@@ -457,9 +487,16 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         )
         logger.info(
             "sitescope auto-load enabled for %d instance(s): %s (every %d min)",
-            len(demo_map), ", ".join(i for i, _ in demo_map),
+            len(demo_map),
+            ", ".join(f"{i} -> {p}" for i, p in demo_map),
             settings.poll_interval_minutes,
         )
+        for instance, path in settings.sitescope_demo_shadowed:
+            logger.warning(
+                "sitescope: ignoring '%s=%s' — %s already has a path earlier in "
+                "SITESCOPE_DEMO_FILES",
+                instance, path, instance,
+            )
 
     # Huawei asset inventory: a file on disk, re-read only when it changes.
     # Cheap enough to check every poll interval; the parse only runs on a new

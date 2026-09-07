@@ -202,15 +202,37 @@ class Settings(BaseSettings):
     @property
     def sitescope_demo_map(self) -> list[tuple[str, str]]:
         """Parse the demo config into ``[(instance, path), ...]`` (deduped)."""
+        return self._sitescope_demo_parse()[0]
+
+    @property
+    def sitescope_demo_shadowed(self) -> list[tuple[str, str]]:
+        """Entries dropped because an earlier one claimed the same instance.
+
+        The first path wins per instance name, which is fine until the list has
+        grown several stale copies of the same server — then the one actually in
+        use is decided by ordering, silently. The scheduler logs these at
+        startup so a dead path is visible instead of merely inactive.
+        """
+        return self._sitescope_demo_parse()[1]
+
+    def _sitescope_demo_parse(
+        self,
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Return ``(used, shadowed)`` for the configured SiteScope files."""
         pairs: list[tuple[str, str]] = []
+        shadowed: list[tuple[str, str]] = []
         seen: set[str] = set()
 
         def _add(instance: str, path: str) -> None:
             instance, path = instance.strip(), path.strip()
+            if not path:
+                return
             key = instance or path
-            if path and key not in seen:
-                seen.add(key)
-                pairs.append((instance or "SiteScope", path))
+            if key in seen:
+                shadowed.append((instance or "SiteScope", path))
+                return
+            seen.add(key)
+            pairs.append((instance or "SiteScope", path))
 
         if self.sitescope_demo_file:
             _add(self.sitescope_demo_instance or "SiteScope-141", self.sitescope_demo_file)
@@ -220,7 +242,7 @@ class Settings(BaseSettings):
                 continue
             instance, sep, path = entry.partition("=")
             _add(instance, path) if sep else _add("SiteScope", instance)
-        return pairs
+        return pairs, shadowed
 
     @property
     def enabled_collectors_list(self) -> list[str]:
