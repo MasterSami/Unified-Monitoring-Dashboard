@@ -547,3 +547,105 @@ def test_login_without_a_session_cookie_is_an_error():
     with _pytest.raises(FrontendError, match="zbx_session"):
         ui.login()
     ui.close()
+
+
+def test_login_accepts_the_302_to_the_dashboard():
+    """A successful Zabbix login IS a redirect — it must not be raised on.
+
+    ``raise_for_status()`` treats a 302 as a failure when redirects are not
+    being followed, which broke the test mail on every frontend that bounces
+    to the dashboard after sign-in.
+    """
+    import httpx
+
+    from app.collectors.zabbix_ui import ZabbixFrontend
+
+    ui = ZabbixFrontend("https://z", "u", "p")
+    ui._client = httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(
+            302,
+            headers={
+                "location": "zabbix.php?action=dashboard.view",
+                "set-cookie": "zbx_session=abc123; path=/",
+            },
+        )))
+    ui.login()  # must not raise
+    ui.close()
+
+
+def test_login_rejects_the_302_back_to_the_login_form():
+    """Bad credentials bounce to index.php — that one really is a failure."""
+    import httpx
+    import pytest as _pytest
+
+    from app.collectors.zabbix_ui import FrontendError, ZabbixFrontend
+
+    ui = ZabbixFrontend("https://z", "u", "p")
+    ui._client = httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(
+            302,
+            headers={
+                "location": "index.php?form=default",
+                "set-cookie": "zbx_session=stale; path=/",
+            },
+        )))
+    with _pytest.raises(FrontendError, match="login form again"):
+        ui.login()
+    ui.close()
+
+
+def test_login_rejects_a_200_that_is_still_the_login_page():
+    """Some builds re-render the form instead of redirecting."""
+    import httpx
+    import pytest as _pytest
+
+    from app.collectors.zabbix_ui import FrontendError, ZabbixFrontend
+
+    page = (
+        '<!DOCTYPE html><form action="index.php?action=login" method="post">'
+        '<input name="name"><input name="password" type="password"></form>'
+    )
+    ui = ZabbixFrontend("https://z", "u", "p")
+    ui._client = httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(
+            200, text=page, headers={"set-cookie": "zbx_session=stale; path=/"})))
+    with _pytest.raises(FrontendError, match="login form again"):
+        ui.login()
+    ui.close()
+
+
+def test_login_reports_an_unreachable_frontend_clearly():
+    import httpx
+    import pytest as _pytest
+
+    from app.collectors.zabbix_ui import FrontendError, ZabbixFrontend
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    ui = ZabbixFrontend("https://z", "u", "p")
+    ui._client = httpx.Client(transport=httpx.MockTransport(boom))
+    with _pytest.raises(FrontendError, match="cannot reach the Zabbix frontend"):
+        ui.login()
+    ui.close()
+
+
+def test_a_controller_redirected_to_login_is_not_mistaken_for_a_reply():
+    """A lost session redirects the POST; the empty body must not count."""
+    import httpx
+    import pytest as _pytest
+
+    from app.collectors.zabbix_ui import FrontendError, ZabbixFrontend
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("index.php"):
+            return httpx.Response(200, text="<!DOCTYPE html><html>sign in</html>")
+        return httpx.Response(302, headers={"location": "/index.php"})
+
+    ui = ZabbixFrontend("https://z", "u", "p")
+    ui._client = httpx.Client(
+        transport=httpx.MockTransport(handler), follow_redirects=True
+    )
+    with _pytest.raises(FrontendError):
+        ui.send_test("1", "a@b.com", "s", "b")
+    ui.close()

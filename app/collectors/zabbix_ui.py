@@ -126,6 +126,12 @@ def _is_html_page(text: str) -> bool:
     return head.startswith("<!doctype") or head.startswith("<html")
 
 
+def _is_login_form(text: str) -> bool:
+    """True when the body is the sign-in page — i.e. the login was rejected."""
+    head = text[:20000].lower()
+    return 'name="password"' in head and "action=login" in head
+
+
 class ZabbixFrontend:
     """A logged-in Zabbix frontend session that can fire the media-type test."""
 
@@ -144,7 +150,12 @@ class ZabbixFrontend:
         self._client = httpx.Client(
             verify=verify,
             timeout=timeout,
-            follow_redirects=False,
+            # Follow redirects everywhere *except* the login POST, which is
+            # handled explicitly below. Without this a controller POST that
+            # bounces to the login page comes back with an empty body, and an
+            # empty body looks like a valid controller reply to the checks
+            # further down.
+            follow_redirects=True,
             headers={"X-Requested-With": "XMLHttpRequest"},
         )
         self.csrf: str | None = None
@@ -165,21 +176,50 @@ class ZabbixFrontend:
     # --- Session ------------------------------------------------------------
 
     def login(self) -> None:
-        """Authenticate against the frontend (not the API) and keep the cookie."""
-        resp = self._client.post(
-            f"{self.base}/index.php?action=login",
-            data={
-                "name": self.user,
-                "password": self.password,
-                "enter": "Sign in",
-                "autologin": "1",
-            },
-        )
-        resp.raise_for_status()
-        if not any(name.startswith("zbx_session") for name in self._client.cookies.keys()):
+        """Authenticate against the frontend (not the API) and keep the cookie.
+
+        A *successful* login is a ``302`` to ``zabbix.php?action=dashboard.view``
+        — so the status code cannot be raised on. Zabbix signals a rejected
+        login by redirecting back to ``index.php`` instead, or by returning the
+        login form again, so success is decided by where it sent us and whether
+        a session cookie came back.
+        """
+        try:
+            resp = self._client.post(
+                f"{self.base}/index.php?action=login",
+                data={
+                    "name": self.user,
+                    "password": self.password,
+                    "enter": "Sign in",
+                    "autologin": "1",
+                },
+                follow_redirects=False,
+            )
+        except httpx.HTTPError as exc:
             raise FrontendError(
-                "frontend login failed (no zbx_session cookie) — check the "
-                "username and password in servers.yaml"
+                f"cannot reach the Zabbix frontend at {self.base}: {exc}"
+            ) from exc
+
+        if resp.status_code >= 400:
+            raise FrontendError(
+                f"frontend login returned HTTP {resp.status_code} from {self.base}"
+            )
+
+        location = resp.headers.get("location", "").lstrip("/")
+        rejected = location.startswith("index.php") or (
+            resp.is_success and _is_login_form(resp.text)
+        )
+        has_session = any(
+            name.startswith("zbx_session") for name in self._client.cookies.keys()
+        )
+
+        if rejected or not has_session:
+            reason = "no zbx_session cookie"
+            if rejected:
+                reason = "the frontend returned the login form again"
+            raise FrontendError(
+                f"frontend login failed ({reason}) — check the username and "
+                "password in servers.yaml"
             )
 
     def bootstrap_csrf(self) -> str | None:
