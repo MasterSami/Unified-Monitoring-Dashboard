@@ -17,8 +17,11 @@ without code changes.
   / unknown / disabled) and platform badges.
 - **Service / group filter** — on Capacity, Agents and Alerts alike. Operations
   teams know a server by the tool it belongs to ("Billing", "CRM"), not by its
-  IP, so the same box on all three pages offers every group name seen across
-  the sources and matches by substring — typing `bill` is enough. For Zabbix
+  IP, so the same box on all three pages offers the group names seen in the
+  sources and matches by substring — typing `bill` is enough. The list follows
+  the platform tab and instance you have picked (the Dynatrace tab offers only
+  Dynatrace host groups); under "All" each name shows which tool it came from.
+  The menu is drawn by the app, so it looks the same in Firefox and Chrome. For Zabbix
   that is the host group (a host in several groups matches each of them); for
   Dynatrace the host group or group tag; for NNMi the device category; for
   SiteScope the monitor group. Alerts inherit the group of their host. The

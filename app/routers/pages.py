@@ -651,23 +651,54 @@ def _service_clause(value: str):
     )
 
 
-def _service_names(db: Session) -> list[str]:
-    """Distinct service / group names across every host, for the filter list.
+def _split_groups(value: object) -> list[str]:
+    """Individual group names out of one stored ``group_name``.
 
     Zabbix stores every group a host belongs to as one comma-joined string, so
-    the raw distinct values are combinations ("Billing, Linux servers"), not
-    services. They are split back into the individual names the operations
-    teams actually work with. One indexed DISTINCT; runs on full page loads
-    only, never on the HTMX partial refreshes.
+    a raw value is a combination ("Billing, Linux servers"), not a service.
     """
-    seen: dict[str, str] = {}
-    for (value,) in db.execute(
-        select(Host.group_name).where(Host.group_name.is_not(None)).distinct()
+    return [p.strip() for p in str(value).split(",") if p.strip()]
+
+
+def _service_catalog(db: Session) -> dict[str, dict]:
+    """Service / group names per source instance, for the filter's menu.
+
+    ``{instance: {"platform": "zabbix", "names": ["Billing", ...]}}`` — shaped
+    so the browser can narrow the list to whatever platform tab and instance
+    the user has picked without another request: a Dynatrace operator should
+    be offered Dynatrace host groups, not Zabbix ones.
+
+    One indexed DISTINCT over (platform, instance, group_name), split back into
+    individual names and de-duplicated case-insensitively within an instance.
+    Runs on full page loads only, never on the HTMX partial refreshes.
+    """
+    catalog: dict[str, dict] = {}
+    seen: dict[str, dict[str, str]] = {}
+    for platform, instance, value in db.execute(
+        select(Host.source_platform, Host.source_instance, Host.group_name)
+        .where(Host.group_name.is_not(None))
+        .distinct()
     ):
-        for part in str(value).split(","):
-            name = part.strip()
-            if name:
-                seen.setdefault(name.lower(), name)
+        inst = instance or ""
+        entry = catalog.setdefault(
+            inst, {"platform": _enum_value(platform), "names": []}
+        )
+        names = seen.setdefault(inst, {})
+        for name in _split_groups(value):
+            if name.lower() not in names:
+                names[name.lower()] = name
+                entry["names"].append(name)
+    for entry in catalog.values():
+        entry["names"].sort(key=str.lower)
+    return dict(sorted(catalog.items(), key=lambda kv: kv[0].lower()))
+
+
+def _service_names(db: Session) -> list[str]:
+    """Every distinct service / group name across all sources, sorted."""
+    seen: dict[str, str] = {}
+    for entry in _service_catalog(db).values():
+        for name in entry["names"]:
+            seen.setdefault(name.lower(), name)
     return sorted(seen.values(), key=str.lower)
 
 
@@ -1076,7 +1107,7 @@ def capacity_page(
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings, db),
-            "services": _service_names(db),
+            "services": _service_catalog(db),
             "collectors": get_collector_statuses(db, settings),
             "current": dict(_CAPACITY_CURRENT_DEFAULT),
         },
@@ -1230,7 +1261,7 @@ def agents_page(
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings, db),
-            "services": _service_names(db),
+            "services": _service_catalog(db),
             "collectors": get_collector_statuses(db, settings),
             "current": {
                 "q": "",
@@ -1447,7 +1478,7 @@ def alerts_page(
                 "state": "active",
                 "group": "",
             },
-            "services": _service_names(db),
+            "services": _service_catalog(db),
             "collectors": get_collector_statuses(db, settings),
         },
     )

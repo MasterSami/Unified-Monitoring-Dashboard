@@ -4,23 +4,27 @@
 
   service_filter(url, target, cls, value, services)
     The service / application-group filter. Operations teams know servers by
-    the tool they belong to ("Billing", "CRM", "Mediation"), not by IP, so the
-    datalist offers every group name seen across all sources and the server
-    matches by substring — typing "bill" is enough.
+    the tool they belong to ("Billing", "CRM", "Mediation"), not by IP.
+
+    The menu is our own (static/svcbox.js), not a native <datalist>: Firefox
+    renders datalists as an unstyled system popup and cannot narrow them, and
+    the list has to follow the platform tab and instance the user has picked —
+    a Dynatrace operator should be offered Dynatrace host groups, not Zabbix
+    ones. The names are embedded once per page load, keyed by instance, so
+    changing scope never costs a request.
 
     url      – the HTMX partial that renders the table
     target   – the element the partial swaps into
     cls      – the page's filter class (cfilter / afilter), so the value rides
                along with every other request on the page via hx-include
     value    – the current value, or "" / "all" for none
-    services – the names to offer (see pages._service_names)
+    services – pages._service_catalog(db): {instance: {platform, names}}
 #}
 {% macro service_filter(url, target, cls, value, services) %}
-<div class="svc" title="Filter by service / application group — the name your team uses, not the IP">
+<div class="svc" data-svcbox title="Filter by service / application group — the name your team uses, not the IP">
   <span class="svc-icon">⬡</span>
   <input
     type="search"
-    list="service-options"
     name="group"
     class="{{ cls }} svc-input"
     value="{{ value if value and value != 'all' else '' }}"
@@ -32,9 +36,11 @@
     hx-include=".{{ cls }}"
     autocomplete="off"
     spellcheck="false"
+    role="combobox"
+    aria-autocomplete="list"
+    aria-expanded="false"
   />
-  <datalist id="service-options">
-    {% for s in services %}<option value="{{ s }}">{% endfor %}
-  </datalist>
+  <ul class="svc-menu" role="listbox" hidden></ul>
+  <script type="application/json" data-svc-catalog>{{ services | tojson }}</script>
 </div>
 {% endmacro %}

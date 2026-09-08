@@ -964,11 +964,89 @@ td.mono {
   font-size: 12px;
   pointer-events: none;
 }
-/* The browser's own datalist arrow doubles the search-type clear button;
-   keep only the clear button so the box reads like the search field. */
-.svc-input::-webkit-calendar-picker-indicator {
-  display: none !important;
+/* The menu is drawn by static/svcbox.js, not a native <datalist>, so it looks
+   the same in Firefox as in Chrome and can follow the platform tab. */
+.svc-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 100%;
+  max-width: 360px;
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow), var(--shadow-sm);
 }
+.svc-menu li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.svc-menu li.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.svc-menu .svc-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.svc-menu mark {
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
+.svc-menu .svc-empty,
+.svc-menu .svc-more {
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: default;
+  white-space: normal;
+}
+.svc-menu .svc-empty {
+  padding: 10px;
+}
+/* Which tool a group belongs to — shown only in the "All" scope. */
+.svc-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.svc-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dot, var(--text-faint));
+}
+.svc-tag-zabbix { --dot: #d40000; }
+.svc-tag-dynatrace { --dot: #1496ff; }
+.svc-tag-nnmi { --dot: #00a982; }
+.svc-tag-sitescope { --dot: #f59e0b; }
+.svc-tag-digitalview { --dot: #a855f7; }
 
 .tabs {
   display: inline-flex;

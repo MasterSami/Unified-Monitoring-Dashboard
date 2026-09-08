@@ -179,14 +179,44 @@ def test_service_names_split_comma_joined_groups_and_dedupe(client):
         db.close()
 
 
+def test_service_catalog_is_keyed_by_instance_with_its_platform(client):
+    """The menu narrows to the platform tab / instance without a request."""
+    from app.routers.pages import _service_catalog
+
+    db = SessionLocal()
+    try:
+        if not db.query(Host).filter_by(source_instance=INST).count():
+            _seed(db)
+        db.add(Host(hostname="dt-only", source_platform=SourcePlatform.dynatrace,
+                    source_instance=INST + "-dt", external_id="dt1",
+                    status=HostStatus.up, group_name="Mediation"))
+        db.commit()
+        cat = _service_catalog(db)
+    finally:
+        db.close()
+
+    # The seed instance carries both Zabbix and Dynatrace hosts; the catalog
+    # is per (instance) and reports the platform the names came from.
+    assert cat[INST + "-dt"] == {"platform": "dynatrace", "names": ["Mediation"]}
+    assert "Mediation" not in cat[INST]["names"]
+    # Comma-joined Zabbix groups are split; names are sorted and unique.
+    assert "Billing" in cat[INST]["names"] and "Linux servers" in cat[INST]["names"]
+    assert "Billing, Linux servers" not in cat[INST]["names"]
+    assert cat[INST]["names"] == sorted(cat[INST]["names"], key=str.lower)
+    assert list(cat) == sorted(cat, key=str.lower)
+
+
 def test_pages_render_the_service_filter(client):
-    """All three pages carry the same control with the same datalist."""
+    """All three pages carry the same control with the catalog embedded."""
     for path in ("/capacity", "/agents", "/alerts"):
         html = client.get(path).text
         assert 'name="group"' in html, path
-        assert 'list="service-options"' in html, path
-        assert '<datalist id="service-options">' in html, path
-        assert 'Service / group' in html, path
+        assert "data-svcbox" in html, path
+        assert "data-svc-catalog" in html, path
+        assert '"platform": "' in html, path       # the JSON, not a datalist
+        assert "<datalist" not in html, path
+        assert "/static/svcbox.js" in html, path
+        assert "Service / group" in html, path
 
 
 def test_partials_and_exports_accept_the_filter(client):
