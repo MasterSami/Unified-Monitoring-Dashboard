@@ -1,0 +1,574 @@
+<title>SAMI'X AIOps Plan</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#f7f8fa; --surface:#ffffff; --surface-2:#eef0f4; --line:#dfe3ea; --line-strong:#c9cfd9;
+  --ink:#16181d; --muted:#5f6a78; --faint:#98a1ad;
+  --accent:#4f46e5; --accent-ink:#3b34c4; --accent-soft:rgba(79,70,229,.10);
+  --ok:#178a5f; --ok-soft:rgba(23,138,95,.12);
+  --warn:#b45309; --warn-soft:rgba(180,83,9,.12);
+  --crit:#c2410c; --crit-soft:rgba(194,65,12,.12);
+  --sans:"IBM Plex Sans","Segoe UI",system-ui,-apple-system,Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+  --radius:10px; --radius-sm:6px;
+  --shadow:0 1px 2px rgba(16,24,40,.05),0 6px 20px -8px rgba(16,24,40,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#121417; --surface:#181b20; --surface-2:#1f2329; --line:#2a2f37; --line-strong:#3a414b;
+    --ink:#e8eaee; --muted:#9aa3ad; --faint:#6b7480;
+    --accent:#8b85ff; --accent-ink:#a6a1ff; --accent-soft:rgba(139,133,255,.14);
+    --ok:#3ccf8e; --ok-soft:rgba(60,207,142,.14);
+    --warn:#f5a524; --warn-soft:rgba(245,165,36,.14);
+    --crit:#ff7a45; --crit-soft:rgba(255,122,69,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -10px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#121417; --surface:#181b20; --surface-2:#1f2329; --line:#2a2f37; --line-strong:#3a414b;
+  --ink:#e8eaee; --muted:#9aa3ad; --faint:#6b7480;
+  --accent:#8b85ff; --accent-ink:#a6a1ff; --accent-soft:rgba(139,133,255,.14);
+  --ok:#3ccf8e; --ok-soft:rgba(60,207,142,.14);
+  --warn:#f5a524; --warn-soft:rgba(245,165,36,.14);
+  --crit:#ff7a45; --crit-soft:rgba(255,122,69,.14);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -10px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15.5px;line-height:1.6;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-ink);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 28px 96px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 0 18px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:12px}
+.mark{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:grid;place-items:center;font-family:var(--mono);font-weight:600;font-size:13px;letter-spacing:.02em}
+.brand b{font-weight:600;font-size:15px}
+.brand span{display:block;color:var(--muted);font-size:12.5px}
+.status{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line-strong);border-radius:999px;padding:5px 12px;background:var(--surface)}
+.status i{width:7px;height:7px;border-radius:50%;background:var(--warn);display:inline-block}
+.hero{padding:44px 0 36px;max-width:820px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-ink);margin-bottom:12px}
+h1{font-size:clamp(30px,4vw,44px);line-height:1.1;letter-spacing:-.02em;font-weight:700;margin:0 0 16px;text-wrap:balance}
+.lead{font-size:18px;color:var(--muted);margin:0 0 22px;max-width:66ch}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:18px}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.fact b{display:block;font-size:22px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.fact span{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px;align-items:start}
+@media (max-width:900px){.layout{grid-template-columns:1fr}.toc{display:none}}
+.toc{position:sticky;top:24px;font-size:13.5px}
+.toc .t{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:10px}
+.toc a{display:block;color:var(--muted);padding:5px 0 5px 12px;border-left:2px solid var(--line)}
+.toc a:hover{color:var(--ink);border-color:var(--line-strong);text-decoration:none}
+.doc{max-width:760px}
+section{padding:40px 0 8px;border-top:1px solid var(--line)}
+section:first-child{border-top:0;padding-top:8px}
+h2{font-size:26px;letter-spacing:-.015em;font-weight:700;margin:0 0 6px;text-wrap:balance}
+.h2sub{color:var(--muted);margin:0 0 22px;font-size:16px}
+h3{font-size:17px;font-weight:600;margin:28px 0 8px;letter-spacing:-.005em}
+p{margin:0 0 14px;max-width:68ch}
+ul,ol{margin:0 0 16px;padding-left:22px}
+li{margin-bottom:6px}
+li::marker{color:var(--faint)}
+strong{font-weight:600}
+code,.mono{font-family:var(--mono);font-size:.92em}
+code{background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;margin:18px 0}
+.note.warn{border-color:var(--warn);background:var(--warn-soft)}
+.note p:last-child{margin:0}
+table{width:100%;border-collapse:collapse;font-size:14px;margin:12px 0 20px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.tbl table{margin:0}
+th{text-align:left;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.k{font-family:var(--mono);font-size:13px;white-space:nowrap;color:var(--ink)}
+.chip{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.04em;padding:2px 8px;border-radius:999px;border:1px solid var(--line-strong);color:var(--muted);white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:transparent;background:var(--ok-soft)}
+.chip.warn{color:var(--warn);border-color:transparent;background:var(--warn-soft)}
+.chip.acc{color:var(--accent-ink);border-color:transparent;background:var(--accent-soft)}
+.chip.crit{color:var(--crit);border-color:transparent;background:var(--crit-soft)}
+/* capability trio */
+.trio{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:8px 0 22px}
+.cap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px}
+.cap .n{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--accent-ink);text-transform:uppercase}
+.cap b{display:block;font-size:16px;margin:6px 0 6px}
+.cap p{font-size:13.5px;color:var(--muted);margin:0}
+/* architecture flow */
+.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:10px;align-items:stretch;margin:14px 0 20px}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+.col .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.node{border:1px solid var(--line);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:8px;font-size:13px;background:var(--ground)}
+.node b{display:block;font-weight:600;font-size:13px}
+.node span{color:var(--muted);font-size:12px}
+.node.hot{border-color:var(--accent);background:var(--accent-soft)}
+.arrow{display:grid;place-items:center;color:var(--faint);font-size:18px}
+@media (max-width:700px){.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}}
+/* RCA sample card */
+.rca{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 20px;margin:14px 0 22px;font-size:14px}
+.rca .head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
+.rca .title{font-weight:600;font-size:15px}
+.rca .sub{color:var(--muted);font-size:13px;font-family:var(--mono)}
+.rca h4{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:14px 0 6px;font-weight:500}
+.rca ol,.rca ul{margin:0 0 4px;padding-left:20px}
+.rca li{margin-bottom:4px}
+.ev{font-family:var(--mono);font-size:12px;color:var(--accent-ink)}
+.conf{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line);color:var(--muted);margin-left:6px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.btn{font-size:12.5px;font-weight:500;padding:6px 12px;border-radius:var(--radius-sm);border:1px solid var(--line-strong);background:var(--surface);color:var(--ink)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+/* sprint timeline */
+.tl{position:relative;margin:10px 0 8px;padding-left:26px}
+.tl::before{content:"";position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--line)}
+.sp{position:relative;margin-bottom:22px}
+.sp::before{content:"";position:absolute;left:-23px;top:8px;width:12px;height:12px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+.sp.demo::before{background:var(--accent)}
+.sp .when{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.02em}
+.sp .name{font-size:17px;font-weight:600;margin:2px 0 8px}
+.sp .box{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.sp .box .g{font-size:14px;margin-bottom:8px}
+.sp .box .g b{font-weight:600}
+.sp .two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:640px){.sp .two{grid-template-columns:1fr}}
+.sp .two h5{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;font-weight:500}
+.sp .two ul{margin:0;padding-left:18px;font-size:13.5px}
+.sp .exit{margin-top:10px;padding-top:10px;border-top:1px dashed var(--line);font-size:13.5px}
+.sp .exit b{color:var(--ok)}
+.milestone{display:inline-flex;align-items:center;gap:8px;background:var(--accent-soft);color:var(--accent-ink);border-radius:999px;padding:4px 12px;font-family:var(--mono);font-size:12px;margin-left:8px}
+/* decisions */
+.dec{counter-reset:d}
+.dec .d{display:grid;grid-template-columns:36px 1fr;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.dec .d:last-child{border-bottom:0}
+.dec .d::before{counter-increment:d;content:counter(d,decimal-leading-zero);font-family:var(--mono);font-size:13px;color:var(--faint);padding-top:2px}
+.dec .d b{display:block;font-weight:600;margin-bottom:3px}
+.dec .d p{margin:0 0 4px;font-size:14px}
+.dec .d .rec{font-size:13.5px;color:var(--muted)}
+.dec .d .rec em{font-style:normal;color:var(--ok);font-weight:600}
+.foot{margin-top:56px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+html{scroll-behavior:smooth}
+</style>
+
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <div class="mark">SX</div>
+      <div><b>SAMI'X · AIOps</b><span>Plan for an investigation agent on top of the unified monitoring layer</span></div>
+    </div>
+    <div class="status"><i></i> Proposal · v1 · 7 Sep 2026 · awaiting decisions</div>
+  </div>
+
+  <div class="hero">
+    <div class="eyebrow">Executive summary</div>
+    <h1>An agent that investigates an alert the way the team does, and shows its evidence.</h1>
+    <p class="lead">
+      Management asked for AI Ops: an assistant that can trace a problem to its root cause and take on service-management work.
+      The fastest credible path is to build it on SAMI'X, which already holds the one thing every AIOps project spends months
+      assembling: hosts, alerts, capacity, topology, owners and 30 days of history from five tools in one model.
+      The agent gets read-only tools over that data, produces a structured root-cause analysis with evidence,
+      and never acts on production without a person clicking.
+    </p>
+    <div class="facts">
+      <div class="fact"><b>25 Sep</b><span>First working demo</span></div>
+      <div class="fact"><b>7 sprints</b><span>13 weeks · to 4 Dec</span></div>
+      <div class="fact"><b>0</b><span>Production writes by the agent</span></div>
+      <div class="fact"><b>≈ $0.30</b><span>Est. cost per investigation</span></div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Contents">
+      <div class="t">Contents</div>
+      <a href="#what">What we are building</a>
+      <a href="#training">What "training" means here</a>
+      <a href="#why">Why start from SAMI'X</a>
+      <a href="#arch">Architecture &amp; guardrails</a>
+      <a href="#contract">The investigation contract</a>
+      <a href="#tools">The agent's tools</a>
+      <a href="#learn">How it gets better</a>
+      <a href="#sprints">Sprint plan &amp; dates</a>
+      <a href="#decisions">Decisions needed</a>
+      <a href="#cost">Cost</a>
+      <a href="#risks">Risks</a>
+      <a href="#easier">What makes this easier</a>
+    </nav>
+
+    <div class="doc">
+
+      <section id="what">
+        <h2>What we are building</h2>
+        <p class="h2sub">Three capabilities, delivered in this order. Each one is useful on its own.</p>
+        <div class="trio">
+          <div class="cap"><div class="n">1 · Investigate</div><b>Root-cause analysis on demand</b>
+            <p>An <em>Investigate</em> button on any alert. The agent gathers evidence from SAMI'X and returns ranked causes, blast radius, the next step and who to call.</p></div>
+          <div class="cap"><div class="n">2 · Assist</div><b>Service-management work</b>
+            <p>Incident summaries, escalation mails with the RCA attached, shift handover, post-incident reports, ticket drafts. The paperwork, written from evidence.</p></div>
+          <div class="cap"><div class="n">3 · Anticipate</div><b>Correlation and early warning</b>
+            <p>Alert storms grouped into one incident, recurring patterns surfaced, capacity that will run out before it does.</p></div>
+        </div>
+        <p>
+          The unit of value is an <strong>investigation</strong>: an operator (or a scheduled trigger) points the agent at a
+          symptom, the agent works the problem with the same sources a senior engineer would open, and hands back a
+          document the engineer can verify line by line. Speed matters, but the reason this will be trusted in a telecom
+          operations room is that every claim carries the evidence it came from.
+        </p>
+      </section>
+
+      <section id="training">
+        <h2>What "training the agent" means here</h2>
+        <p class="h2sub">Setting the expectation early, because the word suggests something it is not.</p>
+        <p>
+          We will not train a model. The model already knows how to reason about infrastructure; what it does not know is
+          <em>our</em> estate, <em>our</em> history and <em>our</em> conventions. It learns those four ways:
+        </p>
+        <ol>
+          <li><strong>Tools</strong> — access to live SAMI'X data. This is most of the value and it is ready on day one.</li>
+          <li><strong>Knowledge</strong> — our runbooks, KB articles and the way we name things, retrieved into the investigation when relevant.</li>
+          <li><strong>Memory</strong> — every investigation and the team's verdict on it are stored; the next investigation is shown similar past incidents.</li>
+          <li><strong>Evaluation</strong> — a <em>golden set</em> of past incidents with known root causes. We score the agent against it every sprint and report the number.</li>
+        </ol>
+        <p>
+          That fourth item is what turns this from a demo into an engineering project. Without it nobody can say whether
+          the agent got better this week. With it, the manager gets one chart.
+        </p>
+      </section>
+
+      <section id="why">
+        <h2>Why start from SAMI'X</h2>
+        <p class="h2sub">The expensive half of AIOps is already built and running.</p>
+        <div class="tbl"><table>
+          <thead><tr><th>An AIOps agent needs</th><th>In SAMI'X today</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>One inventory across tools</td><td>Hosts from Zabbix, Dynatrace, NNMi, SiteScope, DigitalView; de-duplicated; owner resolved</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Alerts with native severity and history</td><td>Active + resolved, 30-day backfill, matched to hosts</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Capacity signals</td><td>CPU / memory / disk per host, per partition for Zabbix</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Dependencies</td><td>NNMi L2 topology, Dynatrace service map with resolved paths</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Trust in the data</td><td>Collector health per instance; a stale source is visible</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Safe, read-only access to the tools</td><td>Enforced at the transport: Zabbix <code>*.get</code> only, Dynatrace GET only</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Diagnostic scripts</td><td>Runbook: 9 read-only reports, auth-gated, results in a table</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>A way to act</td><td>Escalate-to-owner mail, branded Excel export</td><td><span class="chip ok">ready</span></td></tr>
+            <tr><td>Reasoning over all of it</td><td>—</td><td><span class="chip acc">this plan</span></td></tr>
+          </tbody>
+        </table></div>
+        <p>
+          Every tool the agent will use is a thin wrapper over a query SAMI'X already runs for a page. Nothing new touches
+          Zabbix, Dynatrace, NNMi or SiteScope. The read-only guarantees stay exactly where they are.
+        </p>
+      </section>
+
+      <section id="arch">
+        <h2>Architecture &amp; guardrails</h2>
+        <p class="h2sub">A new package inside the same application, behind a feature flag like Topology and Runbook.</p>
+        <div class="flow">
+          <div class="col">
+            <div class="lbl">Triggers</div>
+            <div class="node"><b>Investigate button</b><span>On an alert, a host, or a service</span></div>
+            <div class="node"><b>Agent console</b><span>Ask in plain language</span></div>
+            <div class="node"><b>Scheduled</b><span>Daily digest · storm detection</span></div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="col">
+            <div class="lbl">app/aiops</div>
+            <div class="node hot"><b>Investigator</b><span>Claude tool-use loop · read-only tools · structured RCA</span></div>
+            <div class="node"><b>Knowledge</b><span>Runbooks · KB · conventions</span></div>
+            <div class="node"><b>Memory</b><span>Past investigations + verdicts</span></div>
+            <div class="node"><b>Audit &amp; budget</b><span>Every call logged · daily cap</span></div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="col">
+            <div class="lbl">Outputs</div>
+            <div class="node"><b>RCA card</b><span>In SAMI'X, with evidence</span></div>
+            <div class="node"><b>Drafts</b><span>Escalation mail · ticket · report</span></div>
+            <div class="node"><b>Proposals</b><span>"Run this Runbook script?" — a person clicks</span></div>
+          </div>
+        </div>
+
+        <h3>Guardrails that do not move</h3>
+        <ul>
+          <li><strong>Read-only tools only.</strong> The agent reaches Zabbix and Dynatrace through the same transports that reject anything but a read. It cannot be prompted into a write because no write exists for it to call.</li>
+          <li><strong>Human in the loop for every action.</strong> The agent may <em>propose</em> — a Runbook script, an escalation, a ticket. A person clicks. Nothing on production changes without that click.</li>
+          <li><strong>Evidence or nothing.</strong> Every cause in an RCA cites the tool result it came from. A claim without evidence is rendered as a hypothesis, and the card says what could not be checked.</li>
+          <li><strong>Credentials never reach the model.</strong> Tool results are built from SAMI'X's own tables; passwords, tokens and SNMP strings are not in them. IP masking is available if policy requires it.</li>
+          <li><strong>Audit log and budget.</strong> Every model call and every tool call is recorded with who asked and what it cost. A daily spend cap stops the agent, not the dashboard.</li>
+          <li><strong>Off by default.</strong> <code>ENABLE_AIOPS=false</code> ships dark, like Topology and Runbook. Turning it on is a config change, not a deployment.</li>
+        </ul>
+        <div class="note"><p><strong>Model access.</strong> The plan assumes the Claude API over HTTPS from the SAMI'X server. The client is one module, so a self-hosted model can replace it later without touching the tools, the UI or the evaluation — but the quality bar in this plan is set with Claude and should be re-measured if that changes. This is decision 1 below.</p></div>
+      </section>
+
+      <section id="contract">
+        <h2>The investigation contract</h2>
+        <p class="h2sub">What an operator gets back. Fixed structure, so it can be verified, exported and compared across sprints.</p>
+        <div class="rca" aria-label="Example RCA card">
+          <div class="head">
+            <div>
+              <div class="title">Database replication stopped on db-02.billing</div>
+              <div class="sub">Zabbix-67 · Disaster · started 07 Sep 05:41 UTC · service: Billing</div>
+            </div>
+            <div><span class="chip crit">active</span> <span class="chip">investigated in 41 s</span></div>
+          </div>
+          <h4>Evidence gathered</h4>
+          <ul>
+            <li><span class="ev">capacity(db-02.billing)</span> — /var/lib/mysql at <strong>98 %</strong>, up from 71 % seven days ago</li>
+            <li><span class="ev">related_alerts(service=Billing, 2h)</span> — "Free disk space &lt; 5 %" on the same host, <strong>fired 22 min earlier</strong></li>
+            <li><span class="ev">alert_history(db-02.billing, 30d)</span> — same pair of alerts on 19 Aug, resolved after 3 h</li>
+            <li><span class="ev">topology(Billing)</span> — 4 services depend on db-02: billing-api, invoicing, rating, reporting</li>
+            <li><span class="ev">collector_health(Zabbix-67)</span> — data is 3 min old; the picture is current</li>
+          </ul>
+          <h4>Probable causes</h4>
+          <ol>
+            <li><strong>Replica data partition full; replication thread stopped on write.</strong><span class="conf">confidence high</span><br><span style="color:var(--muted)">Disk alert preceded replication alert by 22 min; identical sequence on 19 Aug.</span></li>
+            <li><strong>Network path to primary degraded.</strong><span class="conf">confidence low</span><br><span style="color:var(--muted)">No NNMi incident on the path in the window; listed for completeness.</span></li>
+          </ol>
+          <h4>Blast radius</h4>
+          <p style="margin:0">Reads served by the replica for <strong>billing-api, invoicing, rating, reporting</strong> may be stale or failing over to the primary.</p>
+          <h4>Recommended next step</h4>
+          <p style="margin:0">Confirm partition usage, then free or extend <code>/var/lib/mysql</code> before restarting replication. Runbook <em>IP Metric History</em> can chart the fill rate. Owner: <strong>DB Team (db-team@te.eg)</strong>.</p>
+          <h4>Not checked</h4>
+          <p style="margin:0;color:var(--muted)">MySQL error log (not reachable from SAMI'X). Change records for the last 24 h (no ticketing integration yet — decision 3).</p>
+          <div class="actions"><span class="btn primary">Escalate with RCA</span><span class="btn">Run IP Metric History</span><span class="btn">Export</span><span class="btn">Correct this</span></div>
+        </div>
+        <p>
+          The structure is the product. It is what the team reviews, what the golden set is scored against, and what a manager
+          reads without needing the tool open.
+        </p>
+      </section>
+
+      <section id="tools">
+        <h2>The agent's tools</h2>
+        <p class="h2sub">Version 1 — every one backed by a query SAMI'X already runs. Added later: Runbook scripts, knowledge search, similar incidents.</p>
+        <div class="tbl"><table>
+          <thead><tr><th>Tool</th><th>Answers</th><th>Backed by</th></tr></thead>
+          <tbody>
+            <tr><td class="k">get_alert</td><td>Everything SAMI'X knows about one alert, including its host and owner</td><td>Alerts page + escalation resolver</td></tr>
+            <tr><td class="k">get_host</td><td>Status, group / service, owner, agent presence, last seen</td><td>Agents page</td></tr>
+            <tr><td class="k">related_alerts</td><td>Other alerts on the same host, service or instance in a window</td><td>Alerts filter + service filter</td></tr>
+            <tr><td class="k">alert_history</td><td>Has this happened before, when, how long did it last</td><td>30-day resolved history</td></tr>
+            <tr><td class="k">capacity</td><td>CPU / memory / disk now, per partition for Zabbix, with trend</td><td>Capacity page + Zabbix detail</td></tr>
+            <tr><td class="k">topology_neighbors</td><td>What depends on this, what it depends on</td><td>NNMi L2 + Dynatrace service map</td></tr>
+            <tr><td class="k">collector_health</td><td>Is the data fresh enough to trust</td><td>Collector runs</td></tr>
+            <tr><td class="k">service_overview</td><td>Everything in one service: hosts, open alerts, capacity hot spots</td><td>Service / group filter</td></tr>
+          </tbody>
+        </table></div>
+        <p>
+          Each tool returns compact JSON, capped in size, with timestamps. The investigator is prompted to check collector
+          health first, so it never reasons from stale data without saying so.
+        </p>
+      </section>
+
+      <section id="learn">
+        <h2>How it gets better, and how we know</h2>
+        <p class="h2sub">The learning loop and the numbers reported each sprint.</p>
+        <h3>The golden set</h3>
+        <p>
+          Twenty to thirty past incidents where the team knows the root cause — from escalation mails, tickets, WhatsApp
+          threads, memory. For each: the triggering alert, the date, the true cause, what fixed it. This is the "training data"
+          in the only sense that applies. Collecting it is the team's first task and the most valuable thing they will do for this project.
+        </p>
+        <h3>The feedback loop</h3>
+        <p>
+          Every RCA card carries <em>Correct this</em>. The engineer marks the verdict — right, partly right, wrong — and can write
+          the actual cause in a line. That record becomes memory: the next investigation on a similar symptom is shown it.
+          Corrections also feed the golden set, so the evaluation grows from real operations, not from us.
+        </p>
+        <h3>What we measure</h3>
+        <div class="tbl"><table>
+          <thead><tr><th>Metric</th><th>Target by Sprint 2</th><th>Target by pilot end</th></tr></thead>
+          <tbody>
+            <tr><td>True cause ranked #1 on the golden set</td><td>≥ 60 %</td><td>≥ 80 %</td></tr>
+            <tr><td>True cause in the top 3</td><td>≥ 80 %</td><td>≥ 92 %</td></tr>
+            <tr><td>Claims with evidence attached</td><td>100 %</td><td>100 %</td></tr>
+            <tr><td>Time to first RCA card</td><td>≤ 90 s</td><td>≤ 60 s</td></tr>
+            <tr><td>Investigations per week (adoption)</td><td>—</td><td>≥ 30 on the pilot service</td></tr>
+            <tr><td>Median time-to-diagnosis on the pilot service</td><td>baseline measured</td><td>−30 % vs baseline</td></tr>
+            <tr><td>Cost per investigation</td><td>reported</td><td>≤ $0.50</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="sprints">
+        <h2>Sprint plan &amp; dates</h2>
+        <p class="h2sub">Two-week sprints from Monday 7 September. Every sprint ends with something the manager can be shown.</p>
+        <div class="tl">
+
+          <div class="sp">
+            <div class="when">Sprint 0 · 7 – 11 Sep · one week</div>
+            <div class="name">Decisions, access, golden set</div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> nothing technical starts on a guess.</div>
+              <div class="two">
+                <div><h5>We do</h5><ul><li>Close the decisions below</li><li>API access provisioned; spend cap set</li><li>RCA schema agreed with the team</li><li>Pilot service and its top 3 alert types chosen</li></ul></div>
+                <div><h5>Team does</h5><ul><li>Collect 20 past incidents with known causes</li><li>Gather existing runbooks / KB documents</li><li>Name the reviewers for the feedback loop</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> decisions signed, 20 incidents in a sheet, pilot service named.</div>
+            </div>
+          </div>
+
+          <div class="sp demo">
+            <div class="when">Sprint 1 · 14 – 25 Sep</div>
+            <div class="name">Investigator v1 <span class="milestone">Demo 1 · Thu 25 Sep</span></div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> click Investigate on a real alert, get an RCA card with evidence.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li><code>app/aiops</code>: tools, investigator loop, RCA schema</li><li>Investigate button on Alerts and Agents</li><li>RCA card partial; export to Excel</li><li>Audit log, daily budget, <code>ENABLE_AIOPS</code></li><li>Evaluation harness over the golden set</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>Live investigation on a production alert</li><li>The golden-set score, run in front of them</li><li>The audit log proving read-only access</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> RCA on every golden incident; first accuracy number recorded.</div>
+            </div>
+          </div>
+
+          <div class="sp">
+            <div class="when">Sprint 2 · 28 Sep – 9 Oct</div>
+            <div class="name">Knowledge and memory</div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> the agent knows our runbooks and remembers what the team told it.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li>Knowledge store: runbooks, KB, naming conventions, retrieved into investigations</li><li>Investigation memory with verdicts; <em>Correct this</em> on every card</li><li><code>similar_incidents</code> tool</li><li>Prompt and tool tuning against the golden set</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>Accuracy chart, sprint over sprint</li><li>A card that cites a team runbook and a past incident</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> ≥ 60 % top-1 on the golden set; feedback loop in daily use.</div>
+            </div>
+          </div>
+
+          <div class="sp">
+            <div class="when">Sprint 3 · 12 – 23 Oct</div>
+            <div class="name">Service-management work</div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> the paperwork is drafted from evidence, not from memory at 3 a.m.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li>Escalation mail with the RCA attached (extends the existing Escalate)</li><li>Incident summary and post-incident report generator</li><li>Shift handover: open incidents, what changed, what to watch</li><li>Ticket draft; live creation if decision 3 gives us an API</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>A post-incident report produced in a minute, in the team's format</li><li>Handover summary at shift change</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> three document types in use by the pilot team.</div>
+            </div>
+          </div>
+
+          <div class="sp">
+            <div class="when">Sprint 4 · 26 Oct – 6 Nov</div>
+            <div class="name">Correlation and early warning</div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> fewer, better incidents; problems seen before they page.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li>Storm grouping: alerts on one service or topology path become one incident with one RCA</li><li>Recurrence detection from 30-day history</li><li>Capacity forecast: "disk full in N days" on the Capacity page</li><li>Daily digest for the pilot service</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>An alert storm collapsed into one card</li><li>A capacity warning that arrived before the alert</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> incident count on the pilot service reported before / after.</div>
+            </div>
+          </div>
+
+          <div class="sp">
+            <div class="when">Sprint 5 · 9 – 20 Nov</div>
+            <div class="name">Agent console, Runbook tools, hardening</div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> ask in plain language; let the agent propose a script and a person run it.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li>Console behind the Runbook sign-in: "which Billing servers have disk above 90 %?"</li><li>Read-only Runbook scripts as tools, with the proposal → click flow</li><li>Rate limits, timeouts, graceful failure when the API is unreachable</li><li>Security review of prompts, tool outputs and logs</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>A question answered from live data</li><li>The agent proposing a Runbook script, an engineer approving it</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> review passed; no path from the agent to a production write.</div>
+            </div>
+          </div>
+
+          <div class="sp demo">
+            <div class="when">Sprint 6 · 23 Nov – 4 Dec</div>
+            <div class="name">Pilot and measurement <span class="milestone">Executive demo · w/c 7 Dec</span></div>
+            <div class="box">
+              <div class="g"><b>Goal:</b> numbers from real use, and a decision on the next phase.</div>
+              <div class="two">
+                <div><h5>Build</h5><ul><li>Pilot team on the pilot service for two weeks, every investigation logged</li><li>Fixes from pilot feedback only</li><li>Final golden-set score, adoption, time-to-diagnosis, cost</li></ul></div>
+                <div><h5>Manager sees</h5><ul><li>The one chart: accuracy by sprint</li><li>Before / after on the pilot service</li><li>A proposal for phase 2: more services, on-prem model, or both</li></ul></div>
+              </div>
+              <div class="exit"><b>Exit:</b> pilot report delivered; phase 2 scope agreed.</div>
+            </div>
+          </div>
+
+        </div>
+        <div class="note"><p><strong>Scope discipline.</strong> Sprints 4 and 5 are the first to cut if the calendar slips. Sprints 1 – 3 are the promise: evidence-backed RCA, a learning loop, and the paperwork. Auto-remediation is not in this plan on purpose; it is a phase-2 conversation once the accuracy chart earns it.</p></div>
+      </section>
+
+      <section id="decisions">
+        <h2>Decisions needed before Sprint 1</h2>
+        <p class="h2sub">Each with a recommendation. Everything below can be changed later; none can be skipped now.</p>
+        <div class="dec">
+          <div class="d"><div><b>Where the model runs</b>
+            <p>The Claude API over HTTPS from the SAMI'X server, or a self-hosted model inside the network.</p>
+            <div class="rec"><em>Recommend:</em> Claude API for the pilot. Highest reasoning quality, no infrastructure, and the client is one swappable module. Re-evaluate at the executive demo with the measured accuracy in hand.</div></div></div>
+          <div class="d"><div><b>What data may leave the network</b>
+            <p>Investigations send hostnames, alert titles, group names, capacity figures and topology names to the model. Never credentials.</p>
+            <div class="rec"><em>Recommend:</em> allow as-is for the pilot on one service; enable IP masking if policy asks. Confirm with security in writing in Sprint 0.</div></div></div>
+          <div class="d"><div><b>Ticketing system and API access</b>
+            <p>ServiceNow, Remedy, Jira or other. With an API, the agent creates draft tickets and reads change records; without, it produces text to paste.</p>
+            <div class="rec"><em>Recommend:</em> request read + create-draft access in Sprint 0; ship Sprint 3 with paste-ready drafts if access is late.</div></div></div>
+          <div class="d"><div><b>Pilot service</b>
+            <p>One service with clear ownership, real alert volume and a team willing to review RCAs daily.</p>
+            <div class="rec"><em>Recommend:</em> Billing, or whichever service produced the most escalations in the last 90 days — the alert history can tell us.</div></div></div>
+          <div class="d"><div><b>Golden-set owner</b>
+            <p>One senior engineer who signs off on "this was the real cause" for each of the 20 – 30 incidents.</p>
+            <div class="rec"><em>Recommend:</em> Eng. Ahmed Hussien or the on-call lead for the pilot service. Two hours, once.</div></div></div>
+          <div class="d"><div><b>Monthly spend cap</b>
+            <p>The agent stops investigating when the cap is reached; the dashboard is unaffected.</p>
+            <div class="rec"><em>Recommend:</em> $300 / month for the pilot — see cost below. Adjust after Sprint 1 with real numbers.</div></div></div>
+          <div class="d"><div><b>Who may run investigations</b>
+            <p>Everyone who can open SAMI'X, or only Runbook admins.</p>
+            <div class="rec"><em>Recommend:</em> Runbook admins during the pilot; open it up with phase 2.</div></div></div>
+        </div>
+      </section>
+
+      <section id="cost">
+        <h2>Cost</h2>
+        <p class="h2sub">Estimates, to be replaced by measured numbers after Sprint 1.</p>
+        <p>
+          An investigation is one system prompt, a fixed tool list (both cached across calls) and eight to twelve tool
+          results, ending in a structured card. Roughly 30 – 40k input tokens over the loop and 3 – 4k output.
+        </p>
+        <div class="tbl"><table>
+          <thead><tr><th>Model</th><th>Per investigation</th><th>30 / day · month</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td class="k">claude-opus-5</td><td>≈ $0.25 – 0.40</td><td>≈ $225 – 360</td><td>Default. Best reasoning over ambiguous evidence; use for the RCA itself.</td></tr>
+            <tr><td class="k">claude-sonnet-5</td><td>≈ $0.10 – 0.16</td><td>≈ $90 – 145</td><td>Summaries, digests, handover — the bulk, routine writing.</td></tr>
+          </tbody>
+        </table></div>
+        <p>
+          Prompt caching cuts the repeated system prompt and tool definitions to about a tenth of their price, so the real
+          figures should land at the low end. The daily cap makes the upper bound a policy, not a surprise. No new servers,
+          licences or infrastructure.
+        </p>
+      </section>
+
+      <section id="risks">
+        <h2>Risks and how we hold them</h2>
+        <div class="tbl"><table>
+          <thead><tr><th>Risk</th><th>Held by</th></tr></thead>
+          <tbody>
+            <tr><td>A confident but wrong root cause is acted on</td><td>Evidence on every claim; confidence shown; "not checked" listed; a person decides. Accuracy is measured, not assumed.</td></tr>
+            <tr><td>Stale data leads the agent astray</td><td>Collector health is checked first and stated on the card.</td></tr>
+            <tr><td>Data leaving the network</td><td>Decision 2, in writing. No credentials in any tool result. Masking available. One swappable client if an on-prem model is required later.</td></tr>
+            <tr><td>Runaway cost</td><td>Daily and monthly caps; every call logged with cost.</td></tr>
+            <tr><td>The team does not trust it</td><td>Golden set built <em>with</em> them; their corrections are what improves it; nothing acts without them.</td></tr>
+            <tr><td>Golden set never materialises</td><td>Sprint 0 exit criterion. Twenty incidents is a morning's work with the escalation mailbox open.</td></tr>
+            <tr><td>Scope grows into auto-remediation</td><td>Explicitly out of this plan; phase 2, gated on the accuracy chart.</td></tr>
+          </tbody>
+        </table></div>
+      </section>
+
+      <section id="easier">
+        <h2>What makes this easier than it sounds</h2>
+        <ul>
+          <li><strong>Build on SAMI'X, do not buy a platform.</strong> The data model, the safety transports and the UI exist. The agent is a package and a button.</li>
+          <li><strong>Twenty incidents beat a thousand.</strong> A small golden set with confirmed causes is worth more than any volume of unlabeled logs. It comes from the escalation mailbox.</li>
+          <li><strong>Reuse what already works.</strong> Runbook sign-in gates the agent. Escalate-to-owner carries the RCA. The Excel template exports it. The service filter defines "the pilot service".</li>
+          <li><strong>One service, three alert types.</strong> Narrow scope makes the accuracy number meaningful in two weeks instead of two months.</li>
+          <li><strong>Ships dark.</strong> <code>ENABLE_AIOPS</code> off by default; mock mode demos without touching production.</li>
+          <li><strong>Fifteen minutes a week with the manager.</strong> Same chart every time: accuracy by sprint. Progress that does not need explaining.</li>
+          <li><strong>Promise diagnosis, not magic.</strong> Faster, evidence-backed root cause is a claim we can prove by December. Auto-healing is not, yet.</li>
+        </ul>
+      </section>
+
+      <div class="foot">
+        <span>SAMI'X · Unified Monitoring Dashboard · AIOps plan v1</span>
+        <span>Prepared 7 Sep 2026 · for review before Sprint 0 decisions</span>
+      </div>
+
+    </div>
+  </div>
+</div>
