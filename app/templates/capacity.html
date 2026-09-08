@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{% from "macros/filters.html" import service_filter %}
 {% block title %}Capacity · Unified Monitoring{% endblock %}
 {% block page_title %}Capacity{% endblock %}
-{% block page_sub %}Server resource utilization — pick a server or group to see CPU, memory &amp; disk{% endblock %}
+{% block page_sub %}Server resource utilization — pick a server, service or group to see CPU, memory &amp; disk{% endblock %}
 
 {% block content %}
 <div class="toolbar toolbar-stack">
@@ -55,6 +56,8 @@
       <option value="{{ i.name }}">{{ i.name }}</option>
       {% endfor %}
     </select>
+
+    {{ service_filter("/partials/capacity", "#capacity-region", "cfilter", current.group, services) }}
   </div>
 
   <div class="toolbar-row">

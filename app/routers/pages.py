@@ -624,6 +624,53 @@ def _overview_context(db: Session, settings: Settings) -> dict:
     }
 
 
+def _service_wanted(value: str | None) -> str | None:
+    """Normalise a service / group filter value; ``None`` means "no filter"."""
+    if value is None:
+        return None
+    value = value.strip()
+    return value if value and value.lower() != "all" else None
+
+
+def _service_clause(value: str):
+    """Case-insensitive substring match on the host's service / group name.
+
+    Substring rather than equality: a Zabbix host carries every group it is in
+    as one comma-joined string, so equality would only match a host whose
+    *entire* group list is the one name typed. Substring finds "Billing"
+    inside "Billing, Linux servers", which is what the operator means.
+
+    ``%`` and ``_`` are escaped so a group named ``CRM_Prod`` matches itself
+    and not ``CRM-Prod`` as well.
+    """
+    needle = value.strip().lower()
+    for ch in ("\\", "%", "_"):
+        needle = needle.replace(ch, "\\" + ch)
+    return func.lower(func.coalesce(Host.group_name, "")).like(
+        f"%{needle}%", escape="\\"
+    )
+
+
+def _service_names(db: Session) -> list[str]:
+    """Distinct service / group names across every host, for the filter list.
+
+    Zabbix stores every group a host belongs to as one comma-joined string, so
+    the raw distinct values are combinations ("Billing, Linux servers"), not
+    services. They are split back into the individual names the operations
+    teams actually work with. One indexed DISTINCT; runs on full page loads
+    only, never on the HTMX partial refreshes.
+    """
+    seen: dict[str, str] = {}
+    for (value,) in db.execute(
+        select(Host.group_name).where(Host.group_name.is_not(None)).distinct()
+    ):
+        for part in str(value).split(","):
+            name = part.strip()
+            if name:
+                seen.setdefault(name.lower(), name)
+    return sorted(seen.values(), key=str.lower)
+
+
 def _hosts_stmt(
     q: str | None,
     platform: str | None,
@@ -635,6 +682,8 @@ def _hosts_stmt(
 ):
     """Build the filtered (unordered, unlimited) host SELECT.
 
+    ``group`` is the service / group filter — see :func:`_service_clause`.
+
     ``raw_payload`` holds the entire source record (for Zabbix, the full
     host.get response including interfaces, tags and inventory) and nothing
     downstream reads it — not a template, not a schema, not an export. Deferring
@@ -645,8 +694,9 @@ def _hosts_stmt(
         stmt = stmt.where(Host.source_platform == platform)
     if instance and instance != "all":
         stmt = stmt.where(Host.source_instance == instance)
-    if group and group != "all":
-        stmt = stmt.where(Host.group_name == group)
+    service = _service_wanted(group)
+    if service:
+        stmt = stmt.where(_service_clause(service))
     if date_from is not None:
         stmt = stmt.where(Host.last_seen >= date_from)
     if date_to is not None:
@@ -712,11 +762,18 @@ def _alerts_filtered_stmt(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     state: str = "active",
+    group: str | None = None,
 ):
     """Alerts SELECT with search + optional started_at range (all in SQL).
 
     ``state`` selects the lifecycle bucket: ``active`` (unresolved, the default),
     ``resolved`` (history), or ``all`` (both — useful for historical exports).
+
+    ``group`` narrows to alerts on hosts in a service / group. An alert carries
+    no group of its own, so it is matched to its host — by the host's external
+    id first (Dynatrace problems name a service, not the host) and by hostname
+    otherwise — on the same platform and instance, then the host's group is
+    tested with :func:`_service_clause`.
 
     ``raw_payload`` is deferred for the same reason as on hosts: it is written
     by the collectors and read by nothing.
@@ -727,6 +784,20 @@ def _alerts_filtered_stmt(
     elif state == "resolved":
         stmt = stmt.where(Alert.resolved.is_(True))
     # state == "all" -> no lifecycle filter
+    service = _service_wanted(group)
+    if service:
+        on_host_in_service = (
+            select(Host.id)
+            .where(
+                Host.source_platform == Alert.source_platform,
+                Host.source_instance == Alert.source_instance,
+                (Host.external_id == Alert.host_external_id)
+                | (Host.hostname == Alert.host_hostname),
+                _service_clause(service),
+            )
+            .exists()
+        )
+        stmt = stmt.where(on_host_in_service)
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(
@@ -750,9 +821,10 @@ def _active_alerts(
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     state: str = "active",
+    group: str | None = None,
 ) -> tuple[list[Alert], int, int, int]:
     """Return (rows, total, page, pages) — one page of alerts for ``state``."""
-    stmt = _alerts_filtered_stmt(q, date_from, date_to, state)
+    stmt = _alerts_filtered_stmt(q, date_from, date_to, state, group)
     total = _count_of(db, stmt)
     page, pages, offset = _paginate(page, total)
     stmt = (
@@ -1004,6 +1076,7 @@ def capacity_page(
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings, db),
+            "services": _service_names(db),
             "collectors": get_collector_statuses(db, settings),
             "current": dict(_CAPACITY_CURRENT_DEFAULT),
         },
@@ -1157,12 +1230,14 @@ def agents_page(
             "pages": pages,
             "page_size": PAGE_SIZE,
             "instances": _instance_names(settings, db),
+            "services": _service_names(db),
             "collectors": get_collector_statuses(db, settings),
             "current": {
                 "q": "",
                 "platform": "all",
                 "instance": "all",
                 "status": "all",
+                "group": "all",
                 "sort": "hostname",
                 "order": "asc",
             },
@@ -1177,14 +1252,15 @@ def agents_partial(
     platform: str = "all",
     instance: str = "all",
     status: str = "all",
+    group: str = "all",
     sort: str = "hostname",
     order: str = "asc",
     page: int = 1,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Agents table fragment (search / filter / sort / paginate)."""
+    """Agents table fragment (search / filter / service / sort / paginate)."""
     hosts, total, page, pages = _hosts_query(
-        db, q, platform, status, sort, order, instance, page
+        db, q, platform, status, sort, order, instance, page, group
     )
     _annotate_agent_alerts(db, hosts)
     return templates.TemplateResponse(
@@ -1201,6 +1277,7 @@ def agents_partial(
                 "platform": platform,
                 "instance": instance,
                 "status": status,
+                "group": group,
                 "sort": sort,
                 "order": order,
             },
@@ -1364,7 +1441,13 @@ def alerts_page(
             "page": page,
             "pages": pages,
             "page_size": PAGE_SIZE,
-            "current": {"date_from": "", "date_to": "", "state": "active"},
+            "current": {
+                "date_from": "",
+                "date_to": "",
+                "state": "active",
+                "group": "",
+            },
+            "services": _service_names(db),
             "collectors": get_collector_statuses(db, settings),
         },
     )
@@ -1431,11 +1514,12 @@ def alerts_partial(
     date_from: str | None = None,
     date_to: str | None = None,
     state: str = "active",
+    group: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
-    """Alerts table fragment (search + state + date range + paginate)."""
+    """Alerts table fragment (search + state + service + date range + paginate)."""
     df, dt = parse_dt(date_from), parse_dt(date_to)
-    alerts, total, page, pages = _active_alerts(db, q, page, df, dt, state)
+    alerts, total, page, pages = _active_alerts(db, q, page, df, dt, state, group)
     return templates.TemplateResponse(
         request,
         "partials/alerts_table.html",
@@ -1450,6 +1534,7 @@ def alerts_partial(
                 "date_from": date_from or "",
                 "date_to": date_to or "",
                 "state": state,
+                "group": group or "",
             },
         },
     )

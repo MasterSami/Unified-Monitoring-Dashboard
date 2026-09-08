@@ -1,0 +1,40 @@
+{#
+  Shared toolbar controls, so every page that filters hosts or alerts gets the
+  same widget with the same behaviour.
+
+  service_filter(url, target, cls, value, services)
+    The service / application-group filter. Operations teams know servers by
+    the tool they belong to ("Billing", "CRM", "Mediation"), not by IP, so the
+    datalist offers every group name seen across all sources and the server
+    matches by substring — typing "bill" is enough.
+
+    url      – the HTMX partial that renders the table
+    target   – the element the partial swaps into
+    cls      – the page's filter class (cfilter / afilter), so the value rides
+               along with every other request on the page via hx-include
+    value    – the current value, or "" / "all" for none
+    services – the names to offer (see pages._service_names)
+#}
+{% macro service_filter(url, target, cls, value, services) %}
+<div class="svc" title="Filter by service / application group — the name your team uses, not the IP">
+  <span class="svc-icon">⬡</span>
+  <input
+    type="search"
+    list="service-options"
+    name="group"
+    class="{{ cls }} svc-input"
+    value="{{ value if value and value != 'all' else '' }}"
+    placeholder="Service / group…"
+    hx-get="{{ url }}"
+    hx-trigger="input changed delay:300ms, search"
+    hx-target="{{ target }}"
+    hx-swap="innerHTML"
+    hx-include=".{{ cls }}"
+    autocomplete="off"
+    spellcheck="false"
+  />
+  <datalist id="service-options">
+    {% for s in services %}<option value="{{ s }}">{% endfor %}
+  </datalist>
+</div>
+{% endmacro %}

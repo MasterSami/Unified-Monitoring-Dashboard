@@ -2,7 +2,7 @@
   {% set is_active = current.sort == key %}
   {% set next_order = 'desc' if (is_active and current.order == 'asc') else 'asc' %}
   <a href="#" hx-get="/partials/agents" hx-target="#agents-region" hx-swap="innerHTML"
-    hx-include="[name='q']"
+    hx-include="[name='q'],[name='group']"
     hx-vals='{"platform": "{{ current.platform }}", "instance": "{{ current.instance }}", "status": "{{ current.status }}", "sort": "{{ key }}", "order": "{{ next_order }}"}'>
     {{ label }}{% if is_active %} <span>{{ '▲' if current.order == 'asc' else '▼' }}</span>{% endif %}
   </a>
@@ -20,6 +20,7 @@
         <th>{{ sort_link('IP', 'ip', current) }}</th>
         <th>{{ sort_link('Platform', 'platform', current) }}</th>
         <th>{{ sort_link('Instance', 'instance', current) }}</th>
+        <th>{{ sort_link('Service / group', 'group', current) }}</th>
         <th>{{ sort_link('Status', 'status', current) }}</th>
         <th>Alerts</th>
         <th>{{ sort_link('Last updated', 'last_seen', current) }}</th>
@@ -36,6 +37,7 @@
         <td class="mono">{{ h.ip or '—' }}</td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.source_instance or '—' }}</td>
+        <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>
         <td><span class="pill status-{{ h.status.value }}"><span class="dot"></span>{{ h.status.value }}</span></td>
         <td>
           {% if h.alert_count %}
@@ -47,7 +49,7 @@
         <td class="mono">{{ h.last_seen | relative_time }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="7"><div class="empty">No agents match your filters.</div></td></tr>
+      <tr><td colspan="8"><div class="empty">No agents match your filters.</div></td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -58,10 +60,10 @@
 <div class="pager">
   <button class="btn" type="button" {{ 'disabled' if page <= 1 }}
     hx-get="/partials/agents" hx-target="#agents-region" hx-swap="innerHTML"
-    hx-include="[name='q']" hx-vals='{ {{ vals }}, "page": {{ page - 1 }} }'>← Prev</button>
+    hx-include="[name='q'],[name='group']" hx-vals='{ {{ vals }}, "page": {{ page - 1 }} }'>← Prev</button>
   <span class="pager-info">Page {{ page }} of {{ pages }} · {{ total }} total</span>
   <button class="btn" type="button" {{ 'disabled' if page >= pages }}
     hx-get="/partials/agents" hx-target="#agents-region" hx-swap="innerHTML"
-    hx-include="[name='q']" hx-vals='{ {{ vals }}, "page": {{ page + 1 }} }'>Next →</button>
+    hx-include="[name='q'],[name='group']" hx-vals='{ {{ vals }}, "page": {{ page + 1 }} }'>Next →</button>
 </div>
 {% endif %}

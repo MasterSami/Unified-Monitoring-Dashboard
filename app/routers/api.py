@@ -283,26 +283,17 @@ def export_capacity_csv(
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
-    """Export the capacity view (hosts + CPU/mem/disk) as CSV."""
+    """Export the capacity view (hosts + CPU/mem/disk) as CSV.
+
+    Same filters as the Capacity page, built by the same function, so the
+    service / group filter behaves identically here and on screen.
+    """
     _require_export(settings)
-    stmt = select(Host).options(defer(Host.raw_payload))
-    if platform and platform != "all":
-        stmt = stmt.where(Host.source_platform == platform)
-    if instance and instance != "all":
-        stmt = stmt.where(Host.source_instance == instance)
-    if group and group != "all":
-        stmt = stmt.where(Host.group_name == group)
-    if status and status != "all":
-        stmt = stmt.where(Host.status == status)
-    if q:
-        like = f"%{q.lower()}%"
-        stmt = stmt.where(
-            func.lower(Host.hostname).like(like)
-            | func.lower(func.coalesce(Host.ip, "")).like(like)
-            | func.lower(func.coalesce(Host.group_name, "")).like(like)
-            | func.lower(func.coalesce(Host.source_instance, "")).like(like)
-        )
-    stmt = stmt.order_by(Host.hostname.asc())
+    from app.routers.pages import _hosts_stmt
+
+    stmt = _hosts_stmt(q, platform, status, instance, group).order_by(
+        Host.hostname.asc()
+    )
     rows = (
         [
             h.hostname,
@@ -342,23 +333,21 @@ def export_capacity_csv(
 def export_alerts_csv(
     active: bool = Query(default=True),
     q: str | None = Query(default=None),
+    group: str | None = Query(default=None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
-    """Export alerts (respecting filters) as CSV."""
+    """Export alerts (respecting filters) as CSV.
+
+    Built by the same function as the Alerts page so search and the
+    service / group filter mean the same thing in both places.
+    """
     _require_export(settings)
-    stmt = select(Alert).options(defer(Alert.raw_payload))
-    if active:
-        stmt = stmt.where(Alert.resolved.is_(False))
-    if q:
-        like = f"%{q.lower()}%"
-        stmt = stmt.where(
-            func.lower(Alert.title).like(like)
-            | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
-            | func.lower(func.coalesce(Alert.source_instance, "")).like(like)
-            | func.lower(Alert.source_platform).like(like)
-            | func.lower(Alert.severity_label).like(like)
-        )
+    from app.routers.pages import _alerts_filtered_stmt
+
+    stmt = _alerts_filtered_stmt(
+        q, state="active" if active else "all", group=group
+    )
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
@@ -528,7 +517,7 @@ def export_capacity_xlsx(
 
     filters = ", ".join(
         f"{k}={v}" for k, v in (
-            ("platform", platform), ("instance", instance), ("group", group),
+            ("platform", platform), ("instance", instance), ("service", group),
             ("status", status), ("q", q),
             ("exclude Zabbix dups", "yes" if dedup_zabbix else ""),
         ) if v and v != "all"
@@ -551,6 +540,7 @@ def export_alerts_xlsx(
     q: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
+    group: str | None = Query(default=None),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -558,6 +548,7 @@ def export_alerts_xlsx(
 
     ``state`` is active/resolved/all. ``active`` is kept for backward compat:
     ``active=false`` maps to ``all`` when ``state`` isn't given explicitly.
+    ``group`` is the service / group filter, matched through the alert's host.
     """
     _require_export(settings)
     from app.export_xlsx import build_workbook
@@ -568,7 +559,9 @@ def export_alerts_xlsx(
     if state not in ("active", "resolved", "all"):
         state = "active"
 
-    stmt = _alerts_filtered_stmt(q, parse_dt(date_from), parse_dt(date_to), state)
+    stmt = _alerts_filtered_stmt(
+        q, parse_dt(date_from), parse_dt(date_to), state, group
+    )
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
@@ -583,7 +576,9 @@ def export_alerts_xlsx(
             ]
 
     filters = ", ".join(
-        f"{k}={v}" for k, v in (("state", state), ("q", q)) if v
+        f"{k}={v}"
+        for k, v in (("state", state), ("service", group), ("q", q))
+        if v and v != "all"
     ) or "none"
     data = build_workbook(
         sheet_title="Alerts",

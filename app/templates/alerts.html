@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "macros/filters.html" import service_filter %}
 {% block title %}Alerts · Unified Monitoring{% endblock %}
 {% block page_title %}Active Alerts{% endblock %}
 {% block page_sub %}Across all platforms, most severe first · switch Active / Resolved / All · auto-refreshes every 60s{% endblock %}
@@ -35,6 +36,8 @@
     </button>
     {% endfor %}
   </div>
+
+  {{ service_filter("/partials/alerts", "#alerts-region", "afilter", current.group, services) }}
 
   <div class="filter-group">
     <span class="field-lbl">Time range (UTC)</span>

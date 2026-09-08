@@ -927,6 +927,49 @@ td.mono {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* --- Service / group filter (shared by Capacity, Agents, Alerts) ---------
+   A text box backed by a <datalist>: pick a known group or type part of one.
+   Styled to sit flush with .select and the search box on the same row. */
+.svc {
+  position: relative;
+  flex: 0 1 240px;
+  min-width: 180px;
+}
+.svc-input {
+  width: 100%;
+  padding: 8px 12px 8px 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 550;
+  font-family: inherit;
+}
+.svc-input::placeholder {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+.svc-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.svc .svc-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  font-size: 12px;
+  pointer-events: none;
+}
+/* The browser's own datalist arrow doubles the search-type clear button;
+   keep only the clear button so the box reads like the search field. */
+.svc-input::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
 .tabs {
   display: inline-flex;
   border: 1px solid var(--border-strong);

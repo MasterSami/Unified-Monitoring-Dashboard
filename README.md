@@ -15,6 +15,14 @@ without code changes.
 - **Hosts** — unified inventory table with live search (hostname, IP, group, or
   instance), platform filter tabs, and sortable columns. Status pills (up / down
   / unknown / disabled) and platform badges.
+- **Service / group filter** — on Capacity, Agents and Alerts alike. Operations
+  teams know a server by the tool it belongs to ("Billing", "CRM"), not by its
+  IP, so the same box on all three pages offers every group name seen across
+  the sources and matches by substring — typing `bill` is enough. For Zabbix
+  that is the host group (a host in several groups matches each of them); for
+  Dynatrace the host group or group tag; for NNMi the device category; for
+  SiteScope the monitor group. Alerts inherit the group of their host. The
+  filter carries into the Excel / CSV exports (`group=`).
 - **Shared devices** — devices monitored by more than one instance, correlated
   by IP (e.g. the same node on Zabbix-34 *and* Zabbix-67, or on Zabbix and NNMi).
 - **Pagination & CSV export** — hosts and alerts paginate (300/page, configurable
@@ -170,6 +178,8 @@ nnmi:
 | ------------------------------------- | ------------------------------------------------ |
 | `GET  /api/v1/hosts`                  | All hosts (filters: `platform`, `status`, `q`).  |
 | `GET  /api/v1/alerts?active=true`     | Alerts; `active=true` hides resolved.            |
+| `GET  /api/v1/capacity.xlsx` / `.csv` | Capacity export (`platform`, `instance`, `group`, `status`, `q`). |
+| `GET  /api/v1/alerts.xlsx` / `.csv`   | Alerts export (`state`, `group`, `q`, `date_from`, `date_to`). |
 | `GET  /api/v1/summary`                | Aggregate KPIs for the overview.                 |
 | `GET  /api/v1/collectors/status`      | Per-instance health.                             |
 | `POST /api/v1/collectors/run`         | Trigger every instance now (the UI "Refresh now").|
