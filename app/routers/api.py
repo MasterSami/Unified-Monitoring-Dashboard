@@ -34,9 +34,11 @@ from app.normalizer import severity_label
 from app.scheduler import (
     get_collector_statuses,
     get_service,
+    request_forecast_run,
     request_run_all,
     request_run_one,
     request_topology_run,
+    run_forecast_now,
     run_topology_now,
 )
 from app.sitescope_ingest import ingest_lines
@@ -842,6 +844,168 @@ def topology_graph(
         "counts": {"nodes": len(el_nodes), "edges": len(el_edges)},
         "elements": {"nodes": el_nodes, "edges": el_edges},
     }
+
+
+@router.post("/forecast/run")
+def forecast_run() -> dict[str, str]:
+    """Refit every capacity series now, instead of waiting for 03:30.
+
+    Fitting the whole estate is seconds of numpy, but it also prunes old
+    samples and rewrites a table, so it goes to the background scheduler like
+    every other manual trigger rather than holding the request open.
+    """
+    if request_forecast_run():
+        return {"status": "queued"}
+    run_forecast_now()
+    return {"status": "ok"}
+
+
+@router.get("/forecast")
+def forecast_json(
+    classification: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[dict]:
+    """The current capacity forecast as JSON, same filters as the page."""
+    from app.routers.pages import _forecast_rows
+
+    rows, *_ = _forecast_rows(
+        db, q, platform or "all", instance or "all", group or "all",
+        classification or "at_risk", kind or "all", 1,
+    )
+    cap = min(limit or settings.api_default_limit, settings.api_max_limit)
+    return [
+        {
+            "hostname": r["host"].hostname,
+            "ip": r["host"].ip,
+            "platform": r["host"].source_platform.value,
+            "instance": r["host"].source_instance,
+            "service": r["host"].group_name,
+            "metric_kind": r["f"].metric_kind,
+            "subject": r["f"].subject or None,
+            "current_pct": r["f"].current_pct,
+            "slope_pct_per_day": r["f"].slope_pct_per_day,
+            "r_squared": r["f"].r_squared,
+            "days_to_threshold_90": r["f"].days_to_threshold_90,
+            "days_to_full": r["f"].days_to_full,
+            "classification": r["f"].classification,
+            "reason": r["f"].reason,
+            "total_gb": r["f"].total_value,
+            "sample_count": r["f"].sample_count,
+            "computed_at": r["f"].computed_at,
+        }
+        for r in rows[:cap]
+    ]
+
+
+_FORECAST_COLUMNS = [
+    "Server", "IP", "Platform", "Instance", "Service", "Resource", "Drive",
+    "Size (GB)", "Current %", "Trend (%/day)", "Days to 90%", "Days to full",
+    "Confidence (R²)", "Outlook", "Daily points", "Note",
+]
+
+
+def _confidence_label(r_squared: float | None) -> str:
+    """R² as the same three words the table shows."""
+    if r_squared is None:
+        return ""
+    if r_squared >= 0.7:
+        return "High"
+    return "Med" if r_squared >= 0.3 else "Low"
+
+
+@router.get("/forecast.xlsx")
+def forecast_xlsx(
+    classification: str | None = Query(default=None),
+    kind: str | None = Query(default=None),
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Export the filtered forecast as a branded .xlsx.
+
+    The date range is period metadata for the sheet header only, exactly as on
+    the Capacity export: the forecast is the latest computed result, not a
+    query over a window.
+    """
+    _require_export(settings)
+    from app.export_xlsx import build_workbook
+    from app.routers.pages import _forecast_rows
+
+    rows, *_ = _forecast_rows(
+        db, q, platform or "all", instance or "all", group or "all",
+        classification or "at_risk", kind or "all", 1,
+    )
+
+    #: Tint the Outlook cell with the alert palette, so a printed sheet reads
+    #: the same as the screen. build_workbook takes the severity as a trailing
+    #: value it pops off each row.
+    severity_of = {
+        "critical": 5, "warning": 4, "watch": 3, "noisy": 2,
+        "ok": 1, "insufficient_data": 1,
+    }
+
+    def data():
+        for r in rows:
+            f, host = r["f"], r["host"]
+            yield [
+                host.hostname, host.ip or "", host.source_platform.value,
+                host.source_instance, host.group_name or "",
+                f.metric_kind, f.subject or "",
+                "" if f.total_value is None else round(f.total_value, 1),
+                "" if f.current_pct is None else f.current_pct,
+                "" if f.slope_pct_per_day is None else f.slope_pct_per_day,
+                "" if f.days_to_threshold_90 is None else round(f.days_to_threshold_90),
+                "" if f.days_to_full is None else round(f.days_to_full),
+                "" if f.r_squared is None else f.r_squared,
+                f.classification,
+                f.sample_count,
+                f.reason or "",
+                severity_of.get(f.classification, 1),
+            ]
+
+    filters = ", ".join(
+        f"{k}={v}" for k, v in (
+            ("classification", classification), ("resource", kind),
+            ("platform", platform), ("instance", instance),
+            ("service", group), ("q", q),
+        ) if v and v != "all"
+    ) or "none"
+
+    payload = build_workbook(
+        sheet_title="Capacity forecast",
+        period=_period_str(date_from, date_to),
+        filters_summary=filters,
+        columns=_FORECAST_COLUMNS,
+        rows=data(),
+        severity_col=_FORECAST_COLUMNS.index("Outlook"),
+        credit=(
+            f"Linear trend over the last {settings.forecast_window_days} days. "
+            f"Forecasts with R² below {settings.forecast_min_r_squared:g} are "
+            "reported without dates."
+        ),
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": f'attachment; filename="capacity-forecast-{stamp}.xlsx"'
+        },
+    )
 
 
 @router.post("/topology/run")

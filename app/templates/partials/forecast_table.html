@@ -1,0 +1,139 @@
+{# Capacity forecast table. Every value here was computed by the nightly job
+   and read from capacity_forecast — nothing is fitted on page load. #}
+
+{% macro eta(days) %}
+  {% if days is none %}
+    <span class="fc-none">—</span>
+  {% elif days < 1 %}
+    <span class="fc-eta fc-eta-now">now</span>
+  {% elif days < 400 %}
+    <span class="fc-eta">{{ days | round(0, 'floor') | int }}<span class="fc-unit">d</span></span>
+  {% else %}
+    <span class="fc-eta fc-far">&gt; 1y</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro confidence(r2) %}
+  {% if r2 is none %}
+    <span class="fc-none">—</span>
+  {% else %}
+    {% set level = 'high' if r2 >= 0.7 else ('med' if r2 >= 0.3 else 'low') %}
+    <span class="fc-conf fc-conf-{{ level }}" title="R² = {{ '%.2f'|format(r2) }}">
+      {{ {'high': 'High', 'med': 'Med', 'low': 'Low'}[level] }}
+    </span>
+  {% endif %}
+{% endmacro %}
+
+<div class="count-tag" style="margin: 2px 0 8px">
+  <b>{{ total }}</b> series{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}
+</div>
+
+<div class="table-wrap">
+  <table class="fc-table">
+    <thead>
+      <tr>
+        <th>Server</th>
+        <th>Platform</th>
+        <th>Resource</th>
+        <th style="width: 128px">Current</th>
+        <th style="width: 92px">Trend</th>
+        <th style="width: 90px">Shape</th>
+        <th style="width: 78px">To 90%</th>
+        <th style="width: 78px">To full</th>
+        <th style="width: 72px">Confidence</th>
+        <th>Service / group</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      {% set f = r.f %}
+      {% set pct = f.current_pct %}
+      <tr class="fc-row fc-row-{{ f.classification }}" title="{{ r.summary }}{% if f.reason %} — {{ f.reason }}{% endif %}">
+        <td>
+          <strong>{{ r.host.hostname }}</strong>
+          <span class="fc-sub mono">{{ r.host.ip or '—' }}</span>
+        </td>
+        <td>
+          <span class="badge badge-{{ r.host.source_platform.value }}">
+            <span class="dot"></span>{{ r.host.source_platform.value | platform_label }}
+          </span>
+        </td>
+        <td>
+          <span class="fc-kind fc-kind-{{ f.metric_kind }}">{{ f.metric_kind }}</span>
+          {% if f.subject %}<span class="mono fc-subject">{{ f.subject }}</span>{% endif %}
+          {% if f.total_value %}<span class="fc-sub">{{ f.total_value | round(0, 'floor') | int }} GB</span>{% endif %}
+          {# Why a row has no dates belongs on the row, not only in a tooltip:
+             a line of dashes with no explanation reads as a broken feature. #}
+          {% if f.reason and f.classification in ('insufficient_data', 'noisy') %}
+          <span class="fc-reason">{{ f.reason }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if pct is none %}
+            <span class="fc-none">—</span>
+          {% else %}
+            {% set cls = 'ok' if pct < 70 else ('warn' if pct < 90 else 'hot') %}
+            <div class="res">
+              <div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ pct if pct <= 100 else 100 }}%"></span></div>
+              <div class="res-txt"><span class="res-abs {{ cls }}">{{ '%.1f'|format(pct) }}%</span></div>
+            </div>
+          {% endif %}
+        </td>
+        <td>
+          {% if f.slope_pct_per_day is none %}
+            <span class="fc-none">—</span>
+          {% else %}
+            {% set up = f.slope_pct_per_day > 0.001 %}
+            {% set down = f.slope_pct_per_day < -0.001 %}
+            <span class="fc-trend {{ 'up' if up else ('down' if down else 'flat') }}">
+              {{ '▲' if up else ('▼' if down else '•') }}
+              {{ '%.2f'|format(f.slope_pct_per_day | abs) }}<span class="fc-unit">%/d</span>
+            </span>
+          {% endif %}
+        </td>
+        <td>
+          {% if r.spark %}
+          <svg class="fc-spark" viewBox="0 0 74 20" width="74" height="20"
+               preserveAspectRatio="none" aria-hidden="true"
+               focusable="false">
+            <path d="{{ r.spark }}" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" />
+          </svg>
+          <span class="sr-only">{{ f.sample_count }} daily points</span>
+          {% else %}
+            <span class="fc-none">—</span>
+          {% endif %}
+        </td>
+        <td>{{ eta(f.days_to_threshold_90) }}</td>
+        <td>{{ eta(f.days_to_full) }}</td>
+        <td>{{ confidence(f.r_squared) }}</td>
+        <td class="fc-service">{{ r.host.group_name or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="10">
+          <div class="empty">
+            No series match your filters.
+            {% if current.classification == 'at_risk' %}
+              Nothing is forecast to reach 90% within 45 days — try the “All” tab.
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pages > 1 %}
+{% set vals = '"platform": "' ~ current.platform ~ '", "instance": "' ~ current.instance ~ '", "classification": "' ~ current.classification ~ '", "kind": "' ~ current.kind ~ '"' %}
+<div class="pager">
+  <button class="btn" type="button" {{ 'disabled' if page <= 1 }}
+    hx-get="/partials/forecast" hx-target="#forecast-region" hx-swap="innerHTML"
+    hx-include="[name='q'],[name='group']" hx-vals='{ {{ vals }}, "page": {{ page - 1 }} }'>← Prev</button>
+  <span class="pager-info">Page {{ page }} of {{ pages }} · {{ total }} total</span>
+  <button class="btn" type="button" {{ 'disabled' if page >= pages }}
+    hx-get="/partials/forecast" hx-target="#forecast-region" hx-swap="innerHTML"
+    hx-include="[name='q'],[name='group']" hx-vals='{ {{ vals }}, "page": {{ page + 1 }} }'>Next →</button>
+</div>
+{% endif %}

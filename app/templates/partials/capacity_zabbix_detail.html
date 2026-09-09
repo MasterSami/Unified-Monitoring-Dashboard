@@ -5,6 +5,17 @@
   <div class="res"><div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ w if w <= 100 else 100 }}%"></span></div></div>
 {% endmacro %}
 
+{# The nightly forecast for one item, when there is history behind it. Read
+   from capacity_forecast — this panel never fits anything itself. #}
+{% macro forecast_line(entry) %}
+  {% if entry %}
+  <div class="cap-forecast is-{{ entry.classification }}"
+       {% if entry.r_squared is not none %}title="R² = {{ '%.2f'|format(entry.r_squared) }}"{% endif %}>
+    {{ entry.text }}
+  </div>
+  {% endif %}
+{% endmacro %}
+
 <div class="cap-detail">
   <div class="cap-detail-head">
     <div>
@@ -33,6 +44,7 @@
         <div class="cap-metric-val">{{ '%.1f'|format(detail.mem_pct) ~ '%' if detail.mem_pct is not none else '—' }}</div>
         {{ bar(detail.mem_pct) }}
         <div class="cap-metric-sub">{{ detail.mem_total_gb ~ ' GB total' if detail.mem_total_gb is not none else '—' }}</div>
+        {{ forecast_line(forecasts.get('memory')) }}
       </div>
       <div class="cap-metric">
         <div class="cap-metric-lbl">Disk</div>
@@ -41,6 +53,7 @@
         <div class="cap-metric-sub">
           {% if detail.disk_used_gb is not none %}{{ detail.disk_used_gb }} / {{ detail.disk_total_gb }} GB{% else %}—{% endif %}
         </div>
+        {{ forecast_line(forecasts.get('__disk_total__')) }}
       </div>
     </div>
 
@@ -78,6 +91,7 @@
             <td class="mono">{{ fs.total_gb ~ ' GB' if fs.total_gb is not none else '—' }}</td>
             <td>
               {% if fs.pct is not none %}{{ bar(fs.pct) }}<span class="res-pct">{{ fs.pct }}%</span>{% else %}—{% endif %}
+              {{ forecast_line(forecasts.get(fs.label)) }}
             </td>
           </tr>
           {% endfor %}

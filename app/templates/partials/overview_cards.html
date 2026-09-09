@@ -3,7 +3,7 @@
 {% set sev_names = {5: 'Critical', 4: 'High', 3: 'Medium', 2: 'Low', 1: 'Info'} %}
 
 <!-- KPI stat tiles -->
-<div class="grid cols-4">
+<div class="grid cols-5">
   <div class="card stat accent">
     <div class="stat-top">
       <span class="label">Total Active Servers</span>
@@ -37,6 +37,21 @@
     <span class="value">{{ active_alerts }}</span>
     <span class="meta">unresolved across platforms</span>
   </div>
+  {# Capacity risks — drives that a linear trend puts past 90% within 45 days.
+     Links straight to the critical list, which is the only part anyone acts
+     on tonight. #}
+  {% set risks = capacity_risks or {} %}
+  <a class="card stat warn stat-link" href="/forecast?classification=critical"
+     title="Volumes forecast to reach 90% within 45 days — click for the critical ones">
+    <div class="stat-top">
+      <span class="label">Capacity Risks</span>
+      <span class="stat-ico">◪</span>
+    </div>
+    <span class="value">{{ risks.get('at_risk', 0) }}</span>
+    <span class="meta">
+      {{ risks.get('critical', 0) }} critical · {{ risks.get('warning', 0) }} warning
+    </span>
+  </a>
   <div class="card stat">
     <div class="stat-top">
       <span class="label">Collectors OK</span>

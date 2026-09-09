@@ -246,6 +246,91 @@ class TopologyEdge(Base):
     )
 
 
+class CapacityHistory(Base):
+    """One capacity sample for one series, appended over time.
+
+    A *series* is ``(host, metric_kind, subject)`` — e.g. disk ``/var/lib`` on
+    host 41, or that host's memory. :class:`Host` only ever holds the latest
+    reading (the collectors overwrite ``cpu_pct`` / ``mem_pct`` / ``disk_pct``
+    on every poll), so nothing in the schema could answer "is this filling up?"
+    until this table existed. Forecasting reads only from here.
+
+    ``subject`` is ``""`` (not NULL) for host-level metrics — memory and CPU —
+    so the uniqueness constraint actually holds. SQL never treats one NULL as
+    equal to another, on either SQLite or PostgreSQL, so a nullable subject in
+    the unique index would silently admit duplicate daily rows and quietly
+    double-weight those days in the regression.
+    """
+
+    __tablename__ = "capacity_history"
+    __table_args__ = (
+        UniqueConstraint(
+            "host_id",
+            "metric_kind",
+            "subject",
+            "sampled_at",
+            name="uq_caphist_series_sample",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    host_id: Mapped[int] = mapped_column(Integer, index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="", index=True)
+    #: disk | memory | cpu
+    metric_kind: Mapped[str] = mapped_column(String(16), index=True)
+    #: Drive / mount point for disk series ("C:", "/var/lib"); "" otherwise.
+    subject: Mapped[str] = mapped_column(String(255), default="")
+    #: Absolute used / total in the series' natural unit (GB for disk and
+    #: memory, cores for CPU). Both may be NULL when a template reports only a
+    #: percentage — ``used_pct`` is the column the forecast actually fits.
+    used_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    used_pct: Mapped[float] = mapped_column(Float)
+    sampled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class CapacityForecast(Base):
+    """The current forecast for one series — replaced wholesale each run.
+
+    Pages read only from this table. The regression runs in the nightly job so
+    that opening /forecast is a single indexed SELECT, never 900 curve fits.
+    """
+
+    __tablename__ = "capacity_forecast"
+    __table_args__ = (
+        UniqueConstraint(
+            "host_id", "metric_kind", "subject", name="uq_capfc_series"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    host_id: Mapped[int] = mapped_column(Integer, index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="", index=True)
+    metric_kind: Mapped[str] = mapped_column(String(16), index=True)
+    subject: Mapped[str] = mapped_column(String(255), default="")
+
+    current_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Percentage points per day. Negative means the series is draining.
+    slope_pct_per_day: Mapped[float | None] = mapped_column(Float, nullable=True)
+    r_squared: Mapped[float | None] = mapped_column(Float, nullable=True)
+    days_to_threshold_90: Mapped[float | None] = mapped_column(Float, nullable=True)
+    days_to_full: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: critical | warning | watch | ok | noisy | insufficient_data
+    classification: Mapped[str] = mapped_column(String(24), default="ok", index=True)
+    #: Why a series was skipped or suppressed, shown in the UI as-is.
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Daily points the fit used, for the inline sparkline: [[day, pct], ...].
+    points: Mapped[list] = mapped_column(JSON, default=list)
+    #: Series size at the time of the fit (GB), for context in the table.
+    total_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    computed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
 class CollectorRun(Base):
     """A single execution of a collector, recorded for health tracking."""
 

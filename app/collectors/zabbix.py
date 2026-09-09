@@ -404,13 +404,30 @@ class ZabbixCollector(BaseCollector):
                 h["mem_pct"] = round(mem_now, 1)
 
             tot_sum, used_sum = 0.0, 0.0
-            for _fsname, slot in c["fs"].items():
+            filesystems: list[dict] = []
+            for fsname, slot in c["fs"].items():
                 t = lv(slot["total"])
                 u = lv(slot["used"])
                 if t:
                     tot_sum += t
                 if u:
                     used_sum += u
+                # Keep the per-mount figures. They were summed away here for
+                # years, which meant one full partition on an otherwise empty
+                # host averaged out to "fine" — and left capacity forecasting
+                # nothing per-drive to trend.
+                if t and u is not None:
+                    filesystems.append(
+                        {
+                            "subject": slot["label"] or fsname,
+                            "used_gb": round(u / GB, 2),
+                            "total_gb": round(t / GB, 2),
+                        }
+                    )
+            if filesystems:
+                metrics["filesystems"] = sorted(
+                    filesystems, key=lambda f: f["subject"]
+                )
             if tot_sum > 0:
                 metrics["disk_total_gb"] = round(tot_sum / GB, 1)
                 metrics["disk_used_gb"] = round(used_sum / GB, 1)

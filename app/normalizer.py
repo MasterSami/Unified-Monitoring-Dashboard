@@ -186,6 +186,9 @@ def upsert_hosts(
     """
     now = _utcnow()
     seen_external_ids: set[str] = set()
+    #: Rows touched this run, so capacity sampling can reach their ids after
+    #: the flush without re-querying.
+    touched: dict[str, Host] = {}
 
     existing = {
         h.external_id: h
@@ -208,6 +211,7 @@ def upsert_hosts(
                 external_id=external_id,
             )
             db.add(row)
+        touched[external_id] = row
         row.hostname = item.get("hostname") or external_id
         row.ip = item.get("ip")
         row.status = item.get("status", HostStatus.unknown)
@@ -255,6 +259,14 @@ def upsert_hosts(
             row.updated_at = now
 
     db.flush()
+
+    # Append this run's capacity readings to the history table. The flush above
+    # is what gives new hosts their ids. Contained: a sampling failure is logged
+    # and never costs the caller its host upsert.
+    from app.capacity_history import record_samples
+
+    record_samples(db, platform.value, hosts, touched, now=now)
+
     return len(seen_external_ids)
 
 

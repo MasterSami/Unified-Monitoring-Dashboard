@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% from "macros/filters.html" import service_filter %}
+{% block title %}Capacity forecast · Unified Monitoring{% endblock %}
+{% block page_title %}Capacity forecast{% endblock %}
+{% block page_sub %}Which volumes are filling up, and roughly when — a straight line through the last {{ window_days }} days{% endblock %}
+
+{% block content %}
+<div class="fc-summary">
+  <div class="fc-chip fc-critical">
+    <b>{{ counts.get('critical', 0) }}</b><span>critical · under 14 days</span>
+  </div>
+  <div class="fc-chip fc-warning">
+    <b>{{ counts.get('warning', 0) }}</b><span>warning · 14–45 days</span>
+  </div>
+  <div class="fc-chip fc-watch">
+    <b>{{ counts.get('watch', 0) }}</b><span>watch · 45–90 days</span>
+  </div>
+  <div class="fc-chip fc-noisy">
+    <b>{{ counts.get('noisy', 0) }}</b><span>too scattered to date</span>
+  </div>
+  <div class="fc-chip">
+    <b>{{ counts.get('ok', 0) }}</b><span>stable or shrinking</span>
+  </div>
+  <div class="fc-meta">
+    {% if last_computed %}
+      Last computed {{ last_computed | relative_time }} · {{ samples }} samples stored
+    {% else %}
+      Not computed yet · {{ samples }} samples stored
+    {% endif %}
+  </div>
+</div>
+
+<div class="toolbar toolbar-stack">
+  <div class="toolbar-row">
+    <div class="search">
+      <span class="search-icon">⌕</span>
+      <input
+        type="search"
+        name="q"
+        class="ffilter"
+        placeholder="Search hostname, IP, drive, or instance…"
+        hx-get="/partials/forecast"
+        hx-trigger="input changed delay:250ms, search"
+        hx-target="#forecast-region"
+        hx-swap="innerHTML"
+        hx-include=".ffilter"
+        autocomplete="off"
+      />
+    </div>
+
+    <div class="tabs" role="tablist">
+      {% for value, label in [('at_risk', 'At risk'), ('critical', 'Critical'),
+                              ('warning', 'Warning'), ('watch', 'Watch'),
+                              ('noisy', 'Noisy'), ('ok', 'OK'),
+                              ('insufficient_data', 'No data'), ('all', 'All')] %}
+      <button
+        type="button"
+        class="{{ 'active' if value == current.classification else '' }}"
+        data-classification="{{ value }}"
+        hx-get="/partials/forecast"
+        hx-target="#forecast-region"
+        hx-swap="innerHTML"
+        hx-include=".ffilter"
+        hx-vals='{"classification": "{{ value }}"}'
+        onclick="selectClass(this)"
+      >
+        {{ label }}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="toolbar-row">
+    <select
+      name="platform"
+      class="ffilter select"
+      hx-get="/partials/forecast"
+      hx-trigger="change"
+      hx-target="#forecast-region"
+      hx-swap="innerHTML"
+      hx-include=".ffilter"
+      title="Filter by platform"
+    >
+      <option value="all">All platforms</option>
+      {% for p in platform_order %}
+      <option value="{{ p }}">{{ p | platform_label }}</option>
+      {% endfor %}
+    </select>
+
+    <select
+      name="instance"
+      class="ffilter select"
+      hx-get="/partials/forecast"
+      hx-trigger="change"
+      hx-target="#forecast-region"
+      hx-swap="innerHTML"
+      hx-include=".ffilter"
+      title="Filter by collector instance"
+    >
+      <option value="all">All instances</option>
+      {% for i in instances %}
+      <option value="{{ i.name }}">{{ i.name }}</option>
+      {% endfor %}
+    </select>
+
+    <select
+      name="kind"
+      class="ffilter select"
+      hx-get="/partials/forecast"
+      hx-trigger="change"
+      hx-target="#forecast-region"
+      hx-swap="innerHTML"
+      hx-include=".ffilter"
+      title="Filter by resource"
+    >
+      {# Disk and memory only: CPU is sampled but never forecast, because a CPU
+         percentage oscillates rather than accumulates. #}
+      <option value="all">All resources</option>
+      <option value="disk">Disk</option>
+      <option value="memory">Memory</option>
+    </select>
+
+    {{ service_filter("/partials/forecast", "#forecast-region", "ffilter", current.group, services) }}
+  </div>
+
+  <div class="toolbar-row">
+    <div class="field">
+      <span class="field-lbl">Export period (UTC) · affects the Excel report only</span>
+      <div class="daterange" title="Sets the period recorded in the Excel header. The table always shows the latest computed forecast.">
+        <input type="datetime-local" name="date_from" class="dt-input" aria-label="From" />
+        <span class="dt-sep">→</span>
+        <input type="datetime-local" name="date_to" class="dt-input" aria-label="To" />
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="btn" type="button" onclick="recomputeForecast(this)"
+      title="Refit every series now instead of waiting for tonight's run">
+      Recompute now
+    </button>
+    {% if enable_export %}
+    <button class="btn" type="button" onclick="exportForecast()" title="Export this view to Excel">
+      Export Excel
+    </button>
+    {% endif %}
+  </div>
+
+  <!-- Hidden filter mirror, included on every request. -->
+  <input type="hidden" name="classification" value="{{ current.classification }}"
+         class="ffilter" id="f-classification" />
+</div>
+
+<div
+  id="forecast-region"
+  data-refreshable
+  hx-get="/partials/forecast"
+  hx-trigger="refresh"
+  hx-target="#forecast-region"
+  hx-swap="innerHTML"
+  hx-include=".ffilter"
+>
+  {% include "partials/forecast_table.html" %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function selectClass(btn) {
+    btn.parentElement.querySelectorAll("button").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    btn.classList.add("active");
+    document.getElementById("f-classification").value = btn.dataset.classification;
+  }
+
+  function exportForecast() {
+    var params = new URLSearchParams();
+    document.querySelectorAll(".ffilter").forEach(function (el) {
+      if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
+    });
+    document.querySelectorAll("[name=date_from],[name=date_to]").forEach(function (el) {
+      if (el.value) params.set(el.name, el.value);
+    });
+    window.location = "/api/v1/forecast.xlsx?" + params.toString();
+  }
+
+  function recomputeForecast(btn) {
+    var label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Recomputing…";
+    fetch("/api/v1/forecast/run", { method: "POST" })
+      .then(function () {
+        // The refit runs in the scheduler thread; give it a moment, then pull
+        // the table again rather than reloading the whole page.
+        setTimeout(function () {
+          btn.disabled = false;
+          btn.textContent = label;
+          htmx.trigger("#forecast-region", "refresh");
+        }, 2500);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = label;
+      });
+  }
+
+  // Prefill the range to the forecast window (UTC), display only.
+  (function () {
+    function p(n) { return String(n).padStart(2, "0"); }
+    function u(d) {
+      return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) +
+        "T" + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+    }
+    var now = new Date();
+    var from = new Date(now.getTime() - {{ window_days }} * 24 * 3600 * 1000);
+    var f = document.querySelector("[name=date_from]"), t = document.querySelector("[name=date_to]");
+    if (f && !f.value) f.value = u(from);
+    if (t && !t.value) t.value = u(now);
+  })();
+</script>
+{% endblock %}

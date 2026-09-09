@@ -136,6 +136,19 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
      "(source_instance, source_platform, status)"),
     # Capacity group filter.
     ("ix_hosts_group_name", "hosts", "(group_name)"),
+    # Forecasting reads one whole series at a time: every sample for a
+    # (host, metric, subject) in date order. Without this the nightly job
+    # scans the largest table in the schema once per series.
+    ("ix_caphist_series_time", "capacity_history",
+     "(host_id, metric_kind, subject, sampled_at)"),
+    # Retention pruning, and the "have we sampled this host recently?" probe
+    # the collector runs once per instance per poll.
+    ("ix_caphist_sampled_at", "capacity_history", "(sampled_at)"),
+    ("ix_caphist_host_sampled", "capacity_history", "(host_id, sampled_at)"),
+    # /forecast orders by days_to_threshold_90 within a classification.
+    ("ix_capfc_class_eta", "capacity_forecast",
+     "(classification, days_to_threshold_90)"),
+    ("ix_capfc_host", "capacity_forecast", "(host_id)"),
 ]
 
 

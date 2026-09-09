@@ -11,12 +11,15 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select, distinct, func, or_, select
 from sqlalchemy.orm import Session, defer
 
+from app.capacity_history import sample_count
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.forecast import AT_RISK, describe, forecast_for_host, risk_counts
 from app.models import (
     LIVE_PLATFORMS,
     PLATFORM_ORDER,
     Alert,
+    CapacityForecast,
     Host,
     HostStatus,
     SourcePlatform,
@@ -620,6 +623,7 @@ def _overview_context(db: Session, settings: Settings) -> dict:
         "agent_stats": agent_stats,
         "agent_problem_total": sum(a["problems"] for a in agent_stats),
         "agent_problem_instances": sum(1 for a in agent_stats if a["has_problem"]),
+        "capacity_risks": risk_counts(db),
         "collectors": get_collector_statuses(db, settings),
     }
 
@@ -1177,7 +1181,10 @@ def capacity_zabbix_detail_partial(
     Loaded via HTMX only when a Zabbix server is opened, so the detail is never
     computed for rows the user never clicks.
     """
-    ctx: dict = {"request": request, "instance": instance, "detail": None, "error": None}
+    ctx: dict = {
+        "request": request, "instance": instance, "detail": None,
+        "error": None, "forecasts": {},
+    }
     collector = get_service().get(instance)
     if collector is None or getattr(collector, "name", "") != "zabbix":
         ctx["error"] = f"No Zabbix collector configured for '{instance}'."
@@ -1190,7 +1197,247 @@ def capacity_zabbix_detail_partial(
             ctx["detail"] = host_capacity_detail(collector, hostid)
         except Exception as exc:  # noqa: BLE001 — surface, never 500 the panel
             ctx["error"] = f"Could not load detail: {exc}"
+
+    ctx["forecasts"] = _detail_forecasts(db, instance, hostid, ctx["detail"])
     return templates.TemplateResponse(request, "partials/capacity_zabbix_detail.html", ctx)
+
+
+def _detail_forecasts(
+    db: Session, instance: str, hostid: str, detail: dict | None
+) -> dict[str, dict]:
+    """Forecast lines for the Capacity detail panel, keyed as the panel renders.
+
+    Keys are ``"memory"``, ``"cpu"`` and the filesystem *labels the panel is
+    already showing* — matched through the same normalization the sampler used,
+    so ``FS [/var]`` in the live detail finds the ``/var`` series in the table.
+    Never raises: the panel is a convenience and must not 500 over a forecast.
+    """
+    from app.capacity_history import normalize_subject
+
+    try:
+        host = db.scalars(
+            select(Host).where(
+                Host.source_platform == SourcePlatform.zabbix,
+                Host.source_instance == instance,
+                Host.external_id == str(hostid),
+            )
+        ).first()
+        if host is None:
+            return {}
+        rows = forecast_for_host(db, host.id)
+    except Exception:  # noqa: BLE001 — decoration only
+        return {}
+
+    def line(row) -> dict:
+        return {
+            "text": describe(row),
+            "classification": row.classification,
+            "r_squared": row.r_squared,
+        }
+
+    out: dict[str, dict] = {}
+    for kind in ("memory", "cpu"):
+        row = rows.get(f"{kind}:")
+        if row is not None:
+            out[kind] = line(row)
+
+    for fs in (detail or {}).get("filesystems", []) or []:
+        label = fs.get("label") or ""
+        row = rows.get(f"disk:{normalize_subject(label)}")
+        if row is not None:
+            out[label] = line(row)
+    if "disk:" in rows:
+        out["__disk_total__"] = line(rows["disk:"])
+    return out
+
+
+# --- Capacity forecasting ---------------------------------------------------
+
+#: Order classifications by urgency, so "critical" leads however the SQL sorts.
+_CLASS_RANK = {
+    "critical": 0, "warning": 1, "watch": 2, "noisy": 3, "ok": 4,
+    "insufficient_data": 5,
+}
+
+_FORECAST_CURRENT_DEFAULT = {
+    "q": "", "platform": "all", "instance": "all", "group": "all",
+    "classification": "at_risk", "kind": "all", "date_from": "", "date_to": "",
+}
+
+
+def _forecast_rows(
+    db: Session,
+    q: str | None,
+    platform: str,
+    instance: str,
+    group: str,
+    classification: str,
+    kind: str,
+    page: int,
+) -> tuple[list[dict], int, int, int]:
+    """Forecast rows joined to their hosts, filtered and paginated.
+
+    One query: :class:`CapacityForecast` carries no host detail of its own, and
+    the page needs the hostname, platform and service beside every line. Sorted
+    by time-to-threshold ascending so whatever fills first is read first, with
+    series that have no ETA after the ones that do.
+    """
+    stmt = (
+        select(CapacityForecast, Host)
+        .join(Host, Host.id == CapacityForecast.host_id)
+    )
+
+    if classification == "at_risk":
+        stmt = stmt.where(CapacityForecast.classification.in_(AT_RISK))
+    elif classification and classification != "all":
+        stmt = stmt.where(CapacityForecast.classification == classification)
+
+    if kind and kind != "all":
+        stmt = stmt.where(CapacityForecast.metric_kind == kind)
+    if platform and platform != "all":
+        stmt = stmt.where(Host.source_platform == SourcePlatform(platform))
+    if instance and instance != "all":
+        stmt = stmt.where(Host.source_instance == instance)
+
+    service = _service_wanted(group)
+    if service is not None:
+        stmt = stmt.where(_service_clause(service))
+
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(
+            or_(
+                Host.hostname.ilike(like),
+                Host.ip.ilike(like),
+                Host.source_instance.ilike(like),
+                CapacityForecast.subject.ilike(like),
+            )
+        )
+
+    total = _count_of(db, stmt)
+    page, pages, offset = _paginate(page, total)
+
+    # NULL ETAs last: a series with no crossing date is not more urgent than
+    # one with a date, and SQLite and PostgreSQL disagree on where NULLs sort.
+    eta = CapacityForecast.days_to_threshold_90
+    rows = db.execute(
+        stmt.order_by(
+            (eta.is_(None)).asc(), eta.asc(), CapacityForecast.current_pct.desc()
+        )
+        .offset(offset)
+        .limit(PAGE_SIZE)
+    ).all()
+
+    out = [
+        {
+            "f": forecast,
+            "host": host,
+            "rank": _CLASS_RANK.get(forecast.classification, 9),
+            "summary": describe(forecast),
+            "spark": _sparkline(forecast.points),
+        }
+        for forecast, host in rows
+    ]
+    return out, total, page, pages
+
+
+def _sparkline(points: list, width: int = 74, height: int = 20) -> str:
+    """Inline SVG path for a series' daily points, or "" when there is nothing.
+
+    Drawn here rather than by a chart library: the row needs a shape, not a
+    chart, and shipping a plotting library for 74 pixels of trend would cost
+    more than every other asset on the page combined.
+    """
+    values = [p[1] for p in (points or []) if isinstance(p, (list, tuple)) and len(p) > 1]
+    if len(values) < 2:
+        return ""
+    lo, hi = min(values), max(values)
+    span = (hi - lo) or 1.0
+    step = width / (len(values) - 1)
+    coords = [
+        f"{i * step:.1f},{height - (v - lo) / span * (height - 2) - 1:.1f}"
+        for i, v in enumerate(values)
+    ]
+    return "M" + " L".join(coords)
+
+
+@router.get("/forecast", response_class=HTMLResponse)
+def forecast_page(
+    request: Request,
+    classification: str = "at_risk",
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Capacity forecasting — which volumes fill up, and roughly when."""
+    current = dict(_FORECAST_CURRENT_DEFAULT)
+    current["classification"] = classification
+    rows, total, page, pages = _forecast_rows(
+        db, None, "all", "all", "all", classification, "all", 1
+    )
+    return templates.TemplateResponse(
+        request,
+        "forecast.html",
+        {
+            "request": request,
+            "active_page": "forecast",
+            "rows": rows,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "counts": risk_counts(db),
+            "samples": sample_count(db),
+            "window_days": settings.forecast_window_days,
+            "last_computed": db.scalar(
+                select(func.max(CapacityForecast.computed_at))
+            ),
+            "instances": _instance_names(settings, db),
+            "services": _service_catalog(db),
+            "collectors": get_collector_statuses(db, settings),
+            "enable_export": settings.enable_export,
+            "current": current,
+        },
+    )
+
+
+@router.get("/partials/forecast", response_class=HTMLResponse)
+def forecast_partial(
+    request: Request,
+    q: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
+    group: str = "all",
+    classification: str = "at_risk",
+    kind: str = "all",
+    page: int = 1,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Forecast table fragment (search / filter / paginate)."""
+    rows, total, page, pages = _forecast_rows(
+        db, q, platform, instance, group, classification, kind, page
+    )
+    return templates.TemplateResponse(
+        request,
+        "partials/forecast_table.html",
+        {
+            "request": request,
+            "rows": rows,
+            "total": total,
+            "page": page,
+            "pages": pages,
+            "current": {
+                "q": q or "",
+                "platform": platform,
+                "instance": instance,
+                "group": group,
+                "classification": classification,
+                "kind": kind,
+                "date_from": date_from or "",
+                "date_to": date_to or "",
+            },
+        },
+    )
 
 
 @router.get("/shared", response_class=HTMLResponse)

@@ -11,4 +11,7 @@ pydantic-settings==2.7.1
 python-multipart==0.0.20
 pyyaml==6.0.2
 openpyxl==3.1.5
+# Capacity forecasting: least-squares fits over the sample history. Only the
+# array maths — no Prophet, no scikit-learn, no plotting library.
+numpy==2.4.6
 pytest==8.3.4

@@ -30,6 +30,12 @@ without code changes.
   by IP (e.g. the same node on Zabbix-34 *and* Zabbix-67, or on Zabbix and NNMi).
 - **Pagination & CSV export** — hosts and alerts paginate (300/page, configurable
   via `PAGE_SIZE`) and export the current filtered view to CSV.
+- **Capacity forecasting** — a `/forecast` page listing the volumes that are
+  filling up and roughly when they reach 90%, from a least-squares trend over
+  each drive's recent history. Sortable by time-to-threshold, with an inline
+  sparkline, a confidence rating, and a "Capacity risks" tile on the Overview.
+  See [Capacity forecasting](#capacity-forecasting) for the method and its
+  limits.
 - **Topology (planned)** — a feature-flagged placeholder for NNMi network
   topology and Dynatrace service/app maps; see [`TOPOLOGY.md`](TOPOLOGY.md).
 - **Alerts** — active alerts sorted by severity then recency, colored severity
@@ -69,9 +75,12 @@ app/
 ├── main.py            FastAPI app, startup, scheduler wiring
 ├── config.py          pydantic-settings (.env)
 ├── db.py              engine, session, Base
-├── models.py          Host, Alert, CollectorRun
+├── models.py          Host, Alert, CollectorRun, CapacityHistory, CapacityForecast
 ├── schemas.py         pydantic API schemas
 ├── normalizer.py      severity maps + upsert/reconcile logic
+├── capacity_history.py  capacity sampling + drive-string parsers
+├── forecast.py        least-squares trend fits + classification
+├── backfill_zabbix_capacity.py  one-off history backfill from Zabbix trends
 ├── scheduler.py       APScheduler jobs + per-collector status
 ├── collectors/
 │   ├── base.py        BaseCollector (timing, upsert, run record)
@@ -183,6 +192,9 @@ nnmi:
 | `GET  /api/v1/alerts?active=true`     | Alerts; `active=true` hides resolved.            |
 | `GET  /api/v1/capacity.xlsx` / `.csv` | Capacity export (`platform`, `instance`, `group`, `status`, `q`). |
 | `GET  /api/v1/alerts.xlsx` / `.csv`   | Alerts export (`state`, `group`, `q`, `date_from`, `date_to`). |
+| `GET  /api/v1/forecast`               | Capacity forecast (`classification`, `kind`, `platform`, `instance`, `group`, `q`). |
+| `GET  /api/v1/forecast.xlsx`          | Forecast export (same filters).                  |
+| `POST /api/v1/forecast/run`           | Refit every series now.                          |
 | `GET  /api/v1/summary`                | Aggregate KPIs for the overview.                 |
 | `GET  /api/v1/collectors/status`      | Per-instance health.                             |
 | `POST /api/v1/collectors/run`         | Trigger every instance now (the UI "Refresh now").|
@@ -190,6 +202,114 @@ nnmi:
 | `POST /api/v1/collectors/{instance}/test-mail?to=` | Zabbix: send a test email.        |
 
 Interactive docs at `/docs`.
+
+## Capacity forecasting
+
+The `/forecast` page answers one question — *which volumes are going to fill
+up, and roughly when* — and is deliberate about the cases where it refuses to
+answer.
+
+### How it works
+
+1. **Sampling.** Every collection run appends its capacity readings to a
+   `capacity_history` table, one row per `(host, metric, drive)` per sample.
+   The `hosts` table only ever holds the latest reading, so before this table
+   existed nothing in the schema could answer "is this filling up?". Sampling
+   is throttled to one row per host per `CAPACITY_HISTORY_MIN_MINUTES`
+   (default hourly), because the forecast resamples to one point per day and
+   storing all 288 readings of a five-minute poll cycle would cost twelve times
+   the rows for no extra resolution.
+2. **Fitting.** A nightly job at **03:30** resamples each series to a daily
+   mean, fits an ordinary least-squares line to `used_pct` against days over
+   the last `FORECAST_WINDOW_DAYS` (default 30), and stores slope, R², current
+   value and the resulting dates in `capacity_forecast`.
+3. **Reading.** The pages read that table only. Nothing is fitted on page load.
+
+Trigger a refit without waiting for the small hours with **Recompute now** on
+the page, or `POST /api/v1/forecast/run`.
+
+### What the number means, and what it does not
+
+**The model is a straight line.** That is the whole of it. It is a good
+description of a log directory that grows with steady traffic, or a database
+that ingests at a constant rate. It is a poor description of everything else,
+so the code is built to say so rather than to guess:
+
+- **Low-confidence forecasts are suppressed.** If a series has an R² below
+  `FORECAST_MIN_R_SQUARED` (default 0.3), the points do not lie on a line, and
+  a date extrapolated from that line would be invented precision — so the date
+  is withheld and only the slope is shown. A confident wrong date is worse than
+  no date, because it is precise enough to schedule against.
+
+  The R² test runs *after* the timescale test, not before it, and only changes
+  the verdict for series that would otherwise land in an actionable band. A
+  series crossing 90% more than 90 days out is `ok` whatever its R², because
+  "not filling up on a timescale you care about" holds whether or not the
+  points sit on a line. Only a series crossing *within* 90 days is downgraded
+  to **noisy**. Without that ordering, every idle host's memory — flat, jittery,
+  nominally trending at a hundredth of a percent a day — would be reported as
+  noisy, and the list would be too long to read.
+- **Step changes invalidate the history before them.** A cleanup that frees
+  40%, a new workload that adds 20% overnight, a migration — after any of
+  these, the samples from before the step describe a system that no longer
+  exists, and a line fitted across the step is meaningless. The only step the
+  code detects automatically is a **volume resize**: when `total_value` moves
+  by more than `FORECAST_RESIZE_TOLERANCE` (default 5%) mid-window, only the
+  samples after the most recent change are used, and the row says so. A
+  cleanup or a workload change is *not* detected — the trend will simply be
+  wrong until enough new history accumulates to outweigh the old.
+- **Series that cannot support a trend are skipped, not guessed at.** Fewer
+  than `FORECAST_MIN_POINTS` daily points, a span under
+  `FORECAST_MIN_SPAN_DAYS`, a host whose status is `unknown`/`disabled` or that
+  has not been seen for two days, or a volume reporting zero size: each is
+  recorded as **insufficient_data** with the reason shown in the row.
+- **CPU is sampled but never forecast.** A CPU percentage oscillates around a
+  workload; it does not accumulate. "Days until CPU is 90%" is a category
+  error, so only disk and memory are fitted.
+- **An ETA past ten years is dropped.** At that range the arithmetic is not a
+  forecast.
+
+### Classifications
+
+| Class | Meaning |
+| ----- | ------- |
+| `critical` | Reaches 90% in under 14 days |
+| `warning` | 14–45 days |
+| `watch` | 45–90 days |
+| `ok` | Over 90 days, flat, or shrinking |
+| `noisy` | Rising, but R² too low to put a date on it |
+| `insufficient_data` | Not fitted; the row states why |
+
+### Backfilling history from Zabbix
+
+Sampling only starts accumulating the day it ships, so a fresh install has
+nothing to fit for weeks. Zabbix already keeps daily aggregates in `trends`
+for exactly the items the Capacity page reads, so one command gives every
+Zabbix host a usable trend line immediately:
+
+```bash
+python -m app.backfill_zabbix_capacity --days 90
+python -m app.backfill_zabbix_capacity --days 90 --instance Zabbix-A --forecast
+```
+
+It is idempotent (keyed on host + metric + drive + day), resumable (committed
+per host), and paced with a short sleep between hosts. `--forecast` runs the
+fit immediately afterwards instead of waiting for 03:30.
+
+**Dynatrace backfill** is available behind `--dynatrace` /
+`FORECAST_DYNATRACE_BACKFILL=true` but usually fails: the Metrics v2 API needs
+the `metrics.read` scope that the dashboard's token typically lacks — the same
+403 the capacity collector already degrades around. It logs the reason and
+skips; forecasting continues from whatever history exists.
+
+### Trying it without a VPN
+
+With `MOCK_MODE=true` each mock host is given 35 days of synthetic history
+ending exactly on the value its Capacity row shows, covering every outcome —
+one drive filling at ~0.8%/day, one flat, one shrinking, one too noisy to
+date, and one resized mid-window (fitted only from the resize onward). The
+series are digest-derived rather than random, so the demo has the same shape
+on every run.
 
 ## Deploy to a server later
 

@@ -8,7 +8,7 @@ run one or all of them, and derives health from persisted
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import func, select
@@ -377,6 +377,21 @@ def _run_digitalview_job(force: bool = False) -> None:
         db.close()
 
 
+_FORECAST_JOB_ID = "capacity_forecast"
+
+
+def _run_forecast_job() -> None:
+    """Scheduler entry point: prune old samples, then refit every series."""
+    from app.forecast import run_forecast_job
+
+    run_forecast_job()
+
+
+def run_forecast_now() -> None:
+    """Refit synchronously (used by the manual API trigger)."""
+    _run_forecast_job()
+
+
 def _run_topology_job() -> None:
     """Scheduler entry point: rebuild every instance's topology graph."""
     run_topology(get_settings())
@@ -434,6 +449,11 @@ def request_topology_run() -> bool:
     return _dispatch("manual_topology", run_topology_now)
 
 
+def request_forecast_run() -> bool:
+    """Queue a capacity refit. True if it was handed to the scheduler."""
+    return _dispatch("manual_forecast", run_forecast_now)
+
+
 def start_scheduler(settings: Settings) -> BackgroundScheduler:
     """Start the background polling scheduler and return it."""
     global _scheduler
@@ -469,6 +489,35 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
             next_run_time=datetime.now(),
         )
         logger.info("topology collection enabled; polling every %d minute(s)", topo_minutes)
+
+    # Capacity forecasting: refit every series overnight, when nobody is
+    # looking at the dashboard and the day's samples are all in. Cron rather
+    # than an interval so the run lands at a predictable, quiet hour; the
+    # pages read the stored result, so a missed night costs freshness, not
+    # the feature.
+    scheduler.add_job(
+        _run_forecast_job,
+        trigger="cron",
+        hour=3,
+        minute=30,
+        id=_FORECAST_JOB_ID,
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    # Also once shortly after startup, so a fresh process (or a first-ever run)
+    # has a populated /forecast without waiting for the small hours. Delayed a
+    # minute so the initial collection has landed its hosts first.
+    scheduler.add_job(
+        _run_forecast_job,
+        trigger="date",
+        run_date=datetime.now() + timedelta(seconds=60),
+        id=f"{_FORECAST_JOB_ID}_startup",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+    logger.info("capacity forecast scheduled nightly at 03:30 (and once at startup)")
 
     # Optional local SiteScope demo: if SITESCOPE_DEMO_FILE is set, auto-load
     # that redacted .tsv on startup and refresh it every poll interval, so

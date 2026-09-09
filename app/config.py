@@ -152,6 +152,39 @@ class Settings(BaseSettings):
     # UI while this is false. Leave it off unless you have a strong reason.
     runbook_allow_write: bool = False
 
+    # --- Capacity forecasting ----------------------------------------------
+    # How many days of history the trend is fitted over. Longer is steadier but
+    # slower to notice a change in behaviour; 30 days is the usual compromise.
+    forecast_window_days: int = 30
+
+    # Minimum gap between stored capacity samples for one host. The collectors
+    # poll every POLL_INTERVAL_MINUTES (5 by default), which would append ~288
+    # rows per series per day for a forecast that only ever resamples to one
+    # point per day. Hourly keeps a full day's shape at 1/12th the rows.
+    capacity_history_min_minutes: int = 60
+
+    # Samples older than this are deleted by the nightly forecast job. Must be
+    # comfortably larger than FORECAST_WINDOW_DAYS.
+    capacity_history_retention_days: int = 120
+
+    # Below this R², the trend line does not describe the data well enough for
+    # its ETA to be worth showing: the series is reported as "noisy" and the
+    # day counts are withheld. A confidently wrong date is worse than none.
+    forecast_min_r_squared: float = 0.3
+
+    # A disk that grew or shrank by more than this fraction mid-window was
+    # resized; only the samples after the change describe the current volume.
+    forecast_resize_tolerance: float = 0.05
+
+    # Gates a series must clear to be fitted at all.
+    forecast_min_points: int = 10
+    forecast_min_span_days: int = 7
+
+    # Try to backfill Dynatrace history too. Off by default: the Metrics v2 API
+    # needs the `metrics.read` scope, which the dashboard's token usually lacks
+    # (the same 403 the capacity collector already degrades around).
+    forecast_dynatrace_backfill: bool = False
+
     # --- Digital View (Huawei i2000) asset inventory ------------------------
     # Huawei keeps the API port closed to us, so the inventory arrives as an
     # exported workbook (BaseAssetImportTemplate_En.xlsx) instead. Point this at

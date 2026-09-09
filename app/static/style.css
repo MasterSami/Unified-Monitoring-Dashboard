@@ -2209,3 +2209,192 @@ td.mono {
 }
 .res-na { color: var(--text-faint); }
 
+
+/* --- Capacity forecast ---------------------------------------------------- */
+
+/* Five KPI tiles on the Overview. Collapses the same way cols-4 does, so the
+   row never becomes a single wide column on a laptop. */
+.cols-5 {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+/* A stat tile that is also a link (Capacity Risks -> /forecast). */
+.stat-link {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.stat-link:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+/* Summary chips above the forecast table. */
+.fc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space);
+  margin-bottom: calc(var(--space) * 2);
+}
+.fc-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.fc-chip b {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.fc-chip span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.fc-chip.fc-critical { border-left-color: var(--sev5); }
+.fc-chip.fc-critical b { color: var(--sev5); }
+.fc-chip.fc-warning { border-left-color: var(--sev4); }
+.fc-chip.fc-warning b { color: var(--sev4); }
+.fc-chip.fc-watch { border-left-color: var(--sev3); }
+.fc-chip.fc-watch b { color: var(--sev3); }
+.fc-chip.fc-noisy { border-left-color: var(--sev1); }
+.fc-chip.fc-noisy b { color: var(--text-muted); }
+.fc-meta {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* Table. Row emphasis mirrors the alert severity palette so "critical" reads
+   the same here as it does on the Alerts page. */
+.fc-table td { vertical-align: middle; }
+.fc-row-critical { background: color-mix(in srgb, var(--sev5) 7%, transparent); }
+.fc-row-critical td:first-child { box-shadow: inset 3px 0 0 var(--sev5); }
+.fc-row-warning td:first-child { box-shadow: inset 3px 0 0 var(--sev4); }
+.fc-row-watch td:first-child { box-shadow: inset 3px 0 0 var(--sev3); }
+.fc-row-insufficient_data { opacity: 0.72; }
+
+.fc-sub {
+  display: block;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.fc-none { color: var(--text-faint); }
+.fc-service {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.fc-kind {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fc-kind-disk { background: var(--accent-soft); color: var(--accent); }
+.fc-subject {
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.fc-trend {
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.fc-trend.up { color: var(--sev4); }
+.fc-trend.down { color: var(--up); }
+.fc-trend.flat { color: var(--text-faint); }
+.fc-unit {
+  color: var(--text-faint);
+  font-size: 10.5px;
+  font-weight: 500;
+  margin-left: 1px;
+}
+
+.fc-eta {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 600;
+}
+.fc-eta-now { color: var(--sev5); }
+.fc-far { color: var(--text-faint); font-weight: 500; }
+
+.fc-conf {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+.fc-conf-high { background: color-mix(in srgb, var(--up) 14%, transparent); color: var(--up); }
+.fc-conf-med { background: var(--surface-2); color: var(--text-muted); }
+.fc-conf-low {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-faint);
+}
+
+/* Inline sparkline: a shape, not a chart. currentColor lets it follow the
+   row's own text colour in both themes without a second palette. */
+.fc-spark {
+  display: block;
+  color: var(--text-muted);
+  overflow: visible;
+}
+.fc-row-critical .fc-spark { color: var(--sev5); }
+.fc-row-warning .fc-spark { color: var(--sev4); }
+
+/* The forecast line appended to the Capacity detail panel. */
+.cap-forecast {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.cap-forecast.is-critical { color: var(--sev5); font-weight: 600; }
+.cap-forecast.is-warning { color: var(--sev4); font-weight: 600; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 1400px) {
+  .cols-5 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 1080px) {
+  .cols-5 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 760px) {
+  .cols-5 { grid-template-columns: 1fr; }
+}
+
+/* Why a series has no dates, shown on the row itself. */
+.fc-reason {
+  display: block;
+  margin-top: 3px;
+  max-width: 260px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
