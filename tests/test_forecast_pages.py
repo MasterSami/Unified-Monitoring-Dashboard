@@ -233,19 +233,46 @@ def test_risk_counts_feed_the_overview_card(client):
 
 
 def test_forecast_page_and_partial_render(client):
-    html = client.get("/forecast").text
-    assert "Capacity forecast" in html
+    html = client.get("/capacity/planning").text
+    assert "Planning" in html
     assert 'name="group"' in html and "data-svcbox" in html   # service filter
     assert "/static/svcbox.js" in html
     assert "Recompute now" in html
-
-    # The nav entry is on every page, not just this one.
-    assert 'href="/forecast"' in client.get("/capacity").text
 
     partial = client.get(
         "/partials/forecast", params={"classification": "all", "kind": "disk"}
     ).text
     assert "fc-table" in partial
+
+
+def test_planning_lives_under_capacity_not_in_the_sidebar(client):
+    """One sidebar entry, two views — the split is a sub-nav on the page."""
+    capacity = client.get("/capacity").text
+    planning = client.get("/capacity/planning").text
+
+    # Both carry the sub-nav, and each marks itself current.
+    for html in (capacity, planning):
+        assert 'href="/capacity/planning"' in html
+        assert 'class="subnav"' in html
+    assert capacity.count("aria-current=page") == 1
+    assert planning.count("aria-current=page") == 1
+
+    # The sidebar has a Capacity entry and no separate Forecast one.
+    assert ">\n            Forecast\n" not in capacity
+    assert "Forecast" not in capacity
+
+
+def test_the_old_forecast_url_still_works(client):
+    """Bookmarks and the earlier build's links must not break."""
+    resp = client.get("/forecast", follow_redirects=False)
+    assert resp.status_code == 301
+    assert resp.headers["location"].startswith("/capacity/planning")
+
+    resp = client.get(
+        "/forecast", params={"classification": "critical"}, follow_redirects=True
+    )
+    assert resp.status_code == 200
+    assert "Planning" in resp.text
 
 
 def test_forecast_page_filters_narrow_the_table(client):
@@ -280,7 +307,7 @@ def test_forecast_page_filters_narrow_the_table(client):
 def test_overview_card_links_to_the_critical_list(client):
     html = client.get("/").text
     assert "Capacity Risks" in html
-    assert '/forecast?classification=critical' in html
+    assert '/capacity/planning?classification=critical' in html
 
 
 def test_json_and_xlsx_exports(client):

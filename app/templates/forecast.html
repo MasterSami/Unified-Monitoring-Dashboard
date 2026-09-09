@@ -1,10 +1,12 @@
 {% extends "base.html" %}
 {% from "macros/filters.html" import service_filter %}
-{% block title %}Capacity forecast · Unified Monitoring{% endblock %}
-{% block page_title %}Capacity forecast{% endblock %}
-{% block page_sub %}Which volumes are filling up, and roughly when — a straight line through the last {{ window_days }} days{% endblock %}
+{% block title %}Capacity planning · Unified Monitoring{% endblock %}
+{% block page_title %}Capacity{% endblock %}
+{% block page_sub %}Planning — which volumes are filling up, and roughly when, from a straight line through the last {{ window_days }} days{% endblock %}
 
 {% block content %}
+{% include "partials/capacity_subnav.html" %}
+
 <div class="fc-summary">
   <div class="fc-chip fc-critical">
     <b>{{ counts.get('critical', 0) }}</b><span>critical · under 14 days</span>

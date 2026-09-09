@@ -2398,3 +2398,45 @@ td.mono {
   font-size: 11px;
   line-height: 1.35;
 }
+
+/* --- Section sub-navigation (Capacity / Planning) ------------------------- */
+
+.subnav {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 calc(var(--space) * 2);
+  border-bottom: 1px solid var(--border);
+}
+.subnav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.subnav a:hover {
+  color: var(--text);
+}
+.subnav a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+/* At-risk count, so a filling volume is visible from the utilization table. */
+.subnav-badge {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--sev4);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}

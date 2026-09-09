@@ -1105,6 +1105,10 @@ def capacity_page(
         {
             "request": request,
             "active_page": "capacity",
+            "subpage": "capacity",
+            # Puts the at-risk count on the Planning tab, so a volume that is
+            # filling is visible from here without switching views.
+            "planning_risks": risk_counts(db).get("at_risk", 0),
             "hosts": hosts,
             "total": total,
             "page": page,
@@ -1361,30 +1365,45 @@ def _sparkline(points: list, width: int = 74, height: int = 20) -> str:
     return "M" + " L".join(coords)
 
 
-@router.get("/forecast", response_class=HTMLResponse)
-def forecast_page(
+@router.get("/forecast", include_in_schema=False)
+def forecast_redirect(classification: str = "at_risk") -> RedirectResponse:
+    """The view moved under Capacity; keep old links and bookmarks working."""
+    return RedirectResponse(
+        f"/capacity/planning?classification={classification}", status_code=301
+    )
+
+
+@router.get("/capacity/planning", response_class=HTMLResponse)
+def capacity_planning_page(
     request: Request,
     classification: str = "at_risk",
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Capacity forecasting — which volumes fill up, and roughly when."""
+    """Capacity planning — which volumes fill up, and roughly when.
+
+    The second view of the Capacity section: same servers and same resources
+    as the utilization table, read forward instead of now.
+    """
     current = dict(_FORECAST_CURRENT_DEFAULT)
     current["classification"] = classification
     rows, total, page, pages = _forecast_rows(
         db, None, "all", "all", "all", classification, "all", 1
     )
+    counts = risk_counts(db)
     return templates.TemplateResponse(
         request,
         "forecast.html",
         {
             "request": request,
-            "active_page": "forecast",
+            "active_page": "capacity",
+            "subpage": "planning",
+            "planning_risks": counts.get("at_risk", 0),
             "rows": rows,
             "total": total,
             "page": page,
             "pages": pages,
-            "counts": risk_counts(db),
+            "counts": counts,
             "samples": sample_count(db),
             "window_days": settings.forecast_window_days,
             "last_computed": db.scalar(

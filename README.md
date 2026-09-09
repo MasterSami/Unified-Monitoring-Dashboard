@@ -30,11 +30,11 @@ without code changes.
   by IP (e.g. the same node on Zabbix-34 *and* Zabbix-67, or on Zabbix and NNMi).
 - **Pagination & CSV export** — hosts and alerts paginate (300/page, configurable
   via `PAGE_SIZE`) and export the current filtered view to CSV.
-- **Capacity forecasting** — a `/forecast` page listing the volumes that are
+- **Capacity planning** — a **Planning** tab under Capacity listing the volumes that are
   filling up and roughly when they reach 90%, from a least-squares trend over
   each drive's recent history. Sortable by time-to-threshold, with an inline
   sparkline, a confidence rating, and a "Capacity risks" tile on the Overview.
-  See [Capacity forecasting](#capacity-forecasting) for the method and its
+  See [Capacity planning](#capacity-planning) for the method and its
   limits.
 - **Topology (planned)** — a feature-flagged placeholder for NNMi network
   topology and Dynatrace service/app maps; see [`TOPOLOGY.md`](TOPOLOGY.md).
@@ -203,9 +203,9 @@ nnmi:
 
 Interactive docs at `/docs`.
 
-## Capacity forecasting
+## Capacity planning
 
-The `/forecast` page answers one question — *which volumes are going to fill
+The **Capacity → Planning** tab (`/capacity/planning`) answers one question — *which volumes are going to fill
 up, and roughly when* — and is deliberate about the cases where it refuses to
 answer.
 
