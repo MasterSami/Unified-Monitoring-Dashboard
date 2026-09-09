@@ -48,6 +48,19 @@ CRITICAL_DAYS, WARNING_DAYS, WATCH_DAYS = 14.0, 45.0, 90.0
 #: dropped rather than shown as a number nobody should read.
 MAX_HORIZON_DAYS = 3650.0
 
+#: Headroom, in percentage points, below which a volume counts as having
+#: arrived rather than as approaching.
+#:
+#: An ETA is ``headroom / slope``, and both shrink towards nothing as a disk
+#: fills. A volume at 99.99% creeping at 0.0008 %/day divides 0.01 by 0.0008
+#: and reports "13 days to full" — a number assembled entirely from digits too
+#: small to display, which the UI then rounds to "100% · 0.00%/day · 13d". The
+#: next poll would move it to 400 days or to 3, because at that scale the
+#: division is measuring rounding error. Under half a percentage point of
+#: headroom the honest answer is "now": the disk is full, and what it needs is
+#: attention, not a date.
+MIN_HEADROOM_PCT = 0.5
+
 #: A host not seen for this long is not reporting capacity either; its last
 #: samples describe the past, not a trend.
 STALE_AFTER_DAYS = 2
@@ -155,10 +168,17 @@ def _ols(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float]:
 
 
 def _eta(current: float, target: float, slope: float) -> float | None:
-    """Days until ``current`` reaches ``target`` at ``slope`` %/day."""
+    """Days until ``current`` reaches ``target`` at ``slope`` %/day.
+
+    ``0.0`` means "already there". ``None`` means there is no date to give —
+    either the series is not rising, or the crossing is past the horizon.
+    """
     if slope <= 0:
         return None
-    if current >= target:
+    # Already at or within touching distance of the target. Extrapolating the
+    # last fraction of a percent divides one immeasurably small number by
+    # another and produces a date that changes wildly between polls.
+    if target - current <= MIN_HEADROOM_PCT:
         return 0.0
     days = (target - current) / slope
     return None if days > MAX_HORIZON_DAYS else round(days, 1)
@@ -237,6 +257,22 @@ def fit_series(
         points=points,
         reason="fitted from the most recent resize onward" if resized else None,
     )
+
+    # Already over the line. This is not a forecast at all — it is a report of
+    # the present — and it outranks everything the trend could say, including
+    # a flat or falling slope. A volume sitting at 97% for a month is the most
+    # urgent row on the page; classifying it "ok" because it stopped growing
+    # would bury the one thing somebody has to deal with today.
+    if current >= THRESHOLD_PCT:
+        base.classification = CRITICAL
+        base.days_to_threshold_90 = 0.0
+        full = _eta(current, 100.0, slope) if slope > 0 else None
+        # A "full in 7 years" beside a disk that is already critical is noise;
+        # past the watch horizon the useful statement is just that it is over
+        # the line and not moving.
+        base.days_to_full = full if (full is not None and full < WATCH_DAYS) else None
+        base.reason = f"already at {current:.1f}% — above the {THRESHOLD_PCT:.0f}% line"
+        return base
 
     # Not filling: there is no date to give, so the confidence in the slope
     # does not matter and the series is simply fine.
@@ -460,6 +496,20 @@ def describe(row: CapacityForecast) -> str:
         return f"No forecast — {row.reason or 'not enough history'}"
     if row.classification == NOISY:
         return f"Trend too scattered to date (R² {row.r_squared:.2f})"
+
+    # Already over the line — describe the present. Saying "stable" about a
+    # volume sitting at 100% is true of its trend and useless to the reader.
+    current = row.current_pct
+    if current is not None and current >= THRESHOLD_PCT:
+        if 100.0 - current <= MIN_HEADROOM_PCT:
+            return f"Full now — {current:.1f}%, no space left"
+        full = row.days_to_full
+        if full is not None and full < WATCH_DAYS:
+            return f"Already {current:.1f}% — full in ~{full:.0f} days"
+        rising = (row.slope_pct_per_day or 0.0) > 0.005
+        tail = "and still rising" if rising else "not growing"
+        return f"Already {current:.1f}% — above the {THRESHOLD_PCT:.0f}% line, {tail}"
+
     if row.slope_pct_per_day is not None and row.slope_pct_per_day <= 0:
         return "At current trend: stable or shrinking"
     if row.days_to_threshold_90 is None:

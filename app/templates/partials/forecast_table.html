@@ -83,11 +83,15 @@
           {% if f.slope_pct_per_day is none %}
             <span class="fc-none">—</span>
           {% else %}
+            {% set rate = f.slope_pct_per_day | abs %}
             {% set up = f.slope_pct_per_day > 0.001 %}
             {% set down = f.slope_pct_per_day < -0.001 %}
             <span class="fc-trend {{ 'up' if up else ('down' if down else 'flat') }}">
               {{ '▲' if up else ('▼' if down else '•') }}
-              {{ '%.2f'|format(f.slope_pct_per_day | abs) }}<span class="fc-unit">%/d</span>
+              {# A rate under 0.005 rounds to "0.00" at two decimals, which
+                 reads as "not moving" for a series that is in fact creeping.
+                 Say it is below the resolution instead of printing a zero. #}
+              {% if rate > 0 and rate < 0.005 %}&lt;0.01{% else %}{{ '%.2f'|format(rate) }}{% endif %}<span class="fc-unit">%/d</span>
             </span>
           {% endif %}
         </td>

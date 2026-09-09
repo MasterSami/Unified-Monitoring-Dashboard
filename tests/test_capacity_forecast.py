@@ -211,16 +211,82 @@ class TestSlopeAndEta:
         assert fit.days_to_threshold_90 is None
 
     def test_series_already_past_the_threshold_reads_as_due_now(self):
-        fit = fit_series(*_series(30, 88.0, 0.5))
+        """Past 90% there is nothing left to forecast — report the present."""
+        fit = fit_series(*_series(30, 80.0, 0.5))   # ends at 94.5%
         assert fit.days_to_threshold_90 == 0.0
         assert fit.classification == CRITICAL
-        assert describe_row(fit) == "At current trend: 90% today"
+        assert describe_row(fit).startswith("Already 94.5%")
 
     def test_an_eta_beyond_the_horizon_is_dropped_rather_than_shown(self):
         """A date ten years out is arithmetic, not a forecast."""
         fit = fit_series(*_series(30, 40.0, 0.0001))
         assert fit.classification == OK
         assert fit.days_to_threshold_90 is None
+
+
+class TestAlreadyFull:
+    """A volume at or over the line is a fact about now, not a forecast.
+
+    Found in production: a 420 GB volume pinned at 99.99% reported "100.0% ·
+    0.00%/day · 13 days to full". Both operands had been rounded away by the
+    display, so the row read as (100 − 100) ÷ 0 = 13.
+    """
+
+    def _pinned_at_ceiling(self):
+        """99.966% creeping by 0.0008 %/day — the production series."""
+        stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+        return stamps, [99.966 + d * 0.0008 for d in range(30)], [420.0] * 30
+
+    def test_a_volume_at_the_ceiling_is_full_now_not_full_later(self):
+        fit = fit_series(*self._pinned_at_ceiling())
+        assert fit.current_pct == pytest.approx(99.99, abs=0.01)
+        assert fit.classification == CRITICAL
+        # The bug: 0.01 percentage points divided by a slope of 0.0008.
+        assert fit.days_to_full == 0.0
+        assert fit.days_to_threshold_90 == 0.0
+        assert "no space left" in describe_row(fit)
+
+    def test_headroom_below_the_floor_never_produces_a_date(self):
+        """Whatever the slope, the last half-percent is not worth dividing."""
+        for slope in (0.0001, 0.0008, 0.01, 0.5):
+            stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+            pcts = [99.7 + d * slope for d in range(30)]
+            fit = fit_series(stamps, pcts, [420.0] * 30)
+            assert fit.days_to_full == 0.0, slope
+
+    def test_a_full_volume_that_stopped_growing_is_still_critical(self):
+        """Flat at 100% must not read as "ok" — it is the most urgent row."""
+        stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+        fit = fit_series(stamps, [100.0] * 30, [420.0] * 30)
+        assert fit.classification == CRITICAL
+        assert fit.slope_pct_per_day <= 0        # not growing...
+        assert "no space left" in describe_row(fit)   # ...but still full
+
+    def test_a_volume_over_the_line_but_draining_is_reported_honestly(self):
+        stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+        fit = fit_series(stamps, [100.0 - d * 0.05 for d in range(30)], [420.0] * 30)
+        assert fit.classification == CRITICAL
+        assert fit.days_to_full is None          # it is emptying, not filling
+        assert "not growing" in describe_row(fit)
+
+    def test_a_volume_over_the_line_and_rising_says_so(self):
+        stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+        fit = fit_series(stamps, [88.0 + d * 0.1 for d in range(30)], [420.0] * 30)
+        assert fit.classification == CRITICAL
+        assert "still rising" in describe_row(fit)
+
+    def test_a_long_dated_full_estimate_is_dropped_from_a_critical_row(self):
+        """"Full in 7 years" beside an already-critical volume is noise."""
+        stamps = [NOW - timedelta(days=29 - d) for d in range(30)]
+        fit = fit_series(stamps, [90.5 + d * 0.002 for d in range(30)], [420.0] * 30)
+        assert fit.classification == CRITICAL
+        assert fit.days_to_full is None
+
+    def test_below_the_line_is_untouched_by_any_of_this(self):
+        fit = fit_series(*_series(30, 59.0, 0.8))
+        assert fit.classification == CRITICAL
+        assert fit.days_to_threshold_90 == pytest.approx(9.8, abs=0.1)
+        assert fit.days_to_full == pytest.approx(22.3, abs=0.1)
 
 
 class TestRSquaredSuppression:
@@ -380,6 +446,8 @@ def describe_row(fit):
         r_squared = fit.r_squared
         slope_pct_per_day = fit.slope_pct_per_day
         days_to_threshold_90 = fit.days_to_threshold_90
+        days_to_full = fit.days_to_full
+        current_pct = fit.current_pct
 
     return describe(_Row())
 
@@ -388,7 +456,7 @@ def describe_row(fit):
     "series, expected",
     [
         (_series(30, 59.0, 0.8), "At current trend: 90% in ~10 days"),
-        (_series(30, 55.0, -0.3), "At current trend: stable or shrinking"),
+        (_series(30, 45.0, -0.3), "At current trend: stable or shrinking"),
         (_series(6, 50.0, 1.0), "No forecast — only 6 daily point(s); needs 10"),
         (_series(30, 50.0, 0.35, noise=9.0), None),  # noisy -> mentions R²
     ],

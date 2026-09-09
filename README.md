@@ -268,12 +268,22 @@ so the code is built to say so rather than to guess:
   error, so only disk and memory are fitted.
 - **An ETA past ten years is dropped.** At that range the arithmetic is not a
   forecast.
+- **A volume already at or over 90% is reported, not forecast.** It is
+  classified `critical` with "now", whatever its slope — including flat or
+  falling. Two reasons. First, an ETA is `headroom ÷ slope` and both shrink to
+  nothing as a disk fills: a volume at 99.99% creeping at 0.0008 %/day divides
+  0.01 by 0.0008 and announces "13 days to full", a number built entirely from
+  digits too small to display, which the next poll would move to 400 days or
+  to 3. Under `MIN_HEADROOM_PCT` (0.5 percentage points) the answer is "now".
+  Second, a volume sitting at 97% for a month is the most urgent row on the
+  page; classifying it `ok` because it stopped growing would bury the one
+  thing somebody has to deal with today.
 
 ### Classifications
 
 | Class | Meaning |
 | ----- | ------- |
-| `critical` | Reaches 90% in under 14 days |
+| `critical` | Already at 90%+, or reaches it in under 14 days |
 | `warning` | 14–45 days |
 | `watch` | 45–90 days |
 | `ok` | Over 90 days, flat, or shrinking |
