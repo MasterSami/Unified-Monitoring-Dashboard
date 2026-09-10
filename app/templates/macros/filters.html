@@ -8,7 +8,7 @@
 
     The menu is our own (static/svcbox.js), not a native <datalist>: Firefox
     renders datalists as an unstyled system popup and cannot narrow them, and
-    the list has to follow the platform tab and instance the user has picked —
+    the list has to follow the platform tab and instance the user has picked -
     a Dynatrace operator should be offered Dynatrace host groups, not Zabbix
     ones. The names are embedded once per page load, keyed by instance, so
     changing scope never costs a request.
@@ -21,7 +21,7 @@
     services – pages._service_catalog(db): {instance: {platform, names}}
 #}
 {% macro service_filter(url, target, cls, value, services) %}
-<div class="svc" data-svcbox title="Filter by service / application group — the name your team uses, not the IP">
+<div class="svc" data-svcbox title="Filter by service / application group - the name your team uses, not the IP">
   <span class="svc-icon">⬡</span>
   <input
     type="search"

@@ -333,3 +333,55 @@ def test_manual_run_endpoint(client):
     resp = client.post("/api/v1/forecast/run")
     assert resp.status_code == 200
     assert resp.json()["status"] in {"queued", "ok"}
+
+
+def test_no_em_dashes_in_any_rendered_template():
+    """Plain hyphens throughout, so the UI reads as one hand wrote it."""
+    from pathlib import Path
+
+    offenders = [
+        str(p)
+        for p in Path("app/templates").rglob("*.html")
+        if "—" in p.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], offenders
+
+
+def test_an_empty_page_says_why_it_is_empty(client):
+    """Zeros alone cannot distinguish "nothing at risk" from "nothing fitted"."""
+    db = SessionLocal()
+    try:
+        db.query(CapacityForecast).delete()
+        db.query(CapacityHistory).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    html = client.get("/capacity/planning").text
+    assert "No capacity history yet" in html
+    assert "backfill_zabbix_capacity" in html   # tells them the way out
+
+
+def test_the_staleness_window_is_forgiving_enough_for_a_laptop(client):
+    """A dashboard switched off over a weekend must not gate out the estate.
+
+    ``last_seen`` only advances while the app runs, so a Monday start finds
+    every host two or three days old. A tight window emptied the page for
+    everyone until the first collection landed, which reads as data loss.
+    """
+    from app.forecast import STALE_AFTER_DAYS, _host_gate
+
+    assert STALE_AFTER_DAYS >= 3, "a weekend is three days"
+
+    db = SessionLocal()
+    try:
+        host = _host(db, "stale-01", "stale-1")
+        host.last_seen = NOW - timedelta(days=3)      # closed over a weekend
+        ok, why = _host_gate(host, NOW)
+        assert ok, why
+
+        host.last_seen = NOW - timedelta(days=STALE_AFTER_DAYS + 1)
+        ok, why = _host_gate(host, NOW)
+        assert not ok and "last seen" in why
+    finally:
+        db.close()

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Runbook · SAMI'X{% endblock %}
 {% block page_title %}Runbook{% endblock %}
-{% block page_sub %}The team's script library — documented, searchable, runnable{% endblock %}
+{% block page_sub %}The team's script library - documented, searchable, runnable{% endblock %}
 
 {% block content %}
 <div class="toolbar">
@@ -50,7 +50,7 @@
 
 {% if platform in ('dynatrace', 'nnmi') and not scripts %}
 <div class="notice rb-soon">
-  Nothing here yet — the catalogue starts with the Zabbix scripts. Adding a
+  Nothing here yet - the catalogue starts with the Zabbix scripts. Adding a
   {{ platform | capitalize }} one means writing a runner in
   <code>app/runbook.py</code> and registering it in <code>SCRIPTS</code>.
 </div>

@@ -1,9 +1,9 @@
 {# Capacity forecast table. Every value here was computed by the nightly job
-   and read from capacity_forecast — nothing is fitted on page load. #}
+   and read from capacity_forecast - nothing is fitted on page load. #}
 
 {% macro eta(days) %}
   {% if days is none %}
-    <span class="fc-none">—</span>
+    <span class="fc-none">-</span>
   {% elif days < 1 %}
     <span class="fc-eta fc-eta-now">now</span>
   {% elif days < 400 %}
@@ -15,7 +15,7 @@
 
 {% macro confidence(r2) %}
   {% if r2 is none %}
-    <span class="fc-none">—</span>
+    <span class="fc-none">-</span>
   {% else %}
     {% set level = 'high' if r2 >= 0.7 else ('med' if r2 >= 0.3 else 'low') %}
     <span class="fc-conf fc-conf-{{ level }}" title="R² = {{ '%.2f'|format(r2) }}">
@@ -48,10 +48,10 @@
       {% for r in rows %}
       {% set f = r.f %}
       {% set pct = f.current_pct %}
-      <tr class="fc-row fc-row-{{ f.classification }}" title="{{ r.summary }}{% if f.reason %} — {{ f.reason }}{% endif %}">
+      <tr class="fc-row fc-row-{{ f.classification }}" title="{{ r.summary }}{% if f.reason %} - {{ f.reason }}{% endif %}">
         <td>
           <strong>{{ r.host.hostname }}</strong>
-          <span class="fc-sub mono">{{ r.host.ip or '—' }}</span>
+          <span class="fc-sub mono">{{ r.host.ip or '-' }}</span>
         </td>
         <td>
           <span class="badge badge-{{ r.host.source_platform.value }}">
@@ -70,7 +70,7 @@
         </td>
         <td>
           {% if pct is none %}
-            <span class="fc-none">—</span>
+            <span class="fc-none">-</span>
           {% else %}
             {% set cls = 'ok' if pct < 70 else ('warn' if pct < 90 else 'hot') %}
             <div class="res">
@@ -81,7 +81,7 @@
         </td>
         <td>
           {% if f.slope_pct_per_day is none %}
-            <span class="fc-none">—</span>
+            <span class="fc-none">-</span>
           {% else %}
             {% set rate = f.slope_pct_per_day | abs %}
             {% set up = f.slope_pct_per_day > 0.001 %}
@@ -105,13 +105,13 @@
           </svg>
           <span class="sr-only">{{ f.sample_count }} daily points</span>
           {% else %}
-            <span class="fc-none">—</span>
+            <span class="fc-none">-</span>
           {% endif %}
         </td>
         <td>{{ eta(f.days_to_threshold_90) }}</td>
         <td>{{ eta(f.days_to_full) }}</td>
         <td>{{ confidence(f.r_squared) }}</td>
-        <td class="fc-service">{{ r.host.group_name or '—' }}</td>
+        <td class="fc-service">{{ r.host.group_name or '-' }}</td>
       </tr>
       {% else %}
       <tr>
@@ -119,7 +119,7 @@
           <div class="empty">
             No series match your filters.
             {% if current.classification == 'at_risk' %}
-              Nothing is forecast to reach 90% within 45 days — try the “All” tab.
+              Nothing is forecast to reach 90% within 45 days - try the “All” tab.
             {% endif %}
           </div>
         </td>

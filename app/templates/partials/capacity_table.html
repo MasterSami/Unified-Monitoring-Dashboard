@@ -12,7 +12,7 @@
 {% macro rcell(pct, used, total, unit) %}
   {% set width = pct if pct is not none else ((used / total * 100) if (used is not none and total) else none) %}
   {% if width is none and total is none %}
-    <span class="res-na" title="no metric reported">—</span>
+    <span class="res-na" title="no metric reported">-</span>
   {% else %}
     {% set w = width if width is not none else 0 %}
     {% set cls = 'ok' if w < 70 else ('warn' if w < 90 else 'hot') %}
@@ -55,9 +55,9 @@
       {% set m = h.metrics or {} %}
       <tr>
         <td><strong>{{ h.hostname }}</strong></td>
-        <td class="mono">{{ h.ip or '—' }}</td>
+        <td class="mono">{{ h.ip or '-' }}</td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
-        <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '—' }}</td>
+        <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '-' }}</td>
         <td>{{ rcell(h.cpu_pct, m.get('cpu_used_cores'), m.get('cores'), 'cores') }}</td>
         <td>{{ rcell(h.mem_pct, m.get('mem_used_gb'), m.get('mem_total_gb'), 'GB') }}</td>
         <td>{{ rcell(h.disk_pct, m.get('disk_used_gb'), m.get('disk_total_gb'), 'GB') }}</td>

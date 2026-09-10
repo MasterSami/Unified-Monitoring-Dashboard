@@ -1,4 +1,4 @@
-{# Zabbix per-host capacity detail — lazily loaded into #capacity-detail. #}
+{# Zabbix per-host capacity detail - lazily loaded into #capacity-detail. #}
 {% macro bar(pct) %}
   {% set w = pct if pct is not none else 0 %}
   {% set cls = 'ok' if w < 70 else ('warn' if w < 90 else 'hot') %}
@@ -6,7 +6,7 @@
 {% endmacro %}
 
 {# The nightly forecast for one item, when there is history behind it. Read
-   from capacity_forecast — this panel never fits anything itself. #}
+   from capacity_forecast - this panel never fits anything itself. #}
 {% macro forecast_line(entry) %}
   {% if entry %}
   <div class="cap-forecast is-{{ entry.classification }}"
@@ -35,23 +35,23 @@
     <div class="cap-detail-grid">
       <div class="cap-metric">
         <div class="cap-metric-lbl">CPU</div>
-        <div class="cap-metric-val">{{ '%.1f'|format(detail.cpu_pct) ~ '%' if detail.cpu_pct is not none else '—' }}</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.cpu_pct) ~ '%' if detail.cpu_pct is not none else '-' }}</div>
         {{ bar(detail.cpu_pct) }}
-        <div class="cap-metric-sub">{{ detail.cores ~ ' cores' if detail.cores is not none else '—' }}</div>
+        <div class="cap-metric-sub">{{ detail.cores ~ ' cores' if detail.cores is not none else '-' }}</div>
       </div>
       <div class="cap-metric">
         <div class="cap-metric-lbl">Memory</div>
-        <div class="cap-metric-val">{{ '%.1f'|format(detail.mem_pct) ~ '%' if detail.mem_pct is not none else '—' }}</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.mem_pct) ~ '%' if detail.mem_pct is not none else '-' }}</div>
         {{ bar(detail.mem_pct) }}
-        <div class="cap-metric-sub">{{ detail.mem_total_gb ~ ' GB total' if detail.mem_total_gb is not none else '—' }}</div>
+        <div class="cap-metric-sub">{{ detail.mem_total_gb ~ ' GB total' if detail.mem_total_gb is not none else '-' }}</div>
         {{ forecast_line(forecasts.get('memory')) }}
       </div>
       <div class="cap-metric">
         <div class="cap-metric-lbl">Disk</div>
-        <div class="cap-metric-val">{{ '%.1f'|format(detail.disk_pct) ~ '%' if detail.disk_pct is not none else '—' }}</div>
+        <div class="cap-metric-val">{{ '%.1f'|format(detail.disk_pct) ~ '%' if detail.disk_pct is not none else '-' }}</div>
         {{ bar(detail.disk_pct) }}
         <div class="cap-metric-sub">
-          {% if detail.disk_used_gb is not none %}{{ detail.disk_used_gb }} / {{ detail.disk_total_gb }} GB{% else %}—{% endif %}
+          {% if detail.disk_used_gb is not none %}{{ detail.disk_used_gb }} / {{ detail.disk_total_gb }} GB{% else %}-{% endif %}
         </div>
         {{ forecast_line(forecasts.get('__disk_total__')) }}
       </div>
@@ -67,9 +67,9 @@
           {% if tr %}
           <tr>
             <td>{{ name }}</td>
-            <td class="mono">{{ '%.1f'|format(tr.min) if tr.min is not none else '—' }}</td>
-            <td class="mono">{{ '%.1f'|format(tr.avg) if tr.avg is not none else '—' }}</td>
-            <td class="mono">{{ '%.1f'|format(tr.max) if tr.max is not none else '—' }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.min) if tr.min is not none else '-' }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.avg) if tr.avg is not none else '-' }}</td>
+            <td class="mono">{{ '%.1f'|format(tr.max) if tr.max is not none else '-' }}</td>
           </tr>
           {% endif %}
           {% endfor %}
@@ -87,10 +87,10 @@
           {% for fs in detail.filesystems %}
           <tr>
             <td class="mono">{{ fs.label }}</td>
-            <td class="mono">{{ fs.used_gb ~ ' GB' if fs.used_gb is not none else '—' }}</td>
-            <td class="mono">{{ fs.total_gb ~ ' GB' if fs.total_gb is not none else '—' }}</td>
+            <td class="mono">{{ fs.used_gb ~ ' GB' if fs.used_gb is not none else '-' }}</td>
+            <td class="mono">{{ fs.total_gb ~ ' GB' if fs.total_gb is not none else '-' }}</td>
             <td>
-              {% if fs.pct is not none %}{{ bar(fs.pct) }}<span class="res-pct">{{ fs.pct }}%</span>{% else %}—{% endif %}
+              {% if fs.pct is not none %}{{ bar(fs.pct) }}<span class="res-pct">{{ fs.pct }}%</span>{% else %}-{% endif %}
               {{ forecast_line(forecasts.get(fs.label)) }}
             </td>
           </tr>

@@ -1,4 +1,4 @@
-{# Collectors health — grouped per platform. Each platform is one compact row
+{# Collectors health - grouped per platform. Each platform is one compact row
    with a single aggregate status dot; expand (native <details>) to see its
    instances. Collapsed height is fixed regardless of platform/instance count. #}
 {% set order = ['zabbix', 'nnmi', 'sitescope', 'dynatrace', 'digitalview'] %}
@@ -21,16 +21,16 @@
         {% for c in items %}
           {% if c.status == 'success' %}
             {% set icls = 'ok' %}
-            {% set tip = c.instance ~ ' — ' ~ c.hosts_collected ~ ' hosts · ' ~ c.alerts_collected ~ ' alerts · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
+            {% set tip = c.instance ~ ' - ' ~ c.hosts_collected ~ ' hosts · ' ~ c.alerts_collected ~ ' alerts · last ok ' ~ (c.last_success_at | relative_time) ~ (('\n' ~ c.notes) if c.notes else '') %}
             {% set meta = c.last_success_at | relative_time %}
           {% elif c.status == 'failed' %}
             {% set icls = 'fail' %}
-            {% set tip = c.instance ~ ' — FAILED: ' ~ (c.error_message or 'unknown error') %}
+            {% set tip = c.instance ~ ' - FAILED: ' ~ (c.error_message or 'unknown error') %}
             {% set meta = 'failed' %}
           {% else %}
             {% set icls = '' %}
-            {% set tip = c.instance ~ ' — no runs yet' %}
-            {% set meta = '—' %}
+            {% set tip = c.instance ~ ' - no runs yet' %}
+            {% set meta = '-' %}
           {% endif %}
           <div class="h-item {{ icls }}" data-tip="{{ tip }}">
             <span class="dot"></span>
@@ -46,7 +46,7 @@
     {% set items = collectors | selectattr('platform', 'equalto', pf) | list %}
     {% if items %}{{ platform_group(pf, items) }}{% if seen.append(pf) %}{% endif %}{% endif %}
   {% endfor %}
-  {# Any platform not in the known order (future collectors) — grouped too. #}
+  {# Any platform not in the known order (future collectors) - grouped too. #}
   {% for pf in collectors | map(attribute='platform') | unique | list %}
     {% if pf not in seen %}
       {% set items = collectors | selectattr('platform', 'equalto', pf) | list %}

@@ -61,9 +61,17 @@ MAX_HORIZON_DAYS = 3650.0
 #: attention, not a date.
 MIN_HEADROOM_PCT = 0.5
 
-#: A host not seen for this long is not reporting capacity either; its last
-#: samples describe the past, not a trend.
-STALE_AFTER_DAYS = 2
+#: A host not seen for this long is treated as no longer reporting, and its
+#: series are not fitted.
+#:
+#: This is deliberately forgiving. The dashboard is often run on a laptop that
+#: gets closed overnight and over weekends, and ``last_seen`` only advances
+#: while the app is running — so a Monday-morning start briefly makes the whole
+#: estate look abandoned. A tight window there empties the page for everyone
+#: until the first collection lands, which reads as data loss rather than as
+#: the intended "this host stopped reporting". Overridable via
+#: ``FORECAST_STALE_AFTER_DAYS``.
+STALE_AFTER_DAYS = int(get_settings().forecast_stale_after_days)
 
 CRITICAL, WARNING, WATCH, OK = "critical", "warning", "watch", "ok"
 NOISY, INSUFFICIENT = "noisy", "insufficient_data"
@@ -271,7 +279,7 @@ def fit_series(
         # past the watch horizon the useful statement is just that it is over
         # the line and not moving.
         base.days_to_full = full if (full is not None and full < WATCH_DAYS) else None
-        base.reason = f"already at {current:.1f}% — above the {THRESHOLD_PCT:.0f}% line"
+        base.reason = f"already at {current:.1f}%, above the {THRESHOLD_PCT:.0f}% line"
         return base
 
     # Not filling: there is no date to give, so the confidence in the slope
@@ -475,6 +483,9 @@ def risk_counts(db: Session) -> dict[str, int]:
     ).all()
     counts = {name: int(n) for name, n in rows}
     counts["at_risk"] = sum(counts.get(c, 0) for c in AT_RISK)
+    # Total fitted series, so a page of zeros can tell "nothing is at risk"
+    # apart from "nothing was fitted".
+    counts["total_series"] = sum(int(n) for _name, n in rows)
     return counts
 
 
@@ -493,7 +504,7 @@ def forecast_for_host(db: Session, host_id: int) -> dict[str, CapacityForecast]:
 def describe(row: CapacityForecast) -> str:
     """One-line plain-English summary, e.g. "At current trend: 90% in ~23 days"."""
     if row.classification == INSUFFICIENT:
-        return f"No forecast — {row.reason or 'not enough history'}"
+        return f"No forecast: {row.reason or 'not enough history'}"
     if row.classification == NOISY:
         return f"Trend too scattered to date (R² {row.r_squared:.2f})"
 
@@ -502,13 +513,13 @@ def describe(row: CapacityForecast) -> str:
     current = row.current_pct
     if current is not None and current >= THRESHOLD_PCT:
         if 100.0 - current <= MIN_HEADROOM_PCT:
-            return f"Full now — {current:.1f}%, no space left"
+            return f"Full now: {current:.1f}%, no space left"
         full = row.days_to_full
         if full is not None and full < WATCH_DAYS:
-            return f"Already {current:.1f}% — full in ~{full:.0f} days"
+            return f"Already {current:.1f}%, full in ~{full:.0f} days"
         rising = (row.slope_pct_per_day or 0.0) > 0.005
         tail = "and still rising" if rising else "not growing"
-        return f"Already {current:.1f}% — above the {THRESHOLD_PCT:.0f}% line, {tail}"
+        return f"Already {current:.1f}%, above the {THRESHOLD_PCT:.0f}% line, {tail}"
 
     if row.slope_pct_per_day is not None and row.slope_pct_per_day <= 0:
         return "At current trend: stable or shrinking"

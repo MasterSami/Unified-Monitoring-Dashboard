@@ -180,6 +180,13 @@ class Settings(BaseSettings):
     forecast_min_points: int = 10
     forecast_min_span_days: int = 7
 
+    # A host whose last_seen is older than this is treated as no longer
+    # reporting and its series are skipped. Kept forgiving on purpose:
+    # last_seen only advances while the app runs, so a dashboard left off over
+    # a weekend would otherwise gate out the entire estate on Monday and look
+    # like it had lost its data.
+    forecast_stale_after_days: int = 10
+
     # Try to backfill Dynatrace history too. Off by default: the Metrics v2 API
     # needs the `metrics.read` scope, which the dashboard's token usually lacks
     # (the same 403 the capacity collector already degrades around).

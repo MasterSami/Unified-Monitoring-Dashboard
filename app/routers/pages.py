@@ -1406,6 +1406,7 @@ def capacity_planning_page(
             "counts": counts,
             "samples": sample_count(db),
             "window_days": settings.forecast_window_days,
+            "min_span_days": settings.forecast_min_span_days,
             "last_computed": db.scalar(
                 select(func.max(CapacityForecast.computed_at))
             ),

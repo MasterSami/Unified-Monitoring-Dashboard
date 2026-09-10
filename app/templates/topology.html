@@ -10,7 +10,7 @@
   <h2 style="margin:0 0 8px;">Topology is turned off</h2>
   <p style="color:var(--text-muted); max-width:64ch; margin:0 auto;">
     This section shows the <b>NNMi network topology</b> and the
-    <b>Dynatrace service map</b> — as browsable <b>tables</b> and as an
+    <b>Dynatrace service map</b> - as browsable <b>tables</b> and as an
     interactive <b>graph</b> of connection points.
   </p>
   <p style="color:var(--text-faint); margin-top:16px; font-size:13px;">
@@ -51,7 +51,7 @@
        href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=table&sub={{ sub }}">▤ Table</a>
     <a class="seg-item {{ 'active' if mode == 'graph' else '' }}"
        href="/topology?view={{ view }}&instance={{ instance or '' }}&mode=graph"
-       title="Interactive graph — heavy on large maps">◈ Graph</a>
+       title="Interactive graph - heavy on large maps">◈ Graph</a>
   </div>
 
   {% if enable_topology_export and instance %}
@@ -93,7 +93,7 @@
 {% if mode == 'graph' %}
 <div class="card">
   <div class="card-head">
-    <h3>{{ meta.label }} — {{ instance }}</h3>
+    <h3>{{ meta.label }} - {{ instance }}</h3>
     <span class="hint">click a node to focus its direct connections · click empty space to reset</span>
   </div>
   <div id="topo-focus-hint" class="topo-focus-hint" aria-live="polite">
@@ -138,11 +138,11 @@
         <tr>
           <td><strong>{{ c.name }}</strong></td>
           <td>{{ nnmi_status(c.status) }}</td>
-          <td class="mono" style="font-size:11px;">{{ c.endpoint1 or '—' }}</td>
-          <td class="mono" style="font-size:11px;">{{ c.endpoint2 or '—' }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint1 or '-' }}</td>
+          <td class="mono" style="font-size:11px;">{{ c.endpoint2 or '-' }}</td>
           <td class="mono" style="font-size:11px;">{{ c.endpoint3 or '' }}</td>
           <td class="mono" style="font-size:11px;">{{ c.endpoint4 or '' }}</td>
-          <td class="mono" style="font-size:11px; color:var(--text-faint);">{{ c.interfaces or '—' }}</td>
+          <td class="mono" style="font-size:11px; color:var(--text-faint);">{{ c.interfaces or '-' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="7"><div class="empty">No L2 connections.</div></td></tr>
@@ -358,7 +358,7 @@
           node.removeClass("topo-related").addClass("topo-selected");
           cy.fit(neighbourhood, 80);
           if (focusHint) {
-            focusHint.textContent = node.data("label") + " — " + neighbourCount +
+            focusHint.textContent = node.data("label") + " - " + neighbourCount +
               (neighbourCount === 1 ? " direct connection" : " direct connections") + ". Click empty space to reset.";
           }
         });

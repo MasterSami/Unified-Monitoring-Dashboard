@@ -30,7 +30,7 @@
           {% for cell in row %}
           <td class="{{ 'mono' if loop.index0 in (0, 1, 2) else '' }}">
             {%- if cell is none or cell == '' -%}
-              <span class="muted-dash">—</span>
+              <span class="muted-dash">-</span>
             {%- elif cell is string and cell in ('NOT MONITORED', 'NOT FOUND', 'OFFLINE', 'Disabled') -%}
               <span class="rb-bad">{{ cell }}</span>
             {%- elif cell is string and cell in ('MONITORED', 'ONLINE', 'Enabled') -%}
@@ -44,7 +44,7 @@
         {% else %}
         <tr>
           <td colspan="{{ script.columns | length }}">
-            <div class="empty">Nothing matched. The script ran fine — there is
+            <div class="empty">Nothing matched. The script ran fine - there is
               simply no row that meets its criteria right now.</div>
           </td>
         </tr>

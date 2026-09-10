@@ -505,13 +505,16 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         coalesce=True,
         replace_existing=True,
     )
-    # Also once shortly after startup, so a fresh process (or a first-ever run)
-    # has a populated /forecast without waiting for the small hours. Delayed a
-    # minute so the initial collection has landed its hosts first.
+    # Also once after startup, so a fresh process has a populated Planning tab
+    # without waiting for the small hours. Five minutes, not one: the forecast
+    # skips hosts whose last_seen is stale, and on a large estate the first
+    # collection is still walking thousands of hosts a minute in. Running
+    # before it lands would refit against yesterday's timestamps and quietly
+    # empty the page.
     scheduler.add_job(
         _run_forecast_job,
         trigger="date",
-        run_date=datetime.now() + timedelta(seconds=60),
+        run_date=datetime.now() + timedelta(minutes=5),
         id=f"{_FORECAST_JOB_ID}_startup",
         max_instances=1,
         coalesce=True,

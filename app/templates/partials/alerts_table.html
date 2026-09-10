@@ -32,8 +32,8 @@
             <span class="dot"></span>{{ a.source_platform.value }}
           </span>
         </td>
-        <td style="color: var(--text-muted); font-size: 12px;">{{ a.source_instance or '—' }}</td>
-        <td class="mono">{{ a.host_hostname or '—' }}</td>
+        <td style="color: var(--text-muted); font-size: 12px;">{{ a.source_instance or '-' }}</td>
+        <td class="mono">{{ a.host_hostname or '-' }}</td>
         <td class="mono">{{ a.started_at | relative_time }}</td>
         <td>
           {% if a.resolved %}
@@ -47,11 +47,11 @@
         <td>
           {% if a.escalate_href %}
           <a class="btn-escalate" href="{{ a.escalate_href }}"
-             title="{% if a.owner_email %}Open Outlook to escalate to {{ a.owner or a.owner_email }} ({{ a.owner_email }}){% else %}Owner: {{ a.owner }} — no email on file; Outlook opens with an empty recipient{% endif %}">
+             title="{% if a.owner_email %}Open Outlook to escalate to {{ a.owner or a.owner_email }} ({{ a.owner_email }}){% else %}Owner: {{ a.owner }} - no email on file; Outlook opens with an empty recipient{% endif %}">
             Escalate
           </a>
           {% else %}
-          <span class="muted-dash">—</span>
+          <span class="muted-dash">-</span>
           {% endif %}
         </td>
       </tr>

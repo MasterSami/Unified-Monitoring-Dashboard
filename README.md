@@ -228,6 +228,21 @@ answer.
 Trigger a refit without waiting for the small hours with **Recompute now** on
 the page, or `POST /api/v1/forecast/run`.
 
+### When the page is empty
+
+The page says which of the possible reasons applies, and this reports the
+same thing in more detail without touching anything:
+
+```bash
+python -m app.backfill_zabbix_capacity --status
+```
+
+It prints the database actually in use (a relative SQLite path resolves
+against the working directory, so running the app and a command from
+different folders silently uses different files), the stored samples per
+platform with their date range, the forecast rows per classification, and how
+many hosts pass the staleness gate.
+
 ### What the number means, and what it does not
 
 **The model is a straight line.** That is the whole of it. It is a good
@@ -261,8 +276,12 @@ so the code is built to say so rather than to guess:
 - **Series that cannot support a trend are skipped, not guessed at.** Fewer
   than `FORECAST_MIN_POINTS` daily points, a span under
   `FORECAST_MIN_SPAN_DAYS`, a host whose status is `unknown`/`disabled` or that
-  has not been seen for two days, or a volume reporting zero size: each is
-  recorded as **insufficient_data** with the reason shown in the row.
+  has not been seen for `FORECAST_STALE_AFTER_DAYS` (default 10), or a volume
+  reporting zero size: each is recorded as **insufficient_data** with the
+  reason shown in the row. The staleness window is deliberately wide, because
+  `last_seen` only advances while the app runs: a dashboard switched off over
+  a weekend would otherwise gate out the entire estate on Monday, which reads
+  as lost data rather than as stale hosts.
 - **CPU is sampled but never forecast.** A CPU percentage oscillates around a
   workload; it does not accumulate. "Days until CPU is 90%" is a category
   error, so only disk and memory are fitted.

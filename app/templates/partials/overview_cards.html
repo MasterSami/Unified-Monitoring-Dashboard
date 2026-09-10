@@ -10,7 +10,7 @@
       <span class="stat-ico">▣</span>
     </div>
     {# Distinct devices that are up. A server watched by two tools is one
-       server here — summing the per-tool totals double-counted the estate. #}
+       server here - summing the per-tool totals double-counted the estate. #}
     <span class="value">{{ active_hosts }}</span>
     {# Both numbers, so the gap reads as duplicates rather than as a
        disagreement with the per-platform card below. #}
@@ -37,12 +37,12 @@
     <span class="value">{{ active_alerts }}</span>
     <span class="meta">unresolved across platforms</span>
   </div>
-  {# Capacity risks — drives that a linear trend puts past 90% within 45 days.
+  {# Capacity risks - drives that a linear trend puts past 90% within 45 days.
      Links straight to the critical list, which is the only part anyone acts
      on tonight. #}
   {% set risks = capacity_risks or {} %}
   <a class="card stat warn stat-link" href="/capacity/planning?classification=critical"
-     title="Volumes forecast to reach 90% within 45 days — click for the critical ones">
+     title="Volumes forecast to reach 90% within 45 days - click for the critical ones">
     <div class="stat-top">
       <span class="label">Capacity Risks</span>
       <span class="stat-ico">◪</span>
@@ -62,7 +62,7 @@
   </div>
 </div>
 
-{# Hosts by status — hidden by default, controlled by SHOW_HOST_STATUS_ROW in
+{# Hosts by status - hidden by default, controlled by SHOW_HOST_STATUS_ROW in
    .env. It repeats what Agent Health already shows, and the large "unknown" and
    "disabled" counts read as failures to anyone who does not know both are
    normal states. Set SHOW_HOST_STATUS_ROW=true to bring this strip back. #}
@@ -146,7 +146,7 @@
              hosts are all "unknown" by design. Say so rather than letting it
              read as a tool whose every host is in trouble. #}
           {% if p.platform not in live_platforms %}
-          <span class="inv-tag" title="Asset inventory — lists what exists, not what is up">inventory</span>
+          <span class="inv-tag" title="Asset inventory - lists what exists, not what is up">inventory</span>
           {% endif %}
           {# Lead with the ACTIVE count so this reconciles with the tile above.
              Showing p.total here counted every unknown and disabled host, which
@@ -238,7 +238,7 @@
           </td>
           <td>{{ a.title }}</td>
           <td style="width: 1%;"><span class="badge badge-{{ a.source_platform.value }}"><span class="dot"></span>{{ a.source_platform.value | platform_label }}</span></td>
-          <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.host_hostname or '—' }}</td>
+          <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.host_hostname or '-' }}</td>
           <td class="mono" style="width: 1%; white-space: nowrap;">{{ a.started_at | relative_time }}</td>
         </tr>
         {% else %}

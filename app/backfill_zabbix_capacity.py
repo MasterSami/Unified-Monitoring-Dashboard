@@ -331,6 +331,109 @@ def backfill_dynatrace(db: Session, days: int) -> int:
     return written
 
 
+def print_status(db: Session) -> None:
+    """Print what the forecast can actually see, and what it is rejecting.
+
+    An empty Planning tab has several possible causes that look identical from
+    the page: no samples at all, samples too recent to fit, or samples the host
+    gate is throwing away. This prints enough to tell them apart in one go.
+    """
+    from sqlalchemy import func
+
+    from app.forecast import STALE_AFTER_DAYS, _host_gate
+    from app.models import CapacityForecast, HostStatus
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+
+    print("\n=== DATABASE ===")
+    print(f"  url          : {settings.database_url}")
+    print(f"  cwd          : {__import__('os').getcwd()}")
+    print("  (a relative sqlite path resolves against the cwd, so running the")
+    print("   app and this command from different folders uses different files)")
+
+    print("\n=== STORED SAMPLES (capacity_history) ===")
+    rows = db.execute(
+        select(
+            CapacityHistory.platform,
+            CapacityHistory.metric_kind,
+            func.count(CapacityHistory.id),
+            func.min(CapacityHistory.sampled_at),
+            func.max(CapacityHistory.sampled_at),
+        ).group_by(CapacityHistory.platform, CapacityHistory.metric_kind)
+    ).all()
+    if not rows:
+        print("  NONE. Nothing has been sampled or backfilled into this database.")
+    for platform, kind, count, oldest, newest in rows:
+        span = ""
+        if oldest and newest:
+            span = f"  spanning {(newest - oldest).days} day(s)"
+            span += f"   {oldest:%Y-%m-%d} .. {newest:%Y-%m-%d}"
+        print(f"  {platform:12} {kind:7} {count:>8} row(s){span}")
+
+    print("\n=== STORED FORECASTS (capacity_forecast) ===")
+    rows = db.execute(
+        select(CapacityForecast.classification, func.count(CapacityForecast.id))
+        .group_by(CapacityForecast.classification)
+    ).all()
+    if not rows:
+        print("  NONE. Either the forecast has never run, or every series was")
+        print("  rejected. The host gate below usually says which.")
+    for name, count in sorted(rows):
+        print(f"  {name:20} {count:>6}")
+
+    reasons = db.execute(
+        select(CapacityForecast.reason, func.count(CapacityForecast.id))
+        .where(CapacityForecast.classification == "insufficient_data")
+        .group_by(CapacityForecast.reason)
+        .order_by(func.count(CapacityForecast.id).desc())
+        .limit(6)
+    ).all()
+    if reasons:
+        print("\n  why series were skipped:")
+        for reason, count in reasons:
+            print(f"    {count:>6}  {reason}")
+
+    print("\n=== HOSTS AND THE STALENESS GATE ===")
+    hosts = db.scalars(select(Host)).all()
+    by_status: dict[str, int] = {}
+    passed = 0
+    gate_reasons: dict[str, int] = {}
+    for host in hosts:
+        by_status[host.status.value] = by_status.get(host.status.value, 0) + 1
+        ok, why = _host_gate(host, now)
+        if ok:
+            passed += 1
+        else:
+            key = "stale" if "last seen" in why else why
+            gate_reasons[key] = gate_reasons.get(key, 0) + 1
+    print(f"  hosts total  : {len(hosts)}")
+    for status, count in sorted(by_status.items()):
+        print(f"    {status:10} {count:>6}")
+    print(f"  pass the gate: {passed}")
+    for why, count in sorted(gate_reasons.items(), key=lambda kv: -kv[1]):
+        print(f"    rejected: {why:28} {count:>6}")
+    print(f"  (a host is 'stale' once last_seen is over {STALE_AFTER_DAYS} day(s) old;")
+    print("   set FORECAST_STALE_AFTER_DAYS in .env to change that)")
+
+    freshest = db.scalar(select(func.max(Host.last_seen)))
+    if freshest is not None:
+        if freshest.tzinfo is None:
+            freshest = freshest.replace(tzinfo=timezone.utc)
+        age = now - freshest
+        print(f"  newest last_seen: {freshest:%Y-%m-%d %H:%M} UTC "
+              f"({age.days}d {age.seconds // 3600}h ago)")
+        if age > timedelta(days=STALE_AFTER_DAYS):
+            print("  >> EVERY host is past the staleness gate. Start the app and let")
+            print("     one collection finish, then run the forecast again.")
+
+    unknown = by_status.get(HostStatus.unknown.value, 0)
+    if unknown and unknown > len(hosts) / 2:
+        print("  >> Most hosts are 'unknown'. They are skipped by design; run a")
+        print("     collection so their status and last_seen refresh.")
+    print()
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -353,11 +456,29 @@ def main(argv: list[str] | None = None) -> int:
         "--forecast", action="store_true",
         help="Run the forecast immediately after backfilling.",
     )
+    parser.add_argument(
+        "--status", action="store_true",
+        help="Report what the forecast can see and why series are skipped, "
+             "then exit without touching anything.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s"
     )
+
+    # Read-only, and useful precisely when something looks wrong, so it runs
+    # before the mock-mode check and never needs a live Zabbix.
+    if args.status:
+        from app.db import SessionLocal, init_db
+
+        init_db()
+        db = SessionLocal()
+        try:
+            print_status(db)
+        finally:
+            db.close()
+        return 0
 
     settings = get_settings()
     if settings.mock_mode:

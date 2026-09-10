@@ -2,7 +2,7 @@
 {% from "macros/filters.html" import service_filter %}
 {% block title %}Capacity planning · Unified Monitoring{% endblock %}
 {% block page_title %}Capacity{% endblock %}
-{% block page_sub %}Planning — which volumes are filling up, and roughly when, from a straight line through the last {{ window_days }} days{% endblock %}
+{% block page_sub %}Planning - which volumes are filling up, and roughly when, from a straight line through the last {{ window_days }} days{% endblock %}
 
 {% block content %}
 {% include "partials/capacity_subnav.html" %}
@@ -31,6 +31,36 @@
     {% endif %}
   </div>
 </div>
+
+{# A page of zeros looks identical whether nothing is at risk, nothing has been
+   collected yet, or everything was rejected. Say which one it is. #}
+{% set total_series = counts.get('total_series', 0) %}
+{% if total_series == 0 %}
+<div class="fc-explain">
+  {% if samples == 0 %}
+    <b>No capacity history yet.</b>
+    Readings are stored once an hour from now on, and a trend needs about
+    {{ min_span_days }} days of them. To start from real history instead of
+    waiting, run <code>python -m app.backfill_zabbix_capacity --days 90 --forecast</code>
+    once with the app stopped.
+  {% elif not last_computed %}
+    <b>{{ samples }} readings stored, but the forecast has not run yet.</b>
+    It runs nightly at 03:30, and once about five minutes after the app starts.
+    Press <b>Recompute now</b> to run it immediately.
+  {% else %}
+    <b>{{ samples }} readings stored, but no series could be fitted.</b>
+    Usually the history is still too short, or the hosts have not reported
+    since the app was last running. Run
+    <code>python -m app.backfill_zabbix_capacity --status</code> to see which.
+  {% endif %}
+</div>
+{% elif counts.get('insufficient_data', 0) == total_series %}
+<div class="fc-explain">
+  <b>Every series was skipped.</b>
+  Open the <b>No data</b> tab to see the reason on each row, or run
+  <code>python -m app.backfill_zabbix_capacity --status</code> for a summary.
+</div>
+{% endif %}
 
 <div class="toolbar toolbar-stack">
   <div class="toolbar-row">

@@ -457,7 +457,7 @@ def describe_row(fit):
     [
         (_series(30, 59.0, 0.8), "At current trend: 90% in ~10 days"),
         (_series(30, 45.0, -0.3), "At current trend: stable or shrinking"),
-        (_series(6, 50.0, 1.0), "No forecast — only 6 daily point(s); needs 10"),
+        (_series(6, 50.0, 1.0), "No forecast: only 6 daily point(s); needs 10"),
         (_series(30, 50.0, 0.35, noise=9.0), None),  # noisy -> mentions R²
     ],
 )

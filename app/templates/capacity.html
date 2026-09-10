@@ -2,7 +2,7 @@
 {% from "macros/filters.html" import service_filter %}
 {% block title %}Capacity · Unified Monitoring{% endblock %}
 {% block page_title %}Capacity{% endblock %}
-{% block page_sub %}Server resource utilization — pick a server, service or group to see CPU, memory &amp; disk{% endblock %}
+{% block page_sub %}Server resource utilization - pick a server, service or group to see CPU, memory &amp; disk{% endblock %}
 
 {% block content %}
 {% include "partials/capacity_subnav.html" %}
@@ -76,7 +76,7 @@
 
     {% if enable_export %}
     <label class="chk" id="dedup-wrap" style="display: none"
-      title="Zabbix is the primary tool — skip Dynatrace servers that Zabbix already monitors (matched by IP or hostname)">
+      title="Zabbix is the primary tool - skip Dynatrace servers that Zabbix already monitors (matched by IP or hostname)">
       <input type="checkbox" id="dedup-zbx" />
       Exclude servers already in Zabbix
     </label>
@@ -124,7 +124,7 @@
     document.querySelectorAll(".cfilter").forEach(function (el) {
       if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
     });
-    // Date range lives outside .cfilter (it must not filter the table) — add it
+    // Date range lives outside .cfilter (it must not filter the table) - add it
     // here so the export still gets its trend window.
     document.querySelectorAll("[name=date_from],[name=date_to]").forEach(function (el) {
       if (el.value) params.set(el.name, el.value);
@@ -138,7 +138,7 @@
     window.location = url + "?" + params.toString();
   }
 
-  // Prefill the range to the last 24h (UTC), display only — no auto-apply.
+  // Prefill the range to the last 24h (UTC), display only - no auto-apply.
   (function () {
     function p(n) { return String(n).padStart(2, "0"); }
     function u(d) {
