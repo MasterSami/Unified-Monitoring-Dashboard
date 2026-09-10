@@ -34,7 +34,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.capacity_history import CPU, DISK, MEMORY, NO_SUBJECT, normalize_subject
@@ -551,6 +551,159 @@ def probe(db: Session, limit: int = 3, days: int = 90) -> None:
     print()
 
 
+def verify(db: Session, hostname: str) -> None:
+    """Put one host's stored numbers next to Zabbix's raw values, side by side.
+
+    Answers "how do I know these figures are right?" without anyone reading
+    two screens and doing the arithmetic in their head. Every line names the
+    Zabbix item key it came from, so the same check can be repeated by hand in
+    Monitoring > Latest data.
+    """
+    from app.zabbix_report import (
+        _KEY_SEARCH,
+        _METRIC_NAME_SEARCH,
+        _classify,
+        _last_values,
+    )
+
+    hosts = db.scalars(
+        select(Host).where(
+            Host.source_platform == SourcePlatform.zabbix,
+            Host.hostname.ilike(f"%{hostname}%"),
+        ).limit(5)
+    ).all()
+    if not hosts:
+        print(f"\nNo Zabbix host matching '{hostname}' in the database.")
+        return
+
+    from app.scheduler import get_service
+
+    service = get_service()
+    for host in hosts:
+        collector = service.get(host.source_instance)
+        if collector is None or getattr(collector, "name", "") != "zabbix":
+            print(f"\n{host.hostname}: no live collector for {host.source_instance}.")
+            continue
+
+        print(f"\n=== VERIFY  {host.hostname}  "
+              f"({host.source_instance}, zabbix id {host.external_id}) ===")
+        try:
+            items = collector._rpc(
+                "item.get",
+                {
+                    "hostids": [host.external_id],
+                    "output": ["itemid", "key_", "name", "value_type", "units",
+                               "lastvalue"],
+                    "search": {"key_": _KEY_SEARCH, "name": _METRIC_NAME_SEARCH},
+                    "searchByAny": True, "startSearch": True,
+                    "filter": {"status": 0}, "webitems": False,
+                },
+            )
+            last = _last_values(collector, items or [])
+        except Exception as exc:  # noqa: BLE001 - this is the diagnosis
+            print(f"  could not read Zabbix: {type(exc).__name__}: {exc}")
+            continue
+        if not items:
+            print("  no capacity items on this host.")
+            continue
+
+        c = _classify(items)
+        metrics = host.metrics or {}
+
+        def show(label: str, item, stored, *, transform=None, unit="%"):
+            if not item:
+                print(f"  {label:8} no matching item in Zabbix"
+                      f"    dashboard: {stored}")
+                return
+            raw = last.get(item["itemid"])
+            value = transform(raw) if (transform and raw is not None) else raw
+            key = item["key_"]
+            print(f"  {label:8} zabbix {key:38} = "
+                  f"{'-' if value is None else f'{value:.2f}'} {unit}")
+            if stored is None:
+                verdict = "dashboard has no value"
+            elif value is None:
+                verdict = "zabbix has no value"
+            else:
+                verdict = "MATCH" if abs(value - stored) <= 1.0 else "*** DIFFERS ***"
+            print(f"  {'':8} dashboard {'':36} = "
+                  f"{'-' if stored is None else f'{stored:.2f}'} {unit}   {verdict}")
+
+        print("\n  CPU")
+        show("", c["cpu_util"], host.cpu_pct)
+        if c["cpu_num"] and last.get(c["cpu_num"]["itemid"]):
+            print(f"  {'':8} cores  {c['cpu_num']['key_']:37} = "
+                  f"{last[c['cpu_num']['itemid']]:.0f}"
+                  f"   dashboard: {metrics.get('cores', '-')}")
+
+        print("\n  MEMORY")
+        show("", c["mem_util"], host.mem_pct,
+             transform=(lambda v: 100.0 - v) if c["mem_util_inverted"] else None)
+        if c["mem_util_inverted"]:
+            print(f"  {'':8} (item reports AVAILABLE %, so the dashboard shows "
+                  f"100 minus it)")
+        mt = last.get(c["mem_total"]["itemid"]) if c["mem_total"] else None
+        mu = last.get(c["mem_used"]["itemid"]) if c["mem_used"] else None
+        if mt:
+            line = f"  {'':8} cross-check total = {mt / GB:.1f} GB"
+            if mu:
+                line += f", used = {mu / GB:.1f} GB  ->  {mu / mt * 100:.2f} %"
+            print(line)
+
+        print("\n  DISK, per filesystem")
+        print(f"  {'mount':22} {'used GB':>10} {'total GB':>10} "
+              f"{'zabbix %':>9} {'dashboard %':>12}")
+        stored_fs = {
+            normalize_subject(str(f.get("subject") or "")): f
+            for f in (metrics.get("filesystems") or [])
+        }
+        tot_sum = used_sum = 0.0
+        for fsname, slot in sorted(c["fs"].items()):
+            total = last.get(slot["total"]["itemid"]) if slot["total"] else None
+            used = last.get(slot["used"]["itemid"]) if slot["used"] else None
+            subject = normalize_subject(slot["label"] or fsname)
+            mine = stored_fs.get(subject)
+            if total:
+                tot_sum += total
+            if used:
+                used_sum += used
+            zpct = (used / total * 100) if (total and used is not None) else None
+            dpct = None
+            if mine and mine.get("total_gb"):
+                dpct = mine["used_gb"] / mine["total_gb"] * 100
+            print(f"  {subject:22} "
+                  f"{'-' if used is None else f'{used / GB:10.1f}'} "
+                  f"{'-' if total is None else f'{total / GB:10.1f}'} "
+                  f"{'-' if zpct is None else f'{zpct:8.2f}%'} "
+                  f"{'not stored' if dpct is None else f'{dpct:11.2f}%'}")
+        if tot_sum:
+            print(f"  {'AGGREGATE':22} {used_sum / GB:10.1f} {tot_sum / GB:10.1f} "
+                  f"{used_sum / tot_sum * 100:8.2f}% "
+                  f"{'-' if host.disk_pct is None else f'{host.disk_pct:11.2f}%'}")
+            print(f"  {'':22} (the Capacity table's Disk column is this aggregate;")
+            print(f"  {'':22}  Planning trends each mount on its own)")
+
+        rows = db.execute(
+            select(
+                CapacityHistory.metric_kind,
+                CapacityHistory.subject,
+                func.count(CapacityHistory.id),
+                func.min(CapacityHistory.sampled_at),
+                func.max(CapacityHistory.sampled_at),
+            )
+            .where(CapacityHistory.host_id == host.id)
+            .group_by(CapacityHistory.metric_kind, CapacityHistory.subject)
+        ).all()
+        print("\n  STORED HISTORY (what Planning fits)")
+        if not rows:
+            print("    none yet for this host.")
+        for kind, subject, count, oldest, newest in rows:
+            label = f"{kind} {subject}".strip()
+            print(f"    {label:24} {count:>6} sample(s)  "
+                  f"{oldest:%Y-%m-%d} .. {newest:%Y-%m-%d}")
+    print()
+
+
 def print_status(db: Session) -> None:
     """Print what the forecast can actually see, and what it is rejecting.
 
@@ -686,6 +839,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Trace the backfill for a few hosts and print what Zabbix returns "
              "at each step, then exit. Seconds instead of a full run.",
     )
+    parser.add_argument(
+        "--verify", metavar="HOSTNAME",
+        help="Print one host's stored capacity figures beside the raw Zabbix "
+             "values they came from, naming the item key behind each, then exit.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -720,6 +878,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.probe:
             probe(db, days=max(1, args.days))
+            return 0
+        if args.verify:
+            verify(db, args.verify)
             return 0
 
         total = backfill_zabbix(db, max(1, args.days), instance=args.instance)
