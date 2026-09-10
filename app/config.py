@@ -192,6 +192,15 @@ class Settings(BaseSettings):
     # (the same 403 the capacity collector already degrades around).
     forecast_dynatrace_backfill: bool = False
 
+    # Pull Zabbix trend history automatically, once, when the app finds it has
+    # too little to forecast from. Without this the Planning tab is empty for
+    # its first FORECAST_MIN_SPAN_DAYS on a new install unless somebody
+    # remembers to run the backfill command by hand.
+    capacity_auto_backfill: bool = True
+
+    # How far back that automatic pull goes.
+    capacity_auto_backfill_days: int = 90
+
     # --- Digital View (Huawei i2000) asset inventory ------------------------
     # Huawei keeps the API port closed to us, so the inventory arrives as an
     # exported workbook (BaseAssetImportTemplate_En.xlsx) instead. Point this at

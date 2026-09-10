@@ -58,6 +58,10 @@ class CollectorService:
         logger.info("polling %d instance(s): %s", len(self.collectors), list(self.collectors))
         for instance in list(self.collectors):
             self.run_one(instance)
+        # Hosts exist now, which is what the capacity bootstrap needs. It
+        # decides for itself whether there is anything to do and runs in its
+        # own job, so a long backfill never holds up the next poll.
+        maybe_bootstrap_capacity()
 
     def has_data(self) -> bool:
         """Return True if any collector run has ever been recorded."""
@@ -378,6 +382,11 @@ def _run_digitalview_job(force: bool = False) -> None:
 
 
 _FORECAST_JOB_ID = "capacity_forecast"
+_BOOTSTRAP_JOB_ID = "capacity_bootstrap"
+
+#: Set once the capacity bootstrap has been attempted in this process, so a
+#: poll every five minutes does not keep re-triggering a half-hour backfill.
+_bootstrap_attempted = False
 
 
 def _run_forecast_job() -> None:
@@ -385,6 +394,88 @@ def _run_forecast_job() -> None:
     from app.forecast import run_forecast_job
 
     run_forecast_job()
+
+
+def maybe_bootstrap_capacity() -> None:
+    """Queue a one-off history backfill when there is too little to forecast.
+
+    Called after a collection, so hosts are known. Does nothing unless the
+    stored history spans less than the forecast needs, which means it fires on
+    a new install and then never again: after a successful backfill the span
+    is ninety days.
+
+    The work goes to its own scheduler job. A backfill over a large estate
+    takes tens of minutes, and the polling job is ``max_instances=1``, so
+    running it inline would stall collection for the duration.
+    """
+    global _bootstrap_attempted
+    if _bootstrap_attempted:
+        return
+
+    settings = get_settings()
+    if not settings.capacity_auto_backfill or settings.mock_mode:
+        _bootstrap_attempted = True
+        return
+
+    zabbix = [
+        name for name, c in get_service().collectors.items()
+        if getattr(c, "name", "") == "zabbix"
+    ]
+    if not zabbix:
+        _bootstrap_attempted = True   # nothing to pull trends from
+        return
+
+    from app.capacity_history import history_span_days_by_instance
+
+    db: Session = SessionLocal()
+    try:
+        spans = history_span_days_by_instance(db, "zabbix")
+    except Exception:  # pragma: no cover - never block a poll over this
+        return
+    finally:
+        db.close()
+
+    short = [
+        name for name in zabbix
+        if spans.get(name, 0.0) < settings.forecast_min_span_days
+    ]
+    _bootstrap_attempted = True
+    if not short:
+        return   # every instance already has enough to fit
+
+    logger.info(
+        "capacity history too short to forecast on %s; queueing a %d-day "
+        "backfill from Zabbix trends (%s)",
+        ", ".join(short), settings.capacity_auto_backfill_days,
+        ", ".join(f"{n}={spans.get(n, 0.0):.1f}d" for n in short),
+    )
+    if not _dispatch(_BOOTSTRAP_JOB_ID, _run_capacity_bootstrap, instances=short):
+        _run_capacity_bootstrap(instances=short)
+
+
+def _run_capacity_bootstrap(instances: list[str] | None = None) -> None:
+    """Backfill Zabbix trend history, then forecast. Never raises."""
+    from app.backfill_zabbix_capacity import backfill_zabbix
+    from app.forecast import run_forecast
+
+    settings = get_settings()
+    days = max(1, settings.capacity_auto_backfill_days)
+    db: Session = SessionLocal()
+    try:
+        written = 0
+        for name in instances or [None]:
+            written += backfill_zabbix(db, days, instance=name)
+        logger.info("capacity bootstrap: %d sample(s) written", written)
+        counts = run_forecast(db)
+        logger.info(
+            "capacity bootstrap: forecast %s",
+            ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
+        )
+    except Exception:  # noqa: BLE001 - must never stop the scheduler
+        db.rollback()
+        logger.exception("capacity bootstrap failed; the nightly job will retry")
+    finally:
+        db.close()
 
 
 def run_forecast_now() -> None:

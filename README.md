@@ -313,8 +313,20 @@ so the code is built to say so rather than to guess:
 
 Sampling only starts accumulating the day it ships, so a fresh install has
 nothing to fit for weeks. Zabbix already keeps daily aggregates in `trends`
-for exactly the items the Capacity page reads, so one command gives every
-Zabbix host a usable trend line immediately:
+for exactly the items the Capacity page reads, so that history can simply be
+pulled.
+
+**This happens by itself.** After the first collection the app checks how much
+Zabbix history each instance has; any instance with less than
+`FORECAST_MIN_SPAN_DAYS` gets `CAPACITY_AUTO_BACKFILL_DAYS` (90) pulled in a
+background job, and the forecast runs straight after. It is checked per
+instance, so a Zabbix server added later is backfilled even though the others
+already have history, and it stands down once an instance has enough - a poll
+every five minutes never re-triggers a job that takes half an hour. Set
+`CAPACITY_AUTO_BACKFILL=false` to do it by hand instead.
+
+The same work is available as a command, for a first run you want to watch or
+for re-pulling a longer window:
 
 ```bash
 python -m app.backfill_zabbix_capacity --days 90

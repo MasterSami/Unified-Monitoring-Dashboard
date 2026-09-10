@@ -425,3 +425,56 @@ def prune_history(db: Session, *, now: datetime | None = None) -> int:
 def sample_count(db: Session) -> int:
     """Total stored samples — shown on /forecast so an empty page explains itself."""
     return int(db.scalar(select(func.count(CapacityHistory.id))) or 0)
+
+
+def history_span_days(db: Session, platform: str | None = None) -> float:
+    """Days between the oldest and newest stored sample. 0.0 when there are none.
+
+    The forecast needs a span, not a row count: a million readings taken this
+    morning still describe a single day. This is what decides whether an
+    install still needs its history backfilled.
+    """
+    stmt = select(
+        func.min(CapacityHistory.sampled_at), func.max(CapacityHistory.sampled_at)
+    )
+    if platform:
+        stmt = stmt.where(CapacityHistory.platform == platform)
+    oldest, newest = db.execute(stmt).one()
+    if oldest is None or newest is None:
+        return 0.0
+    if oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=timezone.utc)
+    return (newest - oldest).total_seconds() / 86400.0
+
+
+def history_span_days_by_instance(db: Session, platform: str) -> dict[str, float]:
+    """``{instance: span_in_days}`` for one platform, in a single query.
+
+    Per instance rather than per platform because they are backfilled
+    independently: adding a fifth Zabbix server to an install that already has
+    four with ninety days each must still pull history for the new one, and a
+    platform-wide span would report "plenty" and skip it.
+    """
+    rows = db.execute(
+        select(
+            Host.source_instance,
+            func.min(CapacityHistory.sampled_at),
+            func.max(CapacityHistory.sampled_at),
+        )
+        .join(Host, Host.id == CapacityHistory.host_id)
+        .where(CapacityHistory.platform == platform)
+        .group_by(Host.source_instance)
+    ).all()
+
+    out: dict[str, float] = {}
+    for instance, oldest, newest in rows:
+        if oldest is None or newest is None:
+            continue
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=timezone.utc)
+        out[instance] = (newest - oldest).total_seconds() / 86400.0
+    return out

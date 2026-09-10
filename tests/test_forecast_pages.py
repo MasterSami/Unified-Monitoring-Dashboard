@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import event, func, select
 
 from app.capacity_history import record_samples
+from app.config import get_settings
 from app.db import SessionLocal, engine
 from app.forecast import risk_counts, run_forecast
 from app.models import (
@@ -433,6 +434,133 @@ def test_backfill_batches_hosts_instead_of_asking_one_at_a_time(client, monkeypa
         assert fake.calls["item.get"] == before["item.get"] + 3
     finally:
         db.close()
+
+
+class TestAutomaticBootstrap:
+    """History is pulled on its own once the collector has hosts to pull for.
+
+    Otherwise a new install shows an empty Planning tab for a week, unless
+    somebody happens to know a backfill command exists.
+
+    The check is per Zabbix instance. Other tests in this module leave thirty
+    days of zabbix history behind for their own instance, so these passing at
+    all is the assertion that a fresh instance is still backfilled next to
+    established ones - which is what happens when a fifth Zabbix server is
+    added to an install that already has four.
+    """
+
+    def _setup(self, monkeypatch, n_hosts=30, instance="BOOT"):
+        import app.scheduler as scheduler
+
+        fake = _FakeZabbix()
+        fake.instance = instance
+        db = SessionLocal()
+        db.add_all([
+            Host(hostname=f"{instance}-{i:03d}",
+                 source_platform=SourcePlatform.zabbix, source_instance=instance,
+                 external_id=f"8{instance[:1]}{i:04d}", status=HostStatus.up,
+                 last_seen=datetime.now(timezone.utc))
+            for i in range(n_hosts)
+        ])
+        db.commit()
+        db.close()
+
+        class _Service:
+            collectors = {instance: fake}
+
+            def run_one(self, _i):
+                pass
+
+            def run_all(self):
+                scheduler.maybe_bootstrap_capacity()
+
+        monkeypatch.setattr(scheduler, "_service", _Service())
+        monkeypatch.setattr(scheduler, "_scheduler", None)   # run inline
+        monkeypatch.setattr(scheduler, "_bootstrap_attempted", False)
+        monkeypatch.setattr(
+            "app.backfill_zabbix_capacity.BATCH_DELAY_SECONDS", 0
+        )
+        return scheduler, fake
+
+    def _sample_count_for(self, instance: str) -> int:
+        db = SessionLocal()
+        try:
+            return int(db.scalar(
+                select(func.count(CapacityHistory.id)).where(
+                    CapacityHistory.host_id.in_(
+                        select(Host.id).where(Host.source_instance == instance))
+                )
+            ) or 0)
+        finally:
+            db.close()
+
+    def test_a_poll_with_no_history_pulls_it_and_forecasts(self, client, monkeypatch):
+        scheduler, _fake = self._setup(monkeypatch, instance="BOOTA")
+        assert self._sample_count_for("BOOTA") == 0
+
+        scheduler.get_service().run_all()
+
+        assert self._sample_count_for("BOOTA") > 0
+        db = SessionLocal()
+        try:
+            oldest, newest = db.execute(
+                select(func.min(CapacityHistory.sampled_at),
+                       func.max(CapacityHistory.sampled_at))
+                .where(CapacityHistory.host_id.in_(
+                    select(Host.id).where(Host.source_instance == "BOOTA")))
+            ).one()
+            assert (newest - oldest).days >= 85
+            assert db.scalar(
+                select(func.count(CapacityForecast.id)).where(
+                    CapacityForecast.host_id.in_(
+                        select(Host.id).where(Host.source_instance == "BOOTA")))
+            ) > 0
+        finally:
+            db.close()
+
+    def test_it_does_not_run_again_on_the_next_poll(self, client, monkeypatch):
+        """Polling every five minutes must not re-trigger a half-hour job."""
+        scheduler, fake = self._setup(monkeypatch, instance="BOOTB")
+
+        scheduler.get_service().run_all()
+        after_first = self._sample_count_for("BOOTB")
+        calls_after_first = dict(fake.calls)
+        assert after_first > 0
+
+        scheduler.get_service().run_all()
+        assert self._sample_count_for("BOOTB") == after_first
+        assert fake.calls == calls_after_first   # Zabbix was not touched again
+
+    def test_it_stands_down_when_there_is_already_enough_history(
+        self, client, monkeypatch
+    ):
+        scheduler, fake = self._setup(monkeypatch, n_hosts=2, instance="BOOTC")
+        db = SessionLocal()
+        try:
+            host = db.scalars(
+                select(Host).where(Host.source_instance == "BOOTC")
+            ).first()
+            db.bulk_insert_mappings(CapacityHistory, [{
+                "host_id": host.id, "platform": "zabbix", "metric_kind": "disk",
+                "subject": "/var", "used_value": 10.0, "total_value": 100.0,
+                "used_pct": 10.0, "sampled_at": NOW - timedelta(days=d),
+            } for d in range(40)])
+            db.commit()
+        finally:
+            db.close()
+
+        scheduler.get_service().run_all()
+        assert fake.calls == {}, "backfilled despite already having 40 days"
+
+    def test_the_switch_turns_it_off(self, client, monkeypatch):
+        scheduler, fake = self._setup(monkeypatch, n_hosts=2, instance="BOOTD")
+        settings = get_settings().model_copy(
+            update={"capacity_auto_backfill": False}
+        )
+        monkeypatch.setattr(scheduler, "get_settings", lambda: settings)
+
+        scheduler.get_service().run_all()
+        assert fake.calls == {}
 
 
 def test_no_em_dashes_in_any_rendered_template():
