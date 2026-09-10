@@ -45,11 +45,18 @@ logger = logging.getLogger("backfill.capacity")
 
 GB = 1024.0**3
 
-#: Seconds between hosts. Small, but enough that a 90-day trend walk over a
-#: few hundred hosts does not look like a denial of service to the API.
-HOST_DELAY_SECONDS = 0.2
+#: Hosts per ``item.get``. The single biggest lever on how long a run takes:
+#: asking per host cost two round trips each, which on a fifteen-thousand-host
+#: estate is hours of latency. The weekly report batches at the same size.
+HOST_BATCH = 100
 
-#: Items per trend.get call.
+#: Seconds between batches. Enough to keep a long backfill from reading as a
+#: denial of service, without pacing the run one host at a time.
+BATCH_DELAY_SECONDS = 0.5
+
+#: Items per ``trend.get`` call. Ninety days of hourly trends is roughly two
+#: thousand rows per item, so this bounds each response to something a Zabbix
+#: frontend will actually return.
 _TREND_BATCH = 50
 
 
@@ -107,15 +114,45 @@ def _daily_avgs(collector, itemids: list[str], days: int) -> dict[str, dict[date
 def _series_for_host(collector, hostid: str, days: int) -> list[tuple]:
     """Return ``(kind, subject, used, total, pct, day)`` rows for one host.
 
-    Reuses the collector's own item classification, so the mounts backfilled
-    here are exactly the mounts the live sampler will keep appending to.
+    Thin wrapper over :func:`series_for_hosts` for the single-host case (the
+    probe). The batch form is what a real run uses.
+    """
+    return series_for_hosts(collector, [hostid], days).get(str(hostid), [])
+
+
+def _wanted_itemids(classified: dict) -> list[str]:
+    """The item ids whose trends a host's series need."""
+    wanted = [
+        classified[key]["itemid"]
+        for key in ("cpu_util", "mem_util", "mem_total", "mem_used")
+        if classified[key]
+    ]
+    for slot in classified["fs"].values():
+        wanted += [slot[key]["itemid"] for key in ("total", "used") if slot[key]]
+    return wanted
+
+
+def series_for_hosts(
+    collector, host_ids: list[str], days: int
+) -> dict[str, list[tuple]]:
+    """Rows for MANY hosts at once, keyed by Zabbix host id.
+
+    Asking per host is what made a full run impractical: each one cost an
+    ``item.get`` and a ``trend.get`` plus their round trips, so an estate of
+    fifteen thousand hosts needed something like eight hours of little
+    requests. One ``item.get`` covers the whole batch, and the trends for
+    every item in it are pulled in chunks, which is the same shape the weekly
+    report already uses.
     """
     from app.zabbix_report import _KEY_SEARCH, _METRIC_NAME_SEARCH, _classify
+
+    if not host_ids:
+        return {}
 
     items = collector._rpc(
         "item.get",
         {
-            "hostids": [hostid],
+            "hostids": list(host_ids),
             "output": ["itemid", "hostid", "key_", "name", "value_type", "units"],
             "search": {"key_": _KEY_SEARCH, "name": _METRIC_NAME_SEARCH},
             "searchByAny": True,
@@ -125,19 +162,28 @@ def _series_for_host(collector, hostid: str, days: int) -> list[tuple]:
         },
     )
     if not items:
-        return []
-    classified = _classify(items)
+        return {}
 
+    by_host: dict[str, list[dict]] = {}
+    for item in items:
+        by_host.setdefault(str(item.get("hostid")), []).append(item)
+
+    classified_by_host = {hid: _classify(its) for hid, its in by_host.items()}
+
+    # One trend pull for every item in the batch, chunked inside _daily_avgs.
     wanted: list[str] = []
-    for key in ("cpu_util", "mem_util", "mem_total", "mem_used"):
-        if classified[key]:
-            wanted.append(classified[key]["itemid"])
-    for slot in classified["fs"].values():
-        for key in ("total", "used"):
-            if slot[key]:
-                wanted.append(slot[key]["itemid"])
-
+    for classified in classified_by_host.values():
+        wanted += _wanted_itemids(classified)
     trends = _daily_avgs(collector, wanted, days)
+
+    return {
+        hid: _rows_from_trends(classified, trends)
+        for hid, classified in classified_by_host.items()
+    }
+
+
+def _rows_from_trends(classified: dict, trends: dict) -> list[tuple]:
+    """Turn one host's classified items plus pulled trends into series rows."""
 
     def per_day(item) -> dict[datetime, float]:
         return trends.get(item["itemid"], {}) if item else {}
@@ -195,14 +241,27 @@ def _series_for_host(collector, hostid: str, days: int) -> list[tuple]:
 
 def _existing_keys(db: Session, host_id: int) -> set[tuple[str, str, datetime]]:
     """Keys already stored for a host, so a re-run inserts only what is new."""
+    return _existing_keys_for(db, [host_id]).get(host_id, set())
+
+
+def _existing_keys_for(
+    db: Session, host_ids: list[int]
+) -> dict[int, set[tuple[str, str, datetime]]]:
+    """Existing keys for a batch of hosts, in one query rather than N."""
+    if not host_ids:
+        return {}
+    out: dict[int, set[tuple[str, str, datetime]]] = {hid: set() for hid in host_ids}
     rows = db.execute(
         select(
+            CapacityHistory.host_id,
             CapacityHistory.metric_kind,
             CapacityHistory.subject,
             CapacityHistory.sampled_at,
-        ).where(CapacityHistory.host_id == host_id)
+        ).where(CapacityHistory.host_id.in_(host_ids))
     ).all()
-    return {(kind, subject, _midnight(stamp)) for kind, subject, stamp in rows}
+    for host_id, kind, subject, stamp in rows:
+        out[host_id].add((kind, subject, _midnight(stamp)))
+    return out
 
 
 def backfill_zabbix(db: Session, days: int, *, instance: str | None = None) -> int:
@@ -230,52 +289,73 @@ def backfill_zabbix(db: Session, days: int, *, instance: str | None = None) -> i
         # from "every host already had its rows", "no host has trend data", and
         # "every call failed" — which is exactly the ambiguity that made an
         # empty Planning tab hard to explain.
-        no_items = no_trends = already_had = failed = contributed = 0
+        no_trends = already_had = failed = contributed = 0
         oldest_written: datetime | None = None
 
-        for index, host in enumerate(hosts, start=1):
+        started = time.time()
+        done = 0
+        for start in range(0, len(hosts), HOST_BATCH):
+            batch = hosts[start : start + HOST_BATCH]
+            by_external = {str(h.external_id): h for h in batch}
             try:
-                seen = _existing_keys(db, host.id)
-                rows = _series_for_host(collector, host.external_id, days)
-                if not rows:
-                    no_trends += 1
-                pending = [
-                    {
-                        "host_id": host.id,
-                        "platform": SourcePlatform.zabbix.value,
-                        "metric_kind": kind,
-                        "subject": subject,
-                        "used_value": used,
-                        "total_value": total,
-                        "used_pct": pct,
-                        "sampled_at": day,
-                    }
-                    for kind, subject, used, total, pct, day in rows
-                    if (kind, subject, day) not in seen
-                ]
+                seen_by_host = _existing_keys_for(db, [h.id for h in batch])
+                rows_by_host = series_for_hosts(
+                    collector, list(by_external), days
+                )
+                pending: list[dict] = []
+                for external_id, rows in rows_by_host.items():
+                    host = by_external.get(external_id)
+                    if host is None:
+                        continue
+                    seen = seen_by_host.get(host.id, set())
+                    new = [
+                        {
+                            "host_id": host.id,
+                            "platform": SourcePlatform.zabbix.value,
+                            "metric_kind": kind,
+                            "subject": subject,
+                            "used_value": used,
+                            "total_value": total,
+                            "used_pct": pct,
+                            "sampled_at": day,
+                        }
+                        for kind, subject, used, total, pct, day in rows
+                        if (kind, subject, day) not in seen
+                    ]
+                    if new:
+                        pending += new
+                        contributed += 1
+                    elif rows:
+                        already_had += 1
+                no_trends += len(batch) - len(
+                    [h for h in rows_by_host.values() if h]
+                )
+
                 if pending:
                     db.bulk_insert_mappings(CapacityHistory, pending)
-                    # Commit per host so an interrupted run keeps its progress.
+                    # Commit per batch so an interrupted run keeps its progress.
                     db.commit()
                     written += len(pending)
-                    contributed += 1
                     batch_oldest = min(p["sampled_at"] for p in pending)
                     if oldest_written is None or batch_oldest < oldest_written:
                         oldest_written = batch_oldest
-                elif rows:
-                    already_had += 1
-            except Exception as exc:  # noqa: BLE001 — one host never stops the run
+            except Exception as exc:  # noqa: BLE001 - one batch never stops the run
                 db.rollback()
-                failed += 1
-                if failed <= 5:      # the first few carry the reason; the rest repeat it
-                    logger.warning("%s: host %s failed: %s", name, host.hostname, exc)
-                elif failed == 6:
-                    logger.warning("%s: further per-host failures suppressed", name)
+                failed += len(batch)
+                if failed <= HOST_BATCH * 5:
+                    logger.warning(
+                        "%s: batch starting at %s failed: %s",
+                        name, batch[0].hostname, exc,
+                    )
 
-            if index % 100 == 0 or index == len(hosts):
-                logger.info("%s: %d/%d host(s), %d row(s) written",
-                            name, index, len(hosts), written)
-            time.sleep(HOST_DELAY_SECONDS)
+            done += len(batch)
+            elapsed = time.time() - started
+            remaining = (elapsed / done) * (len(hosts) - done) if done else 0
+            logger.info(
+                "%s: %d/%d host(s), %d row(s) written, ~%d min left",
+                name, done, len(hosts), written, round(remaining / 60),
+            )
+            time.sleep(BATCH_DELAY_SECONDS)
 
         # --- Per-instance verdict -------------------------------------------
         logger.info(

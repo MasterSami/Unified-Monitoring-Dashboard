@@ -322,8 +322,23 @@ python -m app.backfill_zabbix_capacity --days 90 --instance Zabbix-A --forecast
 ```
 
 It is idempotent (keyed on host + metric + drive + day), resumable (committed
-per host), and paced with a short sleep between hosts. `--forecast` runs the
-fit immediately afterwards instead of waiting for 03:30.
+per batch), and paced between batches. `--forecast` runs the fit immediately
+afterwards instead of waiting for 03:30. Hosts are queried a hundred at a
+time: asking per host cost two round trips each, which on a fifteen-thousand
+host estate came to roughly thirty thousand requests and made a full run take
+most of a day.
+
+Two read-only modes help when a run does not produce what you expected:
+
+```bash
+python -m app.backfill_zabbix_capacity --probe    # trace three hosts, in seconds
+python -m app.backfill_zabbix_capacity --status   # what the forecast can see
+```
+
+`--probe` prints, per host, the capacity items matched, the filesystems
+classified, how many items have trend data, and the span of days returned - so
+"Zabbix keeps no trends for these items" is distinguishable from "the run
+never got that far" without waiting for a full pass.
 
 **Dynatrace backfill** is available behind `--dynatrace` /
 `FORECAST_DYNATRACE_BACKFILL=true` but usually fails: the Metrics v2 API needs

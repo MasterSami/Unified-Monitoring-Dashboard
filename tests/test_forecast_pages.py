@@ -335,6 +335,106 @@ def test_manual_run_endpoint(client):
     assert resp.json()["status"] in {"queued", "ok"}
 
 
+class _FakeZabbix:
+    """A Zabbix that answers item.get / trend.get and counts the round trips."""
+
+    name = "zabbix"
+    instance = "BATCH"
+    days = 90
+
+    def __init__(self) -> None:
+        self.calls: dict[str, int] = {}
+
+    def _rpc(self, method: str, params: dict):
+        self.calls[method] = self.calls.get(method, 0) + 1
+        if method == "item.get":
+            out = []
+            for hid in params["hostids"]:
+                out += [
+                    {"itemid": f"{hid}-cpu", "hostid": hid,
+                     "key_": "system.cpu.util", "name": "CPU utilization",
+                     "value_type": 0},
+                    {"itemid": f"{hid}-fst", "hostid": hid,
+                     "key_": "vfs.fs.size[/var,total]",
+                     "name": "FS [/var]: Total space", "value_type": 3},
+                    {"itemid": f"{hid}-fsu", "hostid": hid,
+                     "key_": "vfs.fs.size[/var,used]",
+                     "name": "FS [/var]: Used space", "value_type": 3},
+                ]
+            return out
+        if method == "trend.get":
+            import time as _t
+
+            now, rows = int(_t.time()), []
+            for iid in params["itemids"]:
+                for d in range(self.days):
+                    value = 50.0
+                    if iid.endswith("fst"):
+                        value = 500 * 1024**3
+                    elif iid.endswith("fsu"):
+                        value = 300 * 1024**3
+                    rows.append({"itemid": iid, "clock": now - d * 86400,
+                                 "num": 60, "value_avg": value})
+            return rows
+        return []
+
+
+def test_backfill_batches_hosts_instead_of_asking_one_at_a_time(client, monkeypatch):
+    """Per-host calls made a full run take hours on a real estate.
+
+    Each host used to cost an item.get and a trend.get plus their round trips,
+    so fifteen thousand hosts came to roughly thirty thousand little requests.
+    Batching turns that into a couple of calls per hundred hosts.
+    """
+    import app.scheduler as scheduler
+    from app.backfill_zabbix_capacity import HOST_BATCH, backfill_zabbix
+
+    fake = _FakeZabbix()
+    n_hosts = HOST_BATCH * 2 + 7          # forces a ragged final batch
+
+    db = SessionLocal()
+    try:
+        db.add_all([
+            Host(hostname=f"batch-{i:04d}", source_platform=SourcePlatform.zabbix,
+                 source_instance="BATCH", external_id=f"9{i:05d}",
+                 status=HostStatus.up, last_seen=datetime.now(timezone.utc))
+            for i in range(n_hosts)
+        ])
+        db.commit()
+
+        class _Service:
+            collectors = {"BATCH": fake}
+
+        monkeypatch.setattr(scheduler, "_service", _Service())
+        monkeypatch.setattr(
+            "app.backfill_zabbix_capacity.BATCH_DELAY_SECONDS", 0
+        )
+
+        written = backfill_zabbix(db, 90)
+        assert written > 0
+
+        # Three item.get calls for 207 hosts, not 207 of them.
+        assert fake.calls["item.get"] == 3
+        assert sum(fake.calls.values()) < n_hosts, fake.calls
+
+        # Ninety days really landed, which is the whole point of the backfill.
+        oldest, newest = db.execute(
+            select(func.min(CapacityHistory.sampled_at),
+                   func.max(CapacityHistory.sampled_at))
+            .where(CapacityHistory.platform == "zabbix",
+                   CapacityHistory.host_id.in_(
+                       select(Host.id).where(Host.source_instance == "BATCH")))
+        ).one()
+        assert (newest - oldest).days >= 85
+
+        # Re-running adds nothing: the keys are host + metric + drive + day.
+        before = dict(fake.calls)
+        assert backfill_zabbix(db, 90) == 0
+        assert fake.calls["item.get"] == before["item.get"] + 3
+    finally:
+        db.close()
+
+
 def test_no_em_dashes_in_any_rendered_template():
     """Plain hyphens throughout, so the UI reads as one hand wrote it."""
     from pathlib import Path
