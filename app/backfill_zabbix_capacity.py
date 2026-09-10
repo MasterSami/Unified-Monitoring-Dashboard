@@ -39,7 +39,7 @@ from sqlalchemy.orm import Session
 
 from app.capacity_history import CPU, DISK, MEMORY, NO_SUBJECT, normalize_subject
 from app.config import get_settings
-from app.models import CapacityHistory, Host, SourcePlatform
+from app.models import CapacityHistory, Host, HostStatus, SourcePlatform
 
 logger = logging.getLogger("backfill.capacity")
 
@@ -226,10 +226,19 @@ def backfill_zabbix(db: Session, days: int, *, instance: str | None = None) -> i
         ).all()
         logger.info("%s: backfilling %d host(s) over %d days", name, len(hosts), days)
 
+        # Per-instance tally. Without it, "0 rows written" is indistinguishable
+        # from "every host already had its rows", "no host has trend data", and
+        # "every call failed" — which is exactly the ambiguity that made an
+        # empty Planning tab hard to explain.
+        no_items = no_trends = already_had = failed = contributed = 0
+        oldest_written: datetime | None = None
+
         for index, host in enumerate(hosts, start=1):
             try:
                 seen = _existing_keys(db, host.id)
                 rows = _series_for_host(collector, host.external_id, days)
+                if not rows:
+                    no_trends += 1
                 pending = [
                     {
                         "host_id": host.id,
@@ -249,14 +258,52 @@ def backfill_zabbix(db: Session, days: int, *, instance: str | None = None) -> i
                     # Commit per host so an interrupted run keeps its progress.
                     db.commit()
                     written += len(pending)
+                    contributed += 1
+                    batch_oldest = min(p["sampled_at"] for p in pending)
+                    if oldest_written is None or batch_oldest < oldest_written:
+                        oldest_written = batch_oldest
+                elif rows:
+                    already_had += 1
             except Exception as exc:  # noqa: BLE001 — one host never stops the run
                 db.rollback()
-                logger.warning("%s: host %s failed: %s", name, host.hostname, exc)
+                failed += 1
+                if failed <= 5:      # the first few carry the reason; the rest repeat it
+                    logger.warning("%s: host %s failed: %s", name, host.hostname, exc)
+                elif failed == 6:
+                    logger.warning("%s: further per-host failures suppressed", name)
 
-            if index % 25 == 0 or index == len(hosts):
+            if index % 100 == 0 or index == len(hosts):
                 logger.info("%s: %d/%d host(s), %d row(s) written",
                             name, index, len(hosts), written)
             time.sleep(HOST_DELAY_SECONDS)
+
+        # --- Per-instance verdict -------------------------------------------
+        logger.info(
+            "%s: done. %d host(s) contributed history, %d already had it, "
+            "%d returned no trend data, %d failed",
+            name, contributed, already_had, no_trends, failed,
+        )
+        if oldest_written:
+            logger.info("%s: oldest sample written %s", name, f"{oldest_written:%Y-%m-%d}")
+
+        if hosts and no_trends >= len(hosts) * 0.8:
+            logger.warning(
+                "%s: %d of %d host(s) returned NO trend data. The forecast needs "
+                "at least %d daily points, so it will stay empty for these. Usual "
+                "causes, in order of likelihood: (1) this Zabbix keeps trends for "
+                "less time than requested, or housekeeping has trimmed them - try "
+                "a smaller --days; (2) the filesystem/memory items do not have "
+                "trend storage enabled on their templates; (3) trend.get is "
+                "unavailable (Zabbix older than 5.4).",
+                name, no_trends, len(hosts), get_settings().forecast_min_points,
+            )
+        if hosts and failed >= len(hosts) * 0.5:
+            logger.error(
+                "%s: %d of %d host(s) FAILED outright. The first few warnings "
+                "above carry the reason - usually authentication or a permission "
+                "on the API user rather than anything about the data.",
+                name, failed, len(hosts),
+            )
 
     return written
 
@@ -331,6 +378,99 @@ def backfill_dynatrace(db: Session, days: int) -> int:
     return written
 
 
+def probe(db: Session, limit: int = 3, days: int = 90) -> None:
+    """Trace the backfill for a handful of hosts and print what came back.
+
+    A full run walks thousands of hosts before its summary, which is a long
+    way to go to discover that ``trend.get`` returns nothing. This does the
+    same work for a few hosts and shows each step: the items matched, the
+    trend rows returned, and the series that would be stored.
+    """
+    from app.scheduler import get_service
+    from app.zabbix_report import _KEY_SEARCH, _METRIC_NAME_SEARCH, _classify
+
+    for name, collector in get_service().collectors.items():
+        if getattr(collector, "name", "") != "zabbix":
+            continue
+        hosts = db.scalars(
+            select(Host).where(
+                Host.source_platform == SourcePlatform.zabbix,
+                Host.source_instance == name,
+                Host.status == HostStatus.up,
+            ).limit(limit)
+        ).all()
+        if not hosts:
+            print(f"\n{name}: no 'up' hosts in the database to probe.")
+            continue
+
+        print(f"\n=== PROBE {name} ({len(hosts)} host(s), {days} days) ===")
+        for host in hosts:
+            print(f"\n  host: {host.hostname}  (zabbix id {host.external_id})")
+            try:
+                items = collector._rpc(
+                    "item.get",
+                    {
+                        "hostids": [host.external_id],
+                        "output": ["itemid", "key_", "name", "value_type"],
+                        "search": {"key_": _KEY_SEARCH, "name": _METRIC_NAME_SEARCH},
+                        "searchByAny": True, "startSearch": True,
+                        "filter": {"status": 0}, "webitems": False,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - this is the diagnosis
+                print(f"    item.get FAILED: {type(exc).__name__}: {exc}")
+                continue
+
+            print(f"    capacity items matched : {len(items or [])}")
+            if not items:
+                print("    -> no cpu/memory/filesystem items on this host.")
+                continue
+
+            classified = _classify(items)
+            wanted = [
+                classified[k]["itemid"]
+                for k in ("cpu_util", "mem_util", "mem_total", "mem_used")
+                if classified[k]
+            ]
+            for slot in classified["fs"].values():
+                wanted += [slot[k]["itemid"] for k in ("total", "used") if slot[k]]
+            print(f"    filesystems found      : {len(classified['fs'])}"
+                  f"  {sorted(classified['fs'])[:4]}")
+            print(f"    items to pull trends for: {len(wanted)}")
+            if not wanted:
+                continue
+
+            try:
+                trends = _daily_avgs(collector, wanted, days)
+            except Exception as exc:  # noqa: BLE001 - this is the diagnosis
+                print(f"    trend.get FAILED: {type(exc).__name__}: {exc}")
+                print("    -> trend.get needs Zabbix 5.4+ and an API user with")
+                print("       read access to these items.")
+                continue
+
+            covered = sum(1 for v in trends.values() if v)
+            print(f"    items WITH trend data  : {covered} of {len(wanted)}")
+            if not covered:
+                print("    -> Zabbix returned NO trends for any item. This is the")
+                print("       reason the forecast has no history. Either trends are")
+                print("       not stored for these items, or housekeeping has")
+                print("       trimmed them. Try a smaller --days.")
+                continue
+
+            all_days = sorted({d for per_day in trends.values() for d in per_day})
+            print(f"    distinct days returned : {len(all_days)}"
+                  f"   {all_days[0]:%Y-%m-%d} .. {all_days[-1]:%Y-%m-%d}")
+            rows = _series_for_host(collector, host.external_id, days)
+            kinds: dict[str, int] = {}
+            for kind, *_rest in rows:
+                kinds[kind] = kinds.get(kind, 0) + 1
+            print(f"    rows this host would add: {len(rows)}  {kinds}")
+            need = get_settings().forecast_min_points
+            verdict = "ENOUGH" if len(all_days) >= need else f"NOT ENOUGH (needs {need})"
+            print(f"    -> {verdict} for a forecast")
+    print()
+
+
 def print_status(db: Session) -> None:
     """Print what the forecast can actually see, and what it is rejecting.
 
@@ -341,7 +481,7 @@ def print_status(db: Session) -> None:
     from sqlalchemy import func
 
     from app.forecast import STALE_AFTER_DAYS, _host_gate
-    from app.models import CapacityForecast, HostStatus
+    from app.models import CapacityForecast
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -461,6 +601,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Report what the forecast can see and why series are skipped, "
              "then exit without touching anything.",
     )
+    parser.add_argument(
+        "--probe", action="store_true",
+        help="Trace the backfill for a few hosts and print what Zabbix returns "
+             "at each step, then exit. Seconds instead of a full run.",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -483,7 +628,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     if settings.mock_mode:
         logger.error(
-            "MOCK_MODE is on — there is no Zabbix to query. Set MOCK_MODE=false "
+            "MOCK_MODE is on, so there is no Zabbix to query. Set MOCK_MODE=false "
             "in .env, or use the synthetic mock history instead."
         )
         return 2
@@ -493,6 +638,10 @@ def main(argv: list[str] | None = None) -> int:
     init_db()
     db: Session = SessionLocal()
     try:
+        if args.probe:
+            probe(db, days=max(1, args.days))
+            return 0
+
         total = backfill_zabbix(db, max(1, args.days), instance=args.instance)
         if args.dynatrace or settings.forecast_dynatrace_backfill:
             total += backfill_dynatrace(db, max(1, args.days))
