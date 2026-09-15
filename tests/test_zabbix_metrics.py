@@ -52,14 +52,14 @@ def test_parameterized_cpu_mem_disk_are_attached():
     h = hosts[0]
     assert h["cpu_pct"] == 17.0
     assert h["metrics"]["cores"] == 8
-    assert h["metrics"]["cpu_used_cores"] == round(8 * 17 / 100, 1)
+    assert h["metrics"]["cpu_used_cores"] == round(8 * 17 / 100, 3)
     assert h["metrics"]["mem_total_gb"] == 16.0
     assert h["metrics"]["mem_used_gb"] == 12.0
     assert h["mem_pct"] == 75.0
     # Disk summed across / and /var: 150 total, 50 used -> 33.3%
     assert h["metrics"]["disk_total_gb"] == 150.0
     assert h["metrics"]["disk_used_gb"] == 50.0
-    assert h["disk_pct"] == round(50 / 150 * 100, 1)
+    assert h["disk_pct"] == round(50 / 150 * 100, 3)
 
 
 def test_percentage_only_keys_still_populate():
@@ -88,11 +88,13 @@ def test_custom_named_items_attach_for_unknown_availability_hosts():
     hosts = [{"external_id": "40", "status": "unknown", "metrics": {}}]
     _collector(items)._attach_metrics(hosts)
     h = hosts[0]
-    assert h["cpu_pct"] == 43.7
+    # Stored at three decimals: one threw away precision Zabbix had reported,
+    # which is what made 65.135% reach the Capacity page as 65%.
+    assert h["cpu_pct"] == 43.67
     assert h["metrics"]["cores"] == 56
     assert h["metrics"]["mem_total_gb"] == 1536.0
     assert h["metrics"]["mem_used_gb"] == 773.1
-    assert h["mem_pct"] == round(773.07 / 1536 * 100, 1)
+    assert h["mem_pct"] == round(773.07 / 1536 * 100, 3)
 
 
 def test_ranked_cpu_prefers_non_idle_and_disk_prefers_absolute():

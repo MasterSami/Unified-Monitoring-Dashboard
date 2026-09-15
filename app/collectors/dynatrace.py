@@ -171,7 +171,7 @@ class DynatraceCollector(BaseCollector):
                     metrics: dict = {}
                     phys = props.get("physicalMemory")
                     if isinstance(phys, (int, float)) and phys > 0:
-                        metrics["mem_total_gb"] = round(phys / 1024**3, 1)
+                        metrics["mem_total_gb"] = round(phys / 1024**3, 3)
                     cores = props.get("cpuCores") or props.get("logicalCpuCores")
                     if isinstance(cores, (int, float)) and cores > 0:
                         metrics["cores"] = int(cores)
@@ -287,20 +287,20 @@ class DynatraceCollector(BaseCollector):
         for hid, h in by_id.items():
             m = h.setdefault("metrics", {})
             if hid in cpu:
-                h["cpu_pct"] = round(cpu[hid], 1)
+                h["cpu_pct"] = round(cpu[hid], 3)
                 if m.get("cores"):
-                    m["cpu_used_cores"] = round(m["cores"] * cpu[hid] / 100, 1)
+                    m["cpu_used_cores"] = round(m["cores"] * cpu[hid] / 100, 3)
             if hid in mem:
-                h["mem_pct"] = round(mem[hid], 1)
+                h["mem_pct"] = round(mem[hid], 3)
                 if m.get("mem_total_gb"):
-                    m["mem_used_gb"] = round(m["mem_total_gb"] * mem[hid] / 100, 1)
+                    m["mem_used_gb"] = round(m["mem_total_gb"] * mem[hid] / 100, 3)
             if hid in disk_used and hid in disk_avail:
                 used = disk_used[hid]
                 total = used + disk_avail[hid]
                 if total > 0:
-                    m["disk_total_gb"] = round(total / 1024**3, 1)
-                    m["disk_used_gb"] = round(used / 1024**3, 1)
-                    h["disk_pct"] = round(used / total * 100, 1)
+                    m["disk_total_gb"] = round(total / 1024**3, 3)
+                    m["disk_used_gb"] = round(used / 1024**3, 3)
+                    h["disk_pct"] = round(used / total * 100, 3)
 
     # --- Per-partition disk (for the capacity report export) ----------------
 

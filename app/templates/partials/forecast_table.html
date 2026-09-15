@@ -7,7 +7,7 @@
   {% elif days < 1 %}
     <span class="fc-eta fc-eta-now">now</span>
   {% elif days < 400 %}
-    <span class="fc-eta">{{ days | round(0, 'floor') | int }}<span class="fc-unit">d</span></span>
+    <span class="fc-eta">{{ days | num(1) }}<span class="fc-unit">d</span></span>
   {% else %}
     <span class="fc-eta fc-far">&gt; 1y</span>
   {% endif %}
@@ -57,11 +57,12 @@
           <span class="badge badge-{{ r.host.source_platform.value }}">
             <span class="dot"></span>{{ r.host.source_platform.value | platform_label }}
           </span>
+          {% if r.host.source_instance %}<span class="inst mono">{{ r.host.source_instance }}</span>{% endif %}
         </td>
         <td>
           <span class="fc-kind fc-kind-{{ f.metric_kind }}">{{ f.metric_kind }}</span>
           {% if f.subject %}<span class="mono fc-subject">{{ f.subject }}</span>{% endif %}
-          {% if f.total_value %}<span class="fc-sub">{{ f.total_value | round(0, 'floor') | int }} GB</span>{% endif %}
+          {% if f.total_value %}<span class="fc-sub">{{ f.total_value | num }} GB</span>{% endif %}
           {# Why a row has no dates belongs on the row, not only in a tooltip:
              a line of dashes with no explanation reads as a broken feature. #}
           {% if f.reason and f.classification in ('insufficient_data', 'noisy') %}
@@ -75,7 +76,7 @@
             {% set cls = 'ok' if pct < 70 else ('warn' if pct < 90 else 'hot') %}
             <div class="res">
               <div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ pct if pct <= 100 else 100 }}%"></span></div>
-              <div class="res-txt"><span class="res-abs {{ cls }}">{{ '%.1f'|format(pct) }}%</span></div>
+              <div class="res-txt"><span class="res-abs {{ cls }}">{{ pct | num }}%</span></div>
             </div>
           {% endif %}
         </td>

@@ -155,6 +155,28 @@ def _platform_label(value: str | None) -> str:
 
 
 templates.env.filters["platform_label"] = _platform_label
+
+
+def _num(value: object, dp: int = 3) -> str:
+    """Render a number without inventing or discarding precision.
+
+    The capacity columns used to floor to a whole number, so Zabbix's
+    ``65.135 %`` reached the page as ``65%``. Trailing zeros are still dropped,
+    because ``80.000%`` claims a measurement nobody made: ``65.135`` prints in
+    full, ``80.0`` prints as ``80``.
+    """
+    if value is None or value == "":
+        return "-"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number == int(number):
+        return str(int(number))
+    return f"{number:.{dp}f}".rstrip("0").rstrip(".")
+
+
+templates.env.filters["num"] = _num
 # Every platform, so the filter tabs follow the model instead of repeating a
 # hardcoded list that silently goes stale when a platform is added.
 templates.env.globals["platform_order"] = PLATFORM_ORDER
@@ -1106,7 +1128,7 @@ def capacity_page(
             "request": request,
             "active_page": "capacity",
             "subpage": "capacity",
-            # Puts the at-risk count on the Planning tab, so a volume that is
+            # Puts the at-risk count on the Forecasting tab, so a volume that is
             # filling is visible from here without switching views.
             "planning_risks": risk_counts(db).get("at_risk", 0),
             "hosts": hosts,
@@ -1366,15 +1388,21 @@ def _sparkline(points: list, width: int = 74, height: int = 20) -> str:
 
 
 @router.get("/forecast", include_in_schema=False)
+@router.get("/capacity/planning", include_in_schema=False)
 def forecast_redirect(classification: str = "at_risk") -> RedirectResponse:
-    """The view moved under Capacity; keep old links and bookmarks working."""
+    """Earlier addresses for this view. Both still work.
+
+    It shipped at /forecast, moved under Capacity as /capacity/planning, and
+    the tab was then renamed to Forecasting. Bookmarks from either stage
+    should not break over a change of wording.
+    """
     return RedirectResponse(
-        f"/capacity/planning?classification={classification}", status_code=301
+        f"/capacity/forecasting?classification={classification}", status_code=301
     )
 
 
-@router.get("/capacity/planning", response_class=HTMLResponse)
-def capacity_planning_page(
+@router.get("/capacity/forecasting", response_class=HTMLResponse)
+def capacity_forecasting_page(
     request: Request,
     classification: str = "at_risk",
     db: Session = Depends(get_db),
@@ -1397,7 +1425,7 @@ def capacity_planning_page(
         {
             "request": request,
             "active_page": "capacity",
-            "subpage": "planning",
+            "subpage": "forecasting",
             "planning_risks": counts.get("at_risk", 0),
             "rows": rows,
             "total": total,

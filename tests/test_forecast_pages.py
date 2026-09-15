@@ -234,8 +234,8 @@ def test_risk_counts_feed_the_overview_card(client):
 
 
 def test_forecast_page_and_partial_render(client):
-    html = client.get("/capacity/planning").text
-    assert "Planning" in html
+    html = client.get("/capacity/forecasting").text
+    assert "Forecasting" in html
     assert 'name="group"' in html and "data-svcbox" in html   # service filter
     assert "/static/svcbox.js" in html
     assert "Recompute now" in html
@@ -246,34 +246,43 @@ def test_forecast_page_and_partial_render(client):
     assert "fc-table" in partial
 
 
-def test_planning_lives_under_capacity_not_in_the_sidebar(client):
+def test_forecasting_lives_under_capacity_not_in_the_sidebar(client):
     """One sidebar entry, two views — the split is a sub-nav on the page."""
-    capacity = client.get("/capacity").text
-    planning = client.get("/capacity/planning").text
+    import re
 
-    # Both carry the sub-nav, and each marks itself current.
-    for html in (capacity, planning):
-        assert 'href="/capacity/planning"' in html
+    analysis = client.get("/capacity").text
+    forecasting = client.get("/capacity/forecasting").text
+
+    # Both carry the sub-nav, with both tab names, and each marks itself current.
+    for html in (analysis, forecasting):
+        assert 'href="/capacity/forecasting"' in html
         assert 'class="subnav"' in html
-    assert capacity.count("aria-current=page") == 1
-    assert planning.count("aria-current=page") == 1
+        assert "Analysis" in html and "Forecasting" in html
+    assert analysis.count("aria-current=page") == 1
+    assert forecasting.count("aria-current=page") == 1
 
-    # The sidebar has a Capacity entry and no separate Forecast one.
-    assert ">\n            Forecast\n" not in capacity
-    assert "Forecast" not in capacity
+    # The sidebar itself carries Capacity and nothing for the second view.
+    # Checked against the sidebar block rather than the whole page: the sub-nav
+    # says "Forecasting", so a substring search over the document would match
+    # the very element this is meant to distinguish from.
+    sidebar = re.search(r'<nav class="nav">(.*?)</nav>', analysis, re.S)
+    assert sidebar, "sidebar nav not found"
+    assert 'href="/capacity"' in sidebar.group(1)
+    assert "/capacity/forecasting" not in sidebar.group(1)
+    assert "Forecast" not in sidebar.group(1)
 
 
 def test_the_old_forecast_url_still_works(client):
     """Bookmarks and the earlier build's links must not break."""
     resp = client.get("/forecast", follow_redirects=False)
     assert resp.status_code == 301
-    assert resp.headers["location"].startswith("/capacity/planning")
+    assert resp.headers["location"].startswith("/capacity/forecasting")
 
     resp = client.get(
         "/forecast", params={"classification": "critical"}, follow_redirects=True
     )
     assert resp.status_code == 200
-    assert "Planning" in resp.text
+    assert "Forecasting" in resp.text
 
 
 def test_forecast_page_filters_narrow_the_table(client):
@@ -308,7 +317,7 @@ def test_forecast_page_filters_narrow_the_table(client):
 def test_overview_card_links_to_the_critical_list(client):
     html = client.get("/").text
     assert "Capacity Risks" in html
-    assert '/capacity/planning?classification=critical' in html
+    assert '/capacity/forecasting?classification=critical' in html
 
 
 def test_json_and_xlsx_exports(client):
@@ -585,7 +594,7 @@ def test_an_empty_page_says_why_it_is_empty(client):
     finally:
         db.close()
 
-    html = client.get("/capacity/planning").text
+    html = client.get("/capacity/forecasting").text
     assert "No capacity history yet" in html
     assert "backfill_zabbix_capacity" in html   # tells them the way out
 

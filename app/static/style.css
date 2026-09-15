@@ -2465,3 +2465,13 @@ td.mono {
   color: var(--text);
   white-space: nowrap;
 }
+
+/* Collector instance under a platform badge. With eight Zabbix servers,
+   "on Zabbix" is not enough to go and look at the host. */
+.inst {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.3;
+}

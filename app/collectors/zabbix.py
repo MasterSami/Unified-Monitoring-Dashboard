@@ -376,13 +376,13 @@ class ZabbixCollector(BaseCollector):
 
             cpu_now, cpu_raw = normalize_cpu_pct(cpu_now, cores)
             if cpu_now is not None:
-                h["cpu_pct"] = round(cpu_now, 1)
+                h["cpu_pct"] = round(cpu_now, 3)
             if cpu_raw is not None:
-                metrics["cpu_pct_raw"] = round(cpu_raw, 1)
+                metrics["cpu_pct_raw"] = round(cpu_raw, 3)
             if cores:
                 metrics["cores"] = int(cores)
                 if cpu_now is not None:
-                    metrics["cpu_used_cores"] = round(int(cores) * cpu_now / 100, 1)
+                    metrics["cpu_used_cores"] = round(int(cores) * cpu_now / 100, 3)
 
             mem_tot = lv(c["mem_total"])
             mem_now = lv(c["mem_util"])
@@ -400,15 +400,15 @@ class ZabbixCollector(BaseCollector):
                 if mem_used is not None:
                     mem_now = mem_used / mem_tot * 100
             if mem_tot:
-                metrics["mem_total_gb"] = round(mem_tot / GB, 1)
+                metrics["mem_total_gb"] = round(mem_tot / GB, 3)
                 if mem_now is not None:
-                    h["mem_pct"] = round(mem_now, 1)
+                    h["mem_pct"] = round(mem_now, 3)
                     metrics["mem_used_gb"] = round(
                         (mem_used if mem_used is not None
                          else mem_tot * mem_now / 100) / GB, 1
                     )
             elif mem_now is not None:
-                h["mem_pct"] = round(mem_now, 1)
+                h["mem_pct"] = round(mem_now, 3)
 
             tot_sum, used_sum = 0.0, 0.0
             filesystems: list[dict] = []
@@ -427,8 +427,8 @@ class ZabbixCollector(BaseCollector):
                     filesystems.append(
                         {
                             "subject": slot["label"] or fsname,
-                            "used_gb": round(u / GB, 2),
-                            "total_gb": round(t / GB, 2),
+                            "used_gb": round(u / GB, 3),
+                            "total_gb": round(t / GB, 3),
                         }
                     )
             if filesystems:
@@ -436,9 +436,9 @@ class ZabbixCollector(BaseCollector):
                     filesystems, key=lambda f: f["subject"]
                 )
             if tot_sum > 0:
-                metrics["disk_total_gb"] = round(tot_sum / GB, 1)
-                metrics["disk_used_gb"] = round(used_sum / GB, 1)
-                h["disk_pct"] = round(used_sum / tot_sum * 100, 1)
+                metrics["disk_total_gb"] = round(tot_sum / GB, 3)
+                metrics["disk_used_gb"] = round(used_sum / GB, 3)
+                h["disk_pct"] = round(used_sum / tot_sum * 100, 3)
             else:
                 # Percentage-only template: worst filesystem's pused / 100−pfree.
                 worst = None
@@ -456,7 +456,7 @@ class ZabbixCollector(BaseCollector):
                     if pct is not None:
                         worst = pct if worst is None else max(worst, pct)
                 if worst is not None:
-                    h["disk_pct"] = round(worst, 1)
+                    h["disk_pct"] = round(worst, 3)
 
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:

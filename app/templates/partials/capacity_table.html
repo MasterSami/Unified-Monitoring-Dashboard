@@ -18,15 +18,17 @@
     {% set cls = 'ok' if w < 70 else ('warn' if w < 90 else 'hot') %}
     <div class="res">
       <div class="res-track"><span class="res-fill {{ cls }}" style="width: {{ w if w <= 100 else 100 }}%"></span></div>
+      {# Values print exactly as the source reported them. Flooring to a whole
+         number turned Zabbix's 65.135% into 65% on the way to the page. #}
       <div class="res-txt">
         {% if used is not none and total %}
-          <span class="res-abs {{ cls }}">{{ used }}</span><span class="res-tot"> / {{ total }} {{ unit }}</span>
+          <span class="res-abs {{ cls }}">{{ used | num }}</span><span class="res-tot"> / {{ total | num }} {{ unit }}</span>
         {% elif total %}
-          <span class="res-tot">{{ total }} {{ unit }} total</span>
+          <span class="res-tot">{{ total | num }} {{ unit }} total</span>
         {% else %}
-          <span class="res-abs {{ cls }}">{{ w | round(0, 'floor') | int }}%</span>
+          <span class="res-abs {{ cls }}">{{ w | num }}%</span>
         {% endif %}
-        {% if width is not none %}<span class="res-pct">{{ width | round(0, 'floor') | int }}%</span>{% endif %}
+        {% if width is not none %}<span class="res-pct">{{ width | num }}%</span>{% endif %}
       </div>
     </div>
   {% endif %}
@@ -56,7 +58,12 @@
       <tr>
         <td><strong>{{ h.hostname }}</strong></td>
         <td class="mono">{{ h.ip or '-' }}</td>
-        <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
+        {# The instance under the badge: with eight Zabbix servers, knowing a
+           host is "on Zabbix" is not enough to go and look at it. #}
+        <td>
+          <span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span>
+          {% if h.source_instance %}<span class="inst mono">{{ h.source_instance }}</span>{% endif %}
+        </td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '-' }}</td>
         <td>{{ rcell(h.cpu_pct, m.get('cpu_used_cores'), m.get('cores'), 'cores') }}</td>
         <td>{{ rcell(h.mem_pct, m.get('mem_used_gb'), m.get('mem_total_gb'), 'GB') }}</td>
