@@ -89,16 +89,30 @@ def _classify(items: list[dict]) -> dict:
     for it in items:
         low = it["key_"].lower()
         name_low = (it.get("name") or "").lower()
-        if (low.startswith("system.cpu.num") or name_low == "cpu cores") and res["cpu_num"] is None:
+        # Core count. The VMware templates call this `vmware.vm.cpu.num` /
+        # "Number of virtual CPUs" rather than the Linux `system.cpu.num`, and
+        # missing it costs more than a blank column: it is the divisor that
+        # converts a summed-across-vCPUs CPU reading back into a percentage.
+        if res["cpu_num"] is None and (
+            low.startswith("system.cpu.num")
+            or low.endswith("cpu.num")
+            or name_low in ("cpu cores", "number of cpus", "number of virtual cpus")
+        ):
             res["cpu_num"] = it
         rank = None
         if low == "system.cpu.util":
             rank = 0
         elif low.startswith("system.cpu.util[") and ",idle" not in low:
             rank = 1
-        elif name_low == "cpu usage in percent":
+        elif name_low in ("cpu utilization", "cpu utilisation"):
+            # Ahead of "CPU usage in percent" on purpose. On the VMware
+            # templates a host carries both, and they do not mean the same
+            # thing: "CPU utilization" is normalized to 0-100, while "CPU
+            # usage in percent" sums across vCPUs the way `top` does, so a
+            # busy 2-vCPU guest reports 130%. Picking the latter is what made
+            # RPA-Prod4 read 137% next to Zabbix's own 65.1%.
             rank = 2
-        elif name_low in ("cpu utilization", "cpu utilisation", "cpu usage"):
+        elif name_low in ("cpu usage in percent", "cpu usage"):
             rank = 3
         if rank is not None and rank < cpu_rank:
             cpu_rank, res["cpu_util"] = rank, it
@@ -130,6 +144,40 @@ def _classify(items: list[dict]) -> dict:
             if slot["label"] is None or mode == "total":
                 slot["label"] = _fs_label(it)
     return res
+
+
+def normalize_cpu_pct(
+    value: float | None, cores: float | None
+) -> tuple[float | None, float | None]:
+    """Return ``(percentage, raw)`` for a CPU reading that may exceed 100.
+
+    Some templates report CPU the way ``top`` does: summed across every core,
+    so the ceiling is ``cores x 100`` and a busy 2-vCPU guest reads 130%. A
+    utilization column cannot show that figure; the bar overruns its track and
+    the host sorts above genuinely saturated machines.
+
+    Dividing by the core count converts it, and the conversion is only trusted
+    when it lands back inside 0-100. Anything still above 100 after that is
+    capped so the column stays a percentage, with the original returned as
+    ``raw`` so nothing is silently lost. ``raw`` is ``None`` when the reading
+    needed no adjustment.
+    """
+    if value is None:
+        return None, None
+    if value <= 100.0:
+        return value, None
+    if cores and cores > 1:
+        scaled = value / cores
+        if scaled <= 100.0:
+            return scaled, value
+    return 100.0, value
+
+
+def _normalized_trend(tr: dict | None, cores: float | None) -> dict | None:
+    """Apply :func:`normalize_cpu_pct` across a min/avg/max trend dict."""
+    if not tr:
+        return tr
+    return {k: normalize_cpu_pct(v, cores)[0] for k, v in tr.items()}
 
 
 def _last_values(collector, items: list[dict]) -> dict:
@@ -230,7 +278,7 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
         return last.get(it["itemid"]) if it else None
 
     cores = lv(c["cpu_num"])
-    cpu_now = lv(c["cpu_util"])
+    cpu_now, cpu_raw = normalize_cpu_pct(lv(c["cpu_util"]), cores)
     mem_tot = lv(c["mem_total"])
     mem_now = lv(c["mem_util"])
     mem_used = lv(c["mem_used"])
@@ -267,12 +315,15 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
         "ip": ip,
         "cores": int(cores) if cores is not None else None,
         "cpu_pct": round(cpu_now, 1) if cpu_now is not None else None,
+        #: The template's own figure, when it needed normalizing. Shown on the
+        #: detail panel so the panel and Zabbix can be reconciled by eye.
+        "cpu_pct_raw": round(cpu_raw, 1) if cpu_raw is not None else None,
         "mem_total_gb": round(mem_tot / GB, 1) if mem_tot else None,
         "mem_pct": round(mem_now, 1) if mem_now is not None else None,
         "disk_total_gb": round(tot_sum / GB, 1) if tot_sum else None,
         "disk_used_gb": round(used_sum / GB, 1) if used_sum else None,
         "disk_pct": round(used_sum / tot_sum * 100, 1) if tot_sum else None,
-        "cpu_trend": trend(c["cpu_util"]),
+        "cpu_trend": _normalized_trend(trend(c["cpu_util"]), cores),
         "mem_trend": trend(c["mem_util"], c["mem_util_inverted"]),
         "filesystems": filesystems,
         "days": days,
@@ -400,7 +451,7 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
             return last.get(it["itemid"]) if it else None
 
         cores = lv(c["cpu_num"])
-        cpu_now = lv(c["cpu_util"])
+        cpu_now, _cpu_raw = normalize_cpu_pct(lv(c["cpu_util"]), cores)
         mem_tot = lv(c["mem_total"])
         mem_now = lv(c["mem_util"])
         mem_used = lv(c["mem_used"])
@@ -409,6 +460,10 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
         if mem_tot and mem_now is None and mem_used is not None:
             mem_now = mem_used / mem_tot * 100
         cs = stats.get(c["cpu_util"]["itemid"]) if c["cpu_util"] else None
+        if cs:
+            # The min/avg/max come from the same item as the current value, so
+            # they need the same treatment or the report shows 130% peaks.
+            cs = tuple(normalize_cpu_pct(v, cores)[0] for v in cs)
         ms = stats.get(c["mem_util"]["itemid"]) if c["mem_util"] else None
         if ms and c["mem_util_inverted"]:
             ms = (100 - ms[2], 100 - ms[1], 100 - ms[0])

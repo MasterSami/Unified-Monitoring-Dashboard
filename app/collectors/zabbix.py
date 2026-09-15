@@ -370,8 +370,15 @@ class ZabbixCollector(BaseCollector):
                 )
                 if idle is not None:
                     cpu_now = 100.0 - idle
+            # A top-style reading (summed across vCPUs) is normalized here, so
+            # the column stays a percentage whatever the template reports.
+            from app.zabbix_report import normalize_cpu_pct
+
+            cpu_now, cpu_raw = normalize_cpu_pct(cpu_now, cores)
             if cpu_now is not None:
                 h["cpu_pct"] = round(cpu_now, 1)
+            if cpu_raw is not None:
+                metrics["cpu_pct_raw"] = round(cpu_raw, 1)
             if cores:
                 metrics["cores"] = int(cores)
                 if cpu_now is not None:

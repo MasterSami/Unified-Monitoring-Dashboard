@@ -243,6 +243,16 @@ different folders silently uses different files), the stored samples per
 platform with their date range, the forecast rows per classification, and how
 many hosts pass the staleness gate.
 
+### A note on CPU percentages
+
+Some Zabbix templates, the VMware ones in particular, report CPU summed across
+vCPUs the way `top` does: a busy 2-vCPU guest reads 130%. Those hosts usually
+carry two items, **CPU utilization** (normalized 0-100) and **CPU usage in
+percent** (summed), and the dashboard reads the first. Where only a summed
+reading exists it is divided by the vCPU count; anything still above 100 after
+that is capped, and the original figure is shown on the Capacity detail panel
+so it can be reconciled against Zabbix.
+
 ### What the number means, and what it does not
 
 **The model is a straight line.** That is the whole of it. It is a good

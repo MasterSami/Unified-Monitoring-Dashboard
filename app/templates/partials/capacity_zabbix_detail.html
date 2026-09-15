@@ -38,6 +38,14 @@
         <div class="cap-metric-val">{{ '%.1f'|format(detail.cpu_pct) ~ '%' if detail.cpu_pct is not none else '-' }}</div>
         {{ bar(detail.cpu_pct) }}
         <div class="cap-metric-sub">{{ detail.cores ~ ' cores' if detail.cores is not none else '-' }}</div>
+        {# Some templates report CPU summed across vCPUs, so a busy 2-vCPU guest
+           reads 130%. We divide it down; naming the original keeps the panel
+           reconcilable against Zabbix's own Latest data screen. #}
+        {% if detail.cpu_pct_raw %}
+        <div class="cap-forecast" title="This template reports CPU summed across vCPUs">
+          template reports {{ detail.cpu_pct_raw }}% across {{ detail.cores }} vCPUs
+        </div>
+        {% endif %}
       </div>
       <div class="cap-metric">
         <div class="cap-metric-lbl">Memory</div>
