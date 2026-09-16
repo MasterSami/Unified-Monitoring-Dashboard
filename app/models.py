@@ -93,7 +93,17 @@ class Host(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     hostname: Mapped[str] = mapped_column(String(255), index=True)
+    #: Primary IP — the one shown in the table. For a multi-homed host this is
+    #: the first address the source platform reports; it is not necessarily
+    #: "the" address anyone expects, which is what ip_all is for.
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Every IP the source platform knows for this host, comma-joined (same
+    #: convention as group_name's comma-joined Zabbix groups). A host behind
+    #: several NICs — common on Dynatrace, which reports a list — otherwise
+    #: only ever matches a search on whichever address happened to be first;
+    #: searching this column instead means a search for any of its addresses
+    #: finds the host. ``None`` where a platform reports at most one IP.
+    ip_all: Mapped[str | None] = mapped_column(String(512), nullable=True)
     source_platform: Mapped[SourcePlatform] = mapped_column(
         Enum(SourcePlatform, native_enum=False, length=16), index=True
     )

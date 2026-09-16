@@ -48,6 +48,21 @@ def _has_oneagent(props: dict) -> bool:
     return bool(version)
 
 
+def _host_ips(props: dict) -> tuple[str | None, str | None]:
+    """``(primary_ip, all_ips_comma_joined)`` from a HOST entity's properties.
+
+    ``ipAddress`` is normally a list — a multi-homed host reports every
+    address it has. The primary is the first (unchanged display behaviour);
+    ``all`` is every distinct address, in order, for search — see Host.ip_all.
+    Also tolerates the property arriving as a single string, which some older
+    payloads use instead of a one-element list.
+    """
+    raw = props.get("ipAddress")
+    ip_list = raw if isinstance(raw, list) else ([raw] if raw else [])
+    all_ips = ", ".join(dict.fromkeys(str(v) for v in ip_list if v))
+    return (ip_list[0] if ip_list else None), (all_ips or None)
+
+
 def _host_group(props: dict, tags: list | None) -> str | None:
     """Best real host-group name for a Dynatrace HOST entity, or None.
 
@@ -150,6 +165,15 @@ class DynatraceCollector(BaseCollector):
             # tag exists) — see app.owners.dynatrace_owner.
             "fields": "properties,fromRelationships,tags,managementZones",
             "pageSize": "500",
+            # /entities is time-windowed: a HOST that hasn't reported within
+            # the window is silently absent from the response, no error, no
+            # count of what was excluded. Without an explicit `from` here,
+            # Dynatrace's own (short, undocumented-to-us) default applies, and
+            # a host reporting only intermittently — or one stopped reporting
+            # a while back without being decommissioned — quietly drops off
+            # the dashboard instead of showing up as down. See
+            # DYNATRACE_ENTITY_LOOKBACK_DAYS.
+            "from": f"now-{max(1, self.settings.dynatrace_entity_lookback_days)}d",
         }
         hosts: list[dict] = []
         with self._client(headers=self._headers()) as client:
@@ -176,14 +200,14 @@ class DynatraceCollector(BaseCollector):
                     if isinstance(cores, (int, float)) and cores > 0:
                         metrics["cores"] = int(cores)
                     owner, owner_email = dynatrace_owner(e)
+                    ip, ip_all = _host_ips(props)
                     hosts.append(
                         {
                             "external_id": e.get("entityId"),
                             "hostname": e.get("displayName"),
                             "agent_deployed": _has_oneagent(props),
-                            "ip": (props.get("ipAddress") or [None])[0]
-                            if isinstance(props.get("ipAddress"), list)
-                            else props.get("ipAddress"),
+                            "ip": ip,
+                            "ip_all": ip_all,
                             "status": status,
                             # Real Dynatrace host group (not the OS). Falls back to
                             # a group-ish tag, then OS type, so the column is never

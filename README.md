@@ -377,6 +377,56 @@ date, and one resized mid-window (fitted only from the resize onward). The
 series are digest-derived rather than random, so the demo has the same shape
 on every run.
 
+## Missing Dynatrace hosts
+
+Dynatrace's `/api/v2/entities` API — the one the collector reads its host list
+from — is time-windowed: a HOST entity that hasn't reported within the
+requested window is simply absent from the response, no error, no count of
+what was left out. A host that reports only intermittently, or one that
+stopped reporting a while ago without being formally decommissioned in
+Dynatrace, can be visible in Dynatrace's own UI while quietly never reaching
+SAMI'X.
+
+The collector now always sends an explicit window —
+`DYNATRACE_ENTITY_LOOKBACK_DAYS` (default 370) — rather than relying on
+whatever Dynatrace's own default happens to be. If hosts are still missing:
+
+```bash
+python -m app.dynatrace_probe --ip 10.22.68.11 10.22.68.12
+python -m app.dynatrace_probe --ip-range 10.22.68.11-10.22.68.20
+```
+
+For each address, this queries every configured Dynatrace instance twice —
+once the way the collector used to (no explicit window) and once with a wide
+one — and reports which of three situations applies:
+
+- **Found only with the wide window.** Confirms the time-window cause above.
+  The current collector should already be past this; if not, check
+  `DYNATRACE_ENTITY_LOOKBACK_DAYS` is actually set where the app reads it.
+- **Found either way.** Not a time-window problem. A current build should
+  already be collecting this host — if the dashboard still doesn't show it,
+  wait for the next poll or trigger one from the Overview page.
+- **Found nowhere, even over two years.** Not visible to this API token at
+  all right now. Check the token's `entities.read` scope, whether this tenant
+  restricts the token to specific management zones, and whether the address
+  actually belongs to a different Dynatrace environment than the one
+  configured in `servers.yaml`.
+
+It also prints whether the queried address is a host's primary IP or a
+secondary one (Dynatrace reports every NIC on a multi-homed host), and
+whether SAMI'X already has that host stored under a *different* address on
+the same machine — see the next section.
+
+### Searching by a secondary IP
+
+A multi-homed host only ever had its **first** reported address stored
+anywhere, so a search for any other address it also answers to found nothing
+— the host was not missing from the database, it was just indexed under an
+address nobody happened to search for. Every address Dynatrace reports for a
+host is now kept (comma-joined, the same convention `group_name` already uses
+for Zabbix's multi-group hosts) and searched alongside the primary one; the
+primary is still what the table displays.
+
 ## Deploy to a server later
 
 The application is deployment-ready; two changes move it from POC to server.

@@ -161,7 +161,9 @@ def list_hosts(
     if q:
         like = f"%{q.lower()}%"
         stmt = stmt.where(
-            func.lower(Host.hostname).like(like) | func.lower(Host.ip).like(like)
+            func.lower(Host.hostname).like(like)
+            | func.lower(Host.ip).like(like)
+            | func.lower(func.coalesce(Host.ip_all, "")).like(like)
         )
     size, start = _page_window(limit, offset, settings)
     stmt = stmt.order_by(Host.hostname.asc()).offset(start).limit(size)

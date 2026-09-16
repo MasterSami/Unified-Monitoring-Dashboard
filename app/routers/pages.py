@@ -770,6 +770,9 @@ def _hosts_stmt(
         stmt = stmt.where(
             func.lower(Host.hostname).like(like)
             | func.lower(func.coalesce(Host.ip, "")).like(like)
+            # A multi-homed host (Dynatrace) can have a search-worthy address
+            # that isn't the one shown as its primary ip — see Host.ip_all.
+            | func.lower(func.coalesce(Host.ip_all, "")).like(like)
             | func.lower(func.coalesce(Host.group_name, "")).like(like)
             | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
@@ -1335,6 +1338,7 @@ def _forecast_rows(
             or_(
                 Host.hostname.ilike(like),
                 Host.ip.ilike(like),
+                Host.ip_all.ilike(like),
                 Host.source_instance.ilike(like),
                 CapacityForecast.subject.ilike(like),
             )

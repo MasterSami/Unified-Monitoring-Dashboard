@@ -214,6 +214,11 @@ def upsert_hosts(
         touched[external_id] = row
         row.hostname = item.get("hostname") or external_id
         row.ip = item.get("ip")
+        # Only Dynatrace populates this (a multi-homed host reports several
+        # addresses); leaving it untouched elsewhere keeps the column NULL for
+        # platforms that only ever have one, same convention as agent_deployed.
+        if "ip_all" in item:
+            row.ip_all = item.get("ip_all")
         row.status = item.get("status", HostStatus.unknown)
         row.group_name = item.get("group_name")
         # Owner: only overwrite when this run resolved one, so a collector that

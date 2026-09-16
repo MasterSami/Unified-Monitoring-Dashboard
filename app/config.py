@@ -33,6 +33,17 @@ class Settings(BaseSettings):
     # instance, grouped by platform). See servers.example.yaml.
     servers_config: str = "servers.yaml"
 
+    # How far back Dynatrace's /entities API looks when listing hosts, in days.
+    # Entities is a time-windowed API: a HOST entity that has not reported
+    # within the requested window is simply absent from the response, with no
+    # error and no hint that anything was excluded. Left unset, the call falls
+    # back to Dynatrace's own default window, which is short enough that a
+    # host reporting only intermittently — or one that stopped reporting a
+    # while ago but was never decommissioned in Dynatrace — silently vanishes
+    # from the dashboard instead of showing up as "down". A wide default here
+    # trades a slightly larger response for hosts never going missing quietly.
+    dynatrace_entity_lookback_days: int = 370
+
     # Default recipient for the Zabbix "send test mail" action.
     test_mail_to: str = ""
 
