@@ -2192,10 +2192,10 @@ td.mono {
 .res-txt {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 2px 6px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 .res-abs { font-weight: 700; }
 .res-abs.ok { color: var(--up); }

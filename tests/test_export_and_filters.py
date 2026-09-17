@@ -129,7 +129,8 @@ def test_dynatrace_export_dedups_zabbix_and_has_disk_column(client):
 
 def test_xlsx_endpoints_stream_valid_workbooks(client):
     for url, sheet in [("/api/v1/capacity.xlsx", "Capacity"),
-                       ("/api/v1/alerts.xlsx?active=true", "Alerts")]:
+                       ("/api/v1/alerts.xlsx?active=true", "Alerts"),
+                       ("/api/v1/agents.xlsx", "Agents")]:
         r = client.get(url)
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("application/vnd.openxml")
@@ -137,3 +138,34 @@ def test_xlsx_endpoints_stream_valid_workbooks(client):
         ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
         assert ws["A1"].value == "SAMI'X — Monitoring Data Export"
         assert ws.title == sheet
+
+
+def test_agents_export_matches_the_on_screen_filters(client):
+    from app.models import Host, HostStatus
+
+    inst = "AG-EXPORT-TEST"
+    db = SessionLocal()
+    try:
+        db.add(Host(external_id="ag-z1", source_platform=SourcePlatform.zabbix,
+                     source_instance=inst, hostname="ag-zbx-host", ip="10.88.0.1",
+                     group_name="Prod", status=HostStatus.up))
+        db.add(Host(external_id="ag-d1", source_platform=SourcePlatform.dynatrace,
+                     source_instance=inst, hostname="ag-dt-host", ip="10.88.0.2",
+                     group_name="Prod", status=HostStatus.down, agent_deployed=True))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.get(f"/api/v1/agents.xlsx?instance={inst}")
+    assert r.status_code == 200
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    hdr = [ws.cell(6, i + 1).value for i in range(ws.max_column)]
+    assert hdr == ["Agent", "IP", "Platform", "Instance", "Service / Group",
+                    "Status", "Last Updated", "Alerts"]
+    names = {ws.cell(r, 1).value for r in range(7, ws.max_row + 1) if ws.cell(r, 1).value}
+    assert names == {"ag-zbx-host", "ag-dt-host"}
+
+    r = client.get(f"/api/v1/agents.xlsx?instance={inst}&status=down")
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    names = {ws.cell(r, 1).value for r in range(7, ws.max_row + 1) if ws.cell(r, 1).value}
+    assert names == {"ag-dt-host"}

@@ -537,6 +537,65 @@ def export_capacity_xlsx(
     return _xlsx_response(fname, data)
 
 
+@router.get("/agents.xlsx")
+def export_agents_xlsx(
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    group: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """Export the filtered Agents view as a branded, severity-colored .xlsx.
+
+    Same columns and filters as the on-screen table — the whole matching set,
+    not just the current page. The Alerts column carries each host's active
+    alert count and is tinted by its highest severity, same convention as the
+    Alerts export's own severity column.
+    """
+    _require_export(settings)
+    from app.export_xlsx import build_workbook
+    from app.routers.pages import _annotate_agent_alerts, _hosts_stmt
+
+    stmt = _hosts_stmt(q, platform, status, instance, group)
+    stmt = stmt.order_by(Host.hostname.asc())
+
+    # Alert counts are a batched second query (see _annotate_agent_alerts),
+    # not a per-row lookup — same query shape the live page already uses,
+    # just run once over every matching host instead of one page of them.
+    hosts = list(db.scalars(stmt))
+    _annotate_agent_alerts(db, hosts)
+
+    def rows():
+        for h in hosts:
+            yield [
+                h.hostname, h.ip or "", h.source_platform.value,
+                h.source_instance or "", h.group_name or "", h.status.value,
+                h.last_seen, h.alert_count,          # type: ignore[attr-defined]
+                h.max_sev,                           # type: ignore[attr-defined]
+            ]
+
+    filters = ", ".join(
+        f"{k}={v}" for k, v in (
+            ("platform", platform), ("instance", instance), ("service", group),
+            ("status", status), ("q", q),
+        ) if v and v != "all"
+    ) or "none"
+    data = build_workbook(
+        sheet_title="Agents",
+        period="current snapshot",
+        filters_summary=filters,
+        columns=["Agent", "IP", "Platform", "Instance", "Service / Group",
+                 "Status", "Last Updated", "Alerts"],
+        rows=rows(),
+        severity_col=7,
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    fname = f"SAMIX_agents_{stamp}.xlsx"
+    return _xlsx_response(fname, data)
+
+
 @router.get("/alerts.xlsx")
 def export_alerts_xlsx(
     state: str = Query(default="active"),

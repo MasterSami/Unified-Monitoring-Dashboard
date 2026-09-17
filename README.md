@@ -190,6 +190,7 @@ nnmi:
 | ------------------------------------- | ------------------------------------------------ |
 | `GET  /api/v1/hosts`                  | All hosts (filters: `platform`, `status`, `q`).  |
 | `GET  /api/v1/alerts?active=true`     | Alerts; `active=true` hides resolved.            |
+| `GET  /api/v1/agents.xlsx`            | Agents export (`platform`, `instance`, `group`, `status`, `q`). |
 | `GET  /api/v1/capacity.xlsx` / `.csv` | Capacity export (`platform`, `instance`, `group`, `status`, `q`). |
 | `GET  /api/v1/alerts.xlsx` / `.csv`   | Alerts export (`state`, `group`, `q`, `date_from`, `date_to`). |
 | `GET  /api/v1/forecast`               | Capacity forecast (`classification`, `kind`, `platform`, `instance`, `group`, `q`). |

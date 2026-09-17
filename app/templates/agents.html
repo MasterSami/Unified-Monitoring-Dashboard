@@ -76,6 +76,12 @@
 
   {{ service_filter("/partials/agents", "#agents-region", "afilter", current.group, services) }}
 
+  {% if enable_export %}
+  <button class="btn" type="button" onclick="exportAgents()" title="Export current view to Excel">
+    Export Excel
+  </button>
+  {% endif %}
+
   <!-- Hidden filter mirrors. -->
   <input type="hidden" name="platform" value="all" class="afilter" id="af-platform" />
   <input type="hidden" name="sort" value="hostname" class="afilter" />
@@ -112,6 +118,14 @@
     });
     btn.classList.add("active");
     document.getElementById("af-platform").value = btn.dataset.platform;
+  }
+
+  function exportAgents() {
+    var params = new URLSearchParams();
+    document.querySelectorAll(".afilter").forEach(function (el) {
+      if (el.name && el.value && el.value !== "all") params.set(el.name, el.value);
+    });
+    window.location = "/api/v1/agents.xlsx?" + params.toString();
   }
 </script>
 {% endblock %}
