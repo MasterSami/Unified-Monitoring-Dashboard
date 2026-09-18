@@ -1,0 +1,479 @@
+{% extends "base.html" %}
+{% block title %}Incident #{{ incident_id }} · Unified Monitoring{% endblock %}
+{% block page_title %}Incident #{{ incident_id }}{% endblock %}
+{% block page_sub %}<span id="ic-sub">Loading...</span>{% endblock %}
+
+{% block content %}
+{% if not enabled %}
+<div class="card card-pad" style="text-align:center; padding: 48px 24px;">
+  <div style="font-size:40px; margin-bottom: 12px;">⚑</div>
+  <h2 style="margin:0 0 8px;">Incidents is turned off</h2>
+  <p style="color:var(--text-faint); font-size:13px;">
+    Set <code>ENABLE_INCIDENTS=true</code> in <code>.env</code> and restart.
+  </p>
+</div>
+{% else %}
+<div id="ic-detail-root" data-incident-id="{{ incident_id }}" data-is-operator="{{ '1' if is_operator else '0' }}">
+
+  <div style="margin-bottom:14px;">
+    <a href="/incidents" class="btn">&larr; All incidents</a>
+  </div>
+
+  <div id="ic-error" class="card card-pad" hidden style="text-align:center;">
+    <div class="empty"><span class="big">!</span> <span id="ic-error-text">Incident not found.</span></div>
+  </div>
+
+  <div id="ic-content" hidden>
+
+    <!-- 1. Summary -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Summary</h3><span class="hint">What failed, when, and the business impact</span></div>
+      <div class="ic-grid">
+        <div class="ic-summary-item"><span class="lbl">Incident</span><span class="val" id="s-title">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Severity</span><span class="val" id="s-severity">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Status</span><span class="val" id="s-status">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Started</span><span class="val" id="s-start">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Duration</span><span class="val" id="s-duration">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Business impact</span><span class="val" id="s-business">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Event count</span><span class="val" id="s-events">-</span></div>
+        <div class="ic-summary-item"><span class="lbl">Correlation types</span><span class="val" id="s-types">-</span></div>
+      </div>
+    </div>
+
+    <!-- 2. Root cause candidate -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Root Cause Candidate</h3><span class="hint">What is the likely origin</span></div>
+      <div class="ic-disclaimer">
+        <span>&#9888;</span>
+        <span>Not an absolute cause: this is the entity the deterministic evidence points to most strongly today. When more than one candidate is shown, the evidence does not yet distinguish between them.</span>
+      </div>
+      <div id="rc-list"></div>
+    </div>
+
+    <!-- 3. Correlation explanation -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Why were these events correlated?</h3><span class="hint">Every reason traces back to stored evidence</span></div>
+      <ul class="ic-evidence" id="explain-list"></ul>
+    </div>
+
+    <!-- 4. Timeline -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Timeline</h3><span class="hint">What happened first, in order</span></div>
+      <ul class="ic-timeline" id="timeline-list"></ul>
+    </div>
+
+    <!-- 5. Dependency graph -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Dependency Graph</h3><span class="hint">Root cause, symptom, and healthy dependency, distinguished by shape and border, not only color</span></div>
+      <div id="ic-graph" class="ic-graph"></div>
+      <div class="ic-legend">
+        <span><i class="ic-shape ic-shape-diamond"></i> Root cause candidate</span>
+        <span><i class="ic-shape ic-shape-ellipse"></i> Affected / symptom - solid red border, has its own active event</span>
+        <span><i class="ic-shape ic-shape-rect"></i> Healthy dependency - dashed border, in the chain, no active event</span>
+      </div>
+    </div>
+
+    <!-- 6. Related events by source -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Related Events</h3><span class="hint">Grouped by monitoring source, with the original identifier</span></div>
+      <div id="related-events"></div>
+    </div>
+
+    <!-- 7. Impact -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Impact</h3><span class="hint">Everything this incident affects, technical and business</span></div>
+      <div class="ic-impact-grid" id="impact-grid"></div>
+    </div>
+
+    <!-- 8. Correlation types -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Correlation Types</h3><span class="hint">What kinds of evidence this incident rests on</span></div>
+      <div id="types-badges"></div>
+    </div>
+
+    <!-- 9. Event details -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Event Details</h3><span class="hint">Original event vs. normalized event vs. correlation evidence, per member</span></div>
+      <div id="event-details"></div>
+    </div>
+
+    <!-- 10. Operator feedback -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Operator Feedback</h3><span class="hint">Recorded for review - never fed back into the engine automatically</span></div>
+      <div id="feedback-auth-hint" class="ic-disclaimer" hidden>
+        <span>&#9888;</span>
+        <span>Sign in via the <a href="/runbook">Runbook</a> to give feedback.</span>
+      </div>
+      <div class="ic-feedback-row">
+        <button class="btn" type="button" data-kind="correlation_correct">Correlation Correct</button>
+        <button class="btn" type="button" data-kind="correlation_incorrect">Correlation Incorrect</button>
+        <button class="btn" type="button" data-kind="root_cause_correct">Root Cause Correct</button>
+        <button class="btn" type="button" data-kind="root_cause_incorrect">Root Cause Incorrect</button>
+      </div>
+      <div id="feedback-list" style="margin-top:14px;"></div>
+    </div>
+
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if enabled %}
+<script src="/static/cytoscape.min.js?v={{ asset_version }}"></script>
+<script>
+  (function () {
+    var root = document.getElementById("ic-detail-root");
+    var incidentId = root.dataset.incidentId;
+    var isOperator = root.dataset.isOperator === "1";
+
+    var SIGNAL_PHRASES = {
+      same_entity: "Same entity",
+      same_host: "Same host",
+      same_service: "Same service",
+      same_application: "Same application",
+      same_api: "Same API",
+      same_database: "Same database",
+      same_business_transaction: "Same business transaction",
+      same_trace: "Same distributed trace",
+      known_dependency: "Known dependency between the affected entities",
+      temporal_relationship: "Events occurred close together in time",
+      multi_source: "Multiple monitoring sources confirmed the symptoms",
+    };
+    var VALUE_SIGNALS = ["same_entity", "same_host", "same_service", "same_application", "same_api",
+      "same_database", "same_business_transaction", "same_trace"];
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+    function fmtTime(iso) {
+      if (!iso) return "-";
+      return new Date(iso).toISOString().replace("T", " ").slice(0, 19) + "Z";
+    }
+    function fmtClock(iso) {
+      if (!iso) return "-";
+      return new Date(iso).toISOString().slice(11, 19);
+    }
+    function fmtDuration(startIso, endIso) {
+      if (!startIso) return "-";
+      var start = new Date(startIso).getTime();
+      var end = endIso ? new Date(endIso).getTime() : Date.now();
+      var secs = Math.max(0, Math.round((end - start) / 1000));
+      var h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+      if (h > 0) return h + "h " + m + "m " + s + "s";
+      if (m > 0) return m + "m " + s + "s";
+      return s + "s";
+    }
+    function getJson(url) {
+      return fetch(url).then(function (r) {
+        if (!r.ok) { var e = new Error("http " + r.status); e.status = r.status; throw e; }
+        return r.json();
+      });
+    }
+
+    function renderSummary(inc) {
+      document.getElementById("ic-sub").textContent = inc.title;
+      document.getElementById("s-title").textContent = inc.title;
+      document.getElementById("s-severity").innerHTML =
+        '<span class="pill sev-pill sev-' + inc.severity_int + '"><span class="dot"></span>' + esc(inc.severity_label) + "</span>";
+      document.getElementById("s-status").innerHTML =
+        '<span class="pill ' + (inc.status === "resolved" ? "status-ok" : "status-down") + '"><span class="dot"></span>' + esc(inc.status) + "</span>";
+      document.getElementById("s-start").textContent = fmtTime(inc.start_time);
+      document.getElementById("s-duration").textContent = fmtDuration(inc.start_time, inc.status === "resolved" ? inc.last_update : null);
+      document.getElementById("s-business").textContent = inc.business_service || "Not attributed to one business service";
+      document.getElementById("s-events").textContent = (inc.related_events || []).length;
+      document.getElementById("s-types").textContent = (inc.correlation_types || []).join(", ") || "-";
+    }
+
+    function renderRootCause(inc) {
+      var el = document.getElementById("rc-list");
+      var candidates = inc.root_cause_candidates || [];
+      if (!candidates.length) {
+        el.innerHTML = '<div class="empty">No root cause candidate identified yet - not enough topology or trace evidence links these events to one origin.</div>';
+        return;
+      }
+      el.innerHTML = candidates.map(function (c) {
+        return (
+          '<div class="ic-candidate">' +
+          '<div class="ic-candidate-head"><b>' + esc(c.canonical_name) + '</b>' +
+          '<span class="badge">' + esc(c.entity_type) + '</span>' +
+          '<span class="badge" title="Number of independent pieces of evidence, not a probability">' + c.evidence_count + ' evidence item(s)</span>' +
+          '</div>' +
+          '<ul class="ic-evidence">' + (c.evidence || []).map(function (e) { return "<li>" + esc(e) + "</li>"; }).join("") + '</ul>' +
+          '</div>'
+        );
+      }).join("");
+    }
+
+    function renderExplanation(evidence, candidates) {
+      var el = document.getElementById("explain-list");
+      var seen = {};
+      var lines = [];
+      (evidence || []).forEach(function (e) {
+        var phrase = SIGNAL_PHRASES[e.signal];
+        if (!phrase || seen[e.signal]) return;
+        seen[e.signal] = true;
+        var suffix = VALUE_SIGNALS.indexOf(e.signal) !== -1 ? ": " + e.value : (e.value ? " (" + e.value + ")" : "");
+        lines.push(phrase + suffix);
+      });
+      (candidates || []).forEach(function (c) {
+        (c.evidence || []).forEach(function (ev) {
+          if (ev.indexOf("earliest problem onset") !== -1) lines.push(ev);
+        });
+      });
+      if (!lines.length) {
+        el.innerHTML = '<li style="list-style:none;">No stored correlation evidence yet.</li>';
+        return;
+      }
+      el.innerHTML = lines.map(function (l) { return "<li>" + esc(l) + "</li>"; }).join("");
+    }
+
+    function renderTimeline(entries) {
+      var el = document.getElementById("timeline-list");
+      if (!entries.length) { el.innerHTML = '<li style="list-style:none;">No timestamped occurrences yet.</li>'; return; }
+      el.innerHTML = entries.map(function (e) {
+        return (
+          '<li class="' + (e.kind === "recovery" ? "ic-recovery" : "") + '">' +
+          '<span class="ic-time">' + fmtClock(e.timestamp) + '</span>' +
+          esc(e.description) +
+          '<span class="ic-kind">' + esc(e.kind) + '</span>' +
+          '</li>'
+        );
+      }).join("");
+    }
+
+    function nodeStyle(role) {
+      if (role === "root_cause_candidate") return { shape: "diamond", color: "#dc2626", border: "solid", width: 3 };
+      if (role === "symptom") return { shape: "ellipse", color: "#dc2626", border: "solid", width: 2 };
+      return { shape: "round-rectangle", color: "#9ca3af", border: "dashed", width: 2 };
+    }
+
+    function renderGraph(graph) {
+      var el = document.getElementById("ic-graph");
+      if (!graph.nodes.length) {
+        el.innerHTML = '<div class="empty" style="padding:60px;">No topology recorded for this incident\'s entities.</div>';
+        return;
+      }
+      var elements = graph.nodes.map(function (n) {
+        var st = nodeStyle(n.role);
+        var prefix = n.role === "root_cause_candidate" ? "★ " : "";
+        return { data: { id: "n" + n.entity_id, label: prefix + n.canonical_name, shape: st.shape,
+                          color: st.color, borderStyle: st.border, borderWidth: st.width } };
+      });
+      graph.edges.forEach(function (e, i) {
+        elements.push({ data: { id: "e" + i, source: "n" + e.from_entity_id, target: "n" + e.to_entity_id, label: e.relationship_type } });
+      });
+      cytoscape({
+        container: el,
+        elements: elements,
+        wheelSensitivity: 0.25,
+        layout: { name: "breadthfirst", directed: true, padding: 30, spacingFactor: 1.3 },
+        style: [
+          { selector: "node", style: {
+              shape: "data(shape)", "background-color": "data(color)", "border-color": "data(color)",
+              "border-width": "data(borderWidth)", "border-style": "data(borderStyle)",
+              label: "data(label)", color: "var(--text, #16181d)", "font-size": "11px", "font-weight": "600",
+              "text-valign": "bottom", "text-margin-y": "6px", width: 24, height: 24,
+          } },
+          { selector: "edge", style: {
+              width: 1.5, "line-color": "#9ca3af", "target-arrow-color": "#9ca3af",
+              "curve-style": "bezier", "target-arrow-shape": "triangle",
+              "font-size": "9px", label: "data(label)", color: "var(--text-faint, #9ca3af)",
+          } },
+        ],
+      });
+    }
+
+    function renderRelatedEvents(occurrences, servers) {
+      var el = document.getElementById("related-events");
+      var byPlatform = {};
+      occurrences.forEach(function (o) {
+        (byPlatform[o.source_platform] = byPlatform[o.source_platform] || []).push(o);
+      });
+      var platforms = Object.keys(byPlatform);
+      if (!platforms.length) { el.innerHTML = '<div class="empty">No occurrences recorded.</div>'; return; }
+      el.innerHTML = platforms.sort().map(function (p) {
+        var rows = byPlatform[p].map(function (o) {
+          var srv = servers.filter(function (s) { return s.platform === p; })[0];
+          var link = srv && srv.url && srv.url !== "mock" && /^https?:\/\//.test(srv.url)
+            ? ' <a href="' + esc(srv.url) + '" target="_blank" rel="noopener" title="Opens the tool\'s own console (its landing page, not necessarily a direct deep link)">Open in ' + esc(p) + '</a>'
+            : "";
+          return (
+            '<div class="ic-occ-row"><span class="ic-occ-id">' + esc(o.external_id) + '</span>' +
+            '<span>' + esc(o.title) + '</span>' +
+            '<span class="pill sev-pill sev-' + (o.severity_label ? "" : "") + '">' + esc(o.original_severity || o.severity_label) + '</span>' +
+            '<span>' + esc(o.host_hostname || "-") + '</span>' +
+            '<span style="color:var(--text-faint);">' + fmtTime(o.started_at) + '</span>' + link + '</div>'
+          );
+        }).join("");
+        return (
+          '<div class="ic-source-group"><div class="ic-source-head">' +
+          '<span class="badge badge-' + p + '"><span class="dot"></span>' + esc(p) + '</span>' +
+          '<span style="color:var(--text-faint); font-weight:400;">' + byPlatform[p].length + ' occurrence(s)</span>' +
+          '</div><div class="ic-source-body">' + rows + '</div></div>'
+        );
+      }).join("");
+    }
+
+    function impactCell(label, items) {
+      var names = (items || []).slice(0, 6).map(function (i) { return "<li>" + esc(i.canonical_name) + "</li>"; }).join("");
+      var more = (items || []).length > 6 ? "<li>+" + ((items.length) - 6) + " more</li>" : "";
+      return (
+        '<div class="ic-impact-cell"><div class="n">' + (items ? items.length : 0) + '</div>' +
+        '<div class="lbl">' + esc(label) + '</div>' +
+        (items && items.length ? "<ul>" + names + more + "</ul>" : "") +
+        '</div>'
+      );
+    }
+
+    function renderImpact(impact) {
+      var a = impact.affected;
+      document.getElementById("impact-grid").innerHTML =
+        impactCell("Business services", impact.business_service ? [{ canonical_name: impact.business_service }] : []) +
+        impactCell("Applications", a.applications) +
+        impactCell("Services", a.services) +
+        impactCell("APIs", a.apis) +
+        impactCell("Databases", a.databases) +
+        impactCell("Hosts", a.hosts) +
+        impactCell("Network devices", a.network_devices);
+      if (impact.application_health && impact.application_health.length) {
+        var healthHtml = impact.application_health.map(function (h) {
+          return '<span class="badge" title="' + h.affected_apis.length + '/' + h.total_apis + ' known APIs affected">' +
+            esc(h.application_name) + ": " + esc(h.status) + "</span>";
+        }).join(" ");
+        document.getElementById("impact-grid").insertAdjacentHTML(
+          "beforeend",
+          '<div class="ic-impact-cell" style="grid-column:1/-1;"><div class="lbl">Application health</div><div style="margin-top:6px;">' + healthHtml + "</div></div>",
+        );
+      }
+    }
+
+    function renderTypes(types) {
+      var el = document.getElementById("types-badges");
+      if (!types.length) { el.innerHTML = '<div class="empty">No correlation type recorded.</div>'; return; }
+      el.innerHTML = types.map(function (t) {
+        return '<span class="badge" style="margin-right:6px; text-transform:uppercase;">' + esc(t) + "</span>";
+      }).join("");
+    }
+
+    function renderEventDetails(eventIds) {
+      var el = document.getElementById("event-details");
+      el.innerHTML = "";
+      eventIds.forEach(function (eid) {
+        Promise.all([
+          getJson("/api/v1/logical-events/" + eid),
+          getJson("/api/v1/logical-events/" + eid + "/occurrences"),
+        ]).then(function (results) {
+          var le = results[0], occs = results[1];
+          var details = document.createElement("details");
+          details.className = "ic-event-detail";
+          var occRows = occs.map(function (o) {
+            return (
+              '<dl class="ic-kv">' +
+              "<dt>Source</dt><dd>" + esc(o.source_platform) + "</dd>" +
+              "<dt>External id</dt><dd>" + esc(o.external_id) + "</dd>" +
+              "<dt>Title</dt><dd>" + esc(o.title) + "</dd>" +
+              "<dt>Severity</dt><dd>" + esc(o.original_severity || o.severity_label) + "</dd>" +
+              "<dt>Started</dt><dd>" + fmtTime(o.started_at) + "</dd>" +
+              "<dt>Resolved</dt><dd>" + (o.resolved ? "yes" : "no") + "</dd>" +
+              "</dl>"
+            );
+          }).join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0;" />');
+          details.innerHTML =
+            "<summary>Event #" + eid + " - " + esc(le.title) + "</summary>" +
+            '<div class="ic-event-detail-body">' +
+            "<div><h5>Original event(s)</h5>" + occRows + "</div>" +
+            '<div><h5>Normalized event</h5><dl class="ic-kv">' +
+            "<dt>Entity</dt><dd>" + (le.entity_id || "-") + "</dd>" +
+            "<dt>Normalized problem type</dt><dd>" + esc(le.normalized_problem_type) + "</dd>" +
+            "<dt>Fingerprint</dt><dd>" + esc(le.fingerprint) + "</dd>" +
+            "<dt>Status</dt><dd>" + esc(le.status) + "</dd>" +
+            "<dt>Occurrence count</dt><dd>" + le.occurrence_count + "</dd>" +
+            "<dt>First seen</dt><dd>" + fmtTime(le.first_seen) + "</dd>" +
+            "<dt>Last seen</dt><dd>" + fmtTime(le.last_seen) + "</dd>" +
+            "</dl></div></div>";
+          el.appendChild(details);
+        }).catch(function () {});
+      });
+    }
+
+    function renderFeedback(list) {
+      var el = document.getElementById("feedback-list");
+      if (!list.length) { el.innerHTML = '<div class="empty">No feedback recorded yet.</div>'; return; }
+      el.innerHTML = '<div class="table-wrap"><table><thead><tr><th>Kind</th><th>Note</th><th>By</th><th>When</th></tr></thead><tbody>' +
+        list.map(function (f) {
+          return "<tr><td>" + esc(f.kind) + "</td><td>" + esc(f.note || "-") + "</td><td>" + esc(f.actor) + "</td><td>" + fmtTime(f.created_at) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
+
+    function wireFeedback() {
+      var hint = document.getElementById("feedback-auth-hint");
+      hint.hidden = isOperator;
+      document.querySelectorAll(".ic-feedback-row button").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          fetch("/api/v1/incidents/" + incidentId + "/feedback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: btn.dataset.kind }),
+          }).then(function (r) {
+            if (r.status === 401 || r.status === 503) {
+              if (window.toast) window.toast("Sign in via the Runbook to give feedback", false);
+              return null;
+            }
+            if (!r.ok) { throw new Error("failed"); }
+            return r.json();
+          }).then(function (row) {
+            if (!row) return;
+            if (window.toast) window.toast("Feedback recorded", true);
+            getJson("/api/v1/incidents/" + incidentId + "/feedback").then(renderFeedback);
+          }).catch(function () {
+            if (window.toast) window.toast("Could not record feedback", false);
+          });
+        });
+      });
+    }
+
+    function load() {
+      Promise.all([
+        getJson("/api/v1/incidents/" + incidentId),
+        getJson("/api/v1/incidents/" + incidentId + "/impact"),
+        getJson("/api/v1/incidents/" + incidentId + "/correlation-graph"),
+        getJson("/api/v1/incidents/" + incidentId + "/feedback"),
+        getJson("/api/v1/servers").catch(function () { return []; }),
+      ]).then(function (results) {
+        var inc = results[0], impact = results[1], graph = results[2], feedback = results[3], servers = results[4];
+        document.getElementById("ic-content").hidden = false;
+
+        renderSummary(inc);
+        renderRootCause(inc);
+        renderExplanation(inc.evidence, inc.root_cause_candidates);
+        renderTimeline(inc.timeline);
+        renderGraph(graph);
+        renderImpact(impact);
+        renderTypes(inc.correlation_types || []);
+        renderFeedback(feedback);
+        wireFeedback();
+        renderEventDetails(inc.related_events || []);
+
+        var eventIds = inc.related_events || [];
+        Promise.all(eventIds.map(function (eid) {
+          return getJson("/api/v1/logical-events/" + eid + "/occurrences").catch(function () { return []; });
+        })).then(function (occLists) {
+          var all = [].concat.apply([], occLists);
+          renderRelatedEvents(all, servers);
+        });
+      }).catch(function (err) {
+        document.getElementById("ic-error").hidden = false;
+        if (err && err.status === 404) {
+          document.getElementById("ic-error-text").textContent = "Incident #" + incidentId + " not found.";
+        }
+      });
+    }
+
+    load();
+  })();
+</script>
+{% endif %}
+{% endblock %}

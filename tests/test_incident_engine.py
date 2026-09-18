@@ -47,6 +47,7 @@ from app.models import (
     TopologySource,
 )
 from app.trace_ingest import ingest_trace_spans
+from tests.conftest import RUNBOOK_PASSWORD, RUNBOOK_USER
 
 NOW = datetime(2026, 9, 19, 10, 1, 0, tzinfo=timezone.utc)
 
@@ -616,6 +617,17 @@ class TestIncidentAPI:
         finally:
             db.close()
 
+        client.cookies.clear()
+        # Merge/split require the Runbook operator login (Correlation
+        # Phase 6's only authorization) — unauthenticated is rejected first.
+        r = client.post(f"/api/v1/incidents/{incident_id}/split", json={"event_ids": [ev2.id]})
+        assert r.status_code == 401
+
+        client.post(
+            "/runbook/login", data={"username": RUNBOOK_USER, "password": RUNBOOK_PASSWORD},
+            follow_redirects=True,
+        )
+
         r = client.post(f"/api/v1/incidents/{incident_id}/split", json={"event_ids": [ev2.id]})
         assert r.status_code == 200
         new_id = r.json()["id"]
@@ -627,6 +639,8 @@ class TestIncidentAPI:
 
         r = client.post("/api/v1/incidents/merge", json={"incident_ids": [incident_id]})
         assert r.status_code == 422
+
+        client.cookies.clear()
 
     def test_traces_endpoint_ingests_and_application_health_endpoint_reads_it(self, client):
         trace_id = _tag("APITRACE")

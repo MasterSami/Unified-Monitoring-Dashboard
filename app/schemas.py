@@ -473,6 +473,7 @@ class IncidentOut(BaseModel):
     affected: IncidentAffectedOut
     root_cause_candidates: list[RootCauseCandidateOut] = Field(default_factory=list)
     member_roles: dict[str, str] = Field(default_factory=dict)
+    sources: list[str] = Field(default_factory=list)
     merged_into_id: int | None = None
     created_at: datetime
 
@@ -526,7 +527,8 @@ class IncidentGraphNodeOut(BaseModel):
     entity_id: int
     entity_type: str
     canonical_name: str
-    #: "root_cause_candidate" | "member"
+    #: "root_cause_candidate" | "symptom" (has its own active event) |
+    #: "healthy_dependency" (topology-adjacent, no active event of its own)
     role: str
     logical_event_ids: list[int] = Field(default_factory=list)
 
@@ -550,6 +552,54 @@ class IncidentMergeIn(BaseModel):
 
 class IncidentSplitIn(BaseModel):
     event_ids: list[int] = Field(min_length=1)
+
+
+class IncidentFeedbackIn(BaseModel):
+    """An operator's verdict on one incident — Correlation Phase 6. Purely
+    observational (see app.models.IncidentFeedback's own note): submitting
+    this never changes the incident's own correlation or root cause.
+    """
+
+    kind: str = Field(description="correlation_correct | correlation_incorrect | root_cause_correct | root_cause_incorrect")
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class IncidentFeedbackOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    incident_id: int
+    kind: str
+    note: str | None
+    actor: str
+    created_at: datetime
+
+
+class CorrelationMetricsOut(BaseModel):
+    """The task's own named metric list (section 13) — see app.metrics."""
+
+    events_received: int
+    events_normalized: int
+    events_deduplicated: int
+    correlations_created: int
+    incidents_created: int
+    incidents_merged: int
+    root_cause_candidates: int
+    correlation_failures: int
+    average_processing_time: float
+
+
+class ServerRefOut(BaseModel):
+    """A configured instance's public reference — name/platform/base URL
+    only. Never user/password/token (task section 14: "source credential
+    protection", "no sensitive credentials in logs"). Used by the Incidents
+    UI to build an "open in {platform}" link where one is actually
+    configured (see app.servers.ServerConfig).
+    """
+
+    name: str
+    platform: str
+    url: str
 
 
 class CollectorStatus(BaseModel):

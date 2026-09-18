@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     # endpoints are always on regardless — this flag only gates the page.
     enable_dependency_graph: bool = False
 
+    # Feature flag for the Incidents view (Correlation Phase 6) — the
+    # operational UI over Phase 4/5's correlations and incidents. Kept OFF
+    # by default like every other optional nav tab; enable it yourself from
+    # .env. The underlying /api/v1/incidents* and /api/v1/traces endpoints
+    # are always on regardless — this flag only gates the page.
+    enable_incidents: bool = False
+
     # --- Runbook (admin script library) -------------------------------------
     # Feature flag for the Runbook tab — the team's library of operational
     # scripts, browsable and runnable from the UI. OFF by default; enable it

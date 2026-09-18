@@ -12,12 +12,13 @@ import secrets
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, defer
 
 from app.application_health import compute_application_health
+from app.audit import record_audit
 from app.config import Settings, get_settings
 from app.correlation_engine import correlate_pair, run_correlation_batch, run_correlation_for_event
 from app.correlation_rules import create_rule, get_weights, list_rules, set_weight
@@ -25,6 +26,7 @@ from app.db import get_db
 from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
 from app.incident_engine import build_timeline, merge_incidents, run_incident_formation, split_incident
+from app.metrics import get_correlation_metrics
 from app.models import (
     PLATFORM_ORDER,
     Alert,
@@ -38,9 +40,11 @@ from app.models import (
     EntityManualMapping,
     EntityRelationship,
     EntityType,
+    FeedbackKind,
     Host,
     HostStatus,
     Incident,
+    IncidentFeedback,
     LogicalEvent,
     LogicalEventStatus,
     RelationshipType,
@@ -51,6 +55,7 @@ from app.models import (
     TopologySource,
 )
 from app.normalizer import severity_label
+from app.runbook_auth import COOKIE_NAME, read_token
 from app.trace_ingest import ingest_trace_spans
 from app.scheduler import (
     get_collector_statuses,
@@ -78,6 +83,7 @@ from app.schemas import (
     CollectorStatus,
     CorrelationDetailOut,
     CorrelationEvidenceOut,
+    CorrelationMetricsOut,
     CorrelationOut,
     CorrelationOutcomeOut,
     CorrelationRuleIn,
@@ -95,6 +101,8 @@ from app.schemas import (
     IncidentCorrelationGraphOut,
     IncidentDetailOut,
     IncidentEvidenceEntryOut,
+    IncidentFeedbackIn,
+    IncidentFeedbackOut,
     IncidentGraphEdgeOut,
     IncidentGraphNodeOut,
     IncidentImpactOut,
@@ -110,6 +118,7 @@ from app.schemas import (
     RelatedEntityOut,
     RelationshipIn,
     RelationshipOut,
+    ServerRefOut,
     SeverityBucket,
     SiteScopeIngest,
     SummaryOut,
@@ -132,6 +141,32 @@ def _check_ingest_auth(authorization: str | None, settings: Settings) -> None:
     expected = f"Bearer {token}"
     if not authorization or not secrets.compare_digest(authorization, expected):
         raise HTTPException(status_code=401, detail="invalid or missing bearer token")
+
+
+def _require_operator(request: Request, settings: Settings) -> str:
+    """Correlation Phase 6: the only authorization this deployment has.
+
+    Incident feedback/merge/split are the write actions this phase adds
+    (task section 14: "authorization"); there is no general-purpose user
+    login anywhere else in this app, only the Runbook tab's own signed
+    session cookie (app.runbook_auth). Rather than build a second, parallel
+    auth system, these actions require that SAME login — being signed in to
+    the Runbook already means "an authorized operator of this dashboard".
+    503 (not 401) when Runbook itself isn't configured at all: there is then
+    no way for anyone to authenticate, which is a deployment gap to fix, not
+    a per-request auth failure.
+
+    ("Management-zone aware access", also asked for in that section, is not
+    applicable here — no source this codebase ingests from carries Dynatrace
+    management-zone membership or any other zone/RBAC-scoping attribute
+    today; nothing to filter on.)
+    """
+    if not settings.enable_runbook:
+        raise HTTPException(status_code=503, detail="operator authorization is not configured for this deployment")
+    user = read_token(settings, request.cookies.get(COOKIE_NAME))
+    if not user:
+        raise HTTPException(status_code=401, detail="sign in via /runbook first")
+    return user
 
 
 @router.post("/ingest/sitescope", response_model=IngestResult)
@@ -951,27 +986,80 @@ def run_incidents(
     return result
 
 
+def _aware_dt(d: datetime) -> datetime:
+    return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+
+def _matches_affected(incident: Incident, bucket: str, needle: str) -> bool:
+    items = (incident.affected or {}).get(bucket) or []
+    n = needle.lower()
+    return any(n in (item.get("canonical_name") or "").lower() for item in items)
+
+
 @router.get("/incidents", response_model=list[IncidentOut])
 def list_incidents(
     status: str | None = Query(default=None),
     business_service: str | None = Query(default=None),
+    severity_min: int | None = Query(default=None, ge=1, le=5, description="minimum severity_int (1-5)"),
+    source: str | None = Query(default=None, description="a source_platform reported among this incident's members"),
+    application: str | None = Query(default=None, description="substring match on affected application names"),
+    service: str | None = Query(default=None, description="substring match on affected service names"),
+    api: str | None = Query(default=None, description="substring match on affected API names"),
+    database: str | None = Query(default=None, description="substring match on affected database names"),
+    root_cause: str | None = Query(default=None, description="substring match on root-cause candidate names"),
+    start_from: datetime | None = Query(default=None, description="start_time at/after this UTC timestamp"),
+    start_to: datetime | None = Query(default=None, description="start_time at/before this UTC timestamp"),
     event_id: int | None = Query(default=None, description="Any member LogicalEvent id"),
     limit: int | None = Query(default=None, ge=1),
     offset: int | None = Query(default=None, ge=0),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> list[Incident]:
+    """Filterable, paginated incident list — the Incidents page's data
+    source (Correlation Phase 6). ``status``/``business_service``/
+    ``severity`` filter in SQL; the rest (member/source/affected-category/
+    time-range matches) are Python-side over each incident's own JSON
+    summary — the same accepted pattern the existing ``event_id`` filter
+    already uses (see app.correlation_engine's linear-scan precedent for why
+    that's fine at this table's expected scale).
+    """
     stmt = select(Incident)
     if status:
         stmt = stmt.where(Incident.status == status)
     if business_service:
         stmt = stmt.where(Incident.business_service == business_service)
+    if severity_min is not None:
+        stmt = stmt.where(Incident.severity_int >= severity_min)
     stmt = stmt.order_by(Incident.last_update.desc())
-    size, start = _page_window(limit, offset, settings)
+    rows = list(db.scalars(stmt).all())
+
     if event_id is not None:
-        rows = [i for i in db.scalars(stmt).all() if event_id in (i.related_events or [])]
-        return rows[start : start + size]
-    return list(db.scalars(stmt.offset(start).limit(size)).all())
+        rows = [i for i in rows if event_id in (i.related_events or [])]
+    if source:
+        rows = [i for i in rows if source in (i.sources or [])]
+    if root_cause:
+        needle = root_cause.lower()
+        rows = [
+            i for i in rows
+            if any(needle in (c.get("canonical_name") or "").lower() for c in (i.root_cause_candidates or []))
+        ]
+    if application:
+        rows = [i for i in rows if _matches_affected(i, "applications", application)]
+    if service:
+        rows = [i for i in rows if _matches_affected(i, "services", service)]
+    if api:
+        rows = [i for i in rows if _matches_affected(i, "apis", api)]
+    if database:
+        rows = [i for i in rows if _matches_affected(i, "databases", database)]
+    if start_from is not None:
+        lo = _aware_dt(start_from)
+        rows = [i for i in rows if i.start_time and _aware_dt(i.start_time) >= lo]
+    if start_to is not None:
+        hi = _aware_dt(start_to)
+        rows = [i for i in rows if i.start_time and _aware_dt(i.start_time) <= hi]
+
+    size, start = _page_window(limit, offset, settings)
+    return rows[start : start + size]
 
 
 def _get_incident_or_404(db: Session, incident_id: int) -> Incident:
@@ -1051,12 +1139,24 @@ def get_incident_impact(incident_id: int, db: Session = Depends(get_db)) -> Inci
 def get_incident_correlation_graph(
     incident_id: int, db: Session = Depends(get_db),
 ) -> IncidentCorrelationGraphOut:
-    """Every member entity of this incident, plus the direct EntityRelationship
-    edges stored between them — a small, drawable graph, not a re-traversal.
+    """Every member entity of this incident, PLUS every entity in its wider
+    ``affected`` blast radius (Correlation Phase 5's topology-reachable set —
+    see app.incident_engine._affected_entities), so the graph can show a
+    "healthy dependency" node (task section 5's 4th category: topology-
+    adjacent, but with no active event of its own) — not just the entities
+    that themselves fired an alert. Edges are the direct EntityRelationship
+    rows stored between whichever of those entities are shown; this is a
+    small, drawable one-hop-per-edge graph, not a re-traversal.
     """
     incident = _get_incident_or_404(db, incident_id)
     members = _incident_members(db, incident)
-    entity_ids = {m.entity_id for m in members if m.entity_id is not None}
+    member_entity_ids = {m.entity_id for m in members if m.entity_id is not None}
+
+    affected_entity_ids: set[int] = set()
+    for bucket in (incident.affected or {}).values():
+        affected_entity_ids.update(item["entity_id"] for item in bucket)
+
+    entity_ids = member_entity_ids | affected_entity_ids
     entities = {
         e.id: e for e in db.scalars(select(CanonicalEntity).where(CanonicalEntity.id.in_(entity_ids))).all()
     } if entity_ids else {}
@@ -1066,10 +1166,17 @@ def get_incident_correlation_graph(
         if m.entity_id is not None:
             events_by_entity.setdefault(m.entity_id, []).append(m.id)
 
+    def _role(eid: int) -> str:
+        if eid in root_ids:
+            return "root_cause_candidate"
+        if eid in member_entity_ids:
+            return "symptom"
+        return "healthy_dependency"
+
     nodes = [
         IncidentGraphNodeOut(
             entity_id=eid, entity_type=entity.entity_type.value, canonical_name=entity.canonical_name,
-            role="root_cause_candidate" if eid in root_ids else "member",
+            role=_role(eid),
             logical_event_ids=events_by_entity.get(eid, []),
         )
         for eid, entity in entities.items()
@@ -1093,11 +1200,16 @@ def get_incident_correlation_graph(
 
 
 @router.post("/incidents/merge", response_model=IncidentOut)
-def merge_incidents_endpoint(payload: IncidentMergeIn, db: Session = Depends(get_db)) -> Incident:
+def merge_incidents_endpoint(
+    payload: IncidentMergeIn, request: Request,
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> Incident:
     """Merge 2+ incidents into one survivor. Only ever explicit — the
     caller naming these specific ids IS the deterministic evidence the task
     requires (section 12); the engine never merges on its own initiative.
+    Requires the Runbook operator login — see _require_operator.
     """
+    actor = _require_operator(request, settings)
     for iid in payload.incident_ids:
         if db.get(Incident, iid) is None:
             raise HTTPException(status_code=404, detail=f"incident {iid} not found")
@@ -1105,24 +1217,99 @@ def merge_incidents_endpoint(payload: IncidentMergeIn, db: Session = Depends(get
         survivor = merge_incidents(db, payload.incident_ids)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    record_audit(
+        db, actor=actor, action="incident_merge", target=f"incident:{survivor.id}",
+        details={"incident_ids": payload.incident_ids},
+    )
     db.commit()
     return survivor
 
 
 @router.post("/incidents/{incident_id}/split", response_model=IncidentOut)
 def split_incident_endpoint(
-    incident_id: int, payload: IncidentSplitIn, db: Session = Depends(get_db),
+    incident_id: int, payload: IncidentSplitIn, request: Request,
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
 ) -> Incident:
     """Carve the given member events out into a brand-new incident. The
-    original keeps everything else — no member is ever deleted.
+    original keeps everything else — no member is ever deleted. Requires
+    the Runbook operator login — see _require_operator.
     """
+    actor = _require_operator(request, settings)
     _get_incident_or_404(db, incident_id)
     try:
         new_incident = split_incident(db, incident_id, payload.event_ids)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
+    record_audit(
+        db, actor=actor, action="incident_split", target=f"incident:{incident_id}",
+        details={"event_ids": payload.event_ids, "new_incident_id": new_incident.id},
+    )
     db.commit()
     return new_incident
+
+
+@router.post("/incidents/{incident_id}/feedback", response_model=IncidentFeedbackOut, status_code=201)
+def submit_incident_feedback(
+    incident_id: int, payload: IncidentFeedbackIn, request: Request,
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> IncidentFeedback:
+    """Record an operator's verdict on this incident's correlation or root
+    cause (task section 10). Purely observational — nothing downstream of
+    this reads it back into the deterministic engine; see
+    app.models.IncidentFeedback's own note. Requires the Runbook operator
+    login — see _require_operator.
+    """
+    actor = _require_operator(request, settings)
+    _get_incident_or_404(db, incident_id)
+    try:
+        kind = FeedbackKind(payload.kind)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"kind must be one of {[k.value for k in FeedbackKind]}",
+        ) from None
+    row = IncidentFeedback(incident_id=incident_id, kind=kind, note=payload.note, actor=actor)
+    db.add(row)
+    db.flush()
+    record_audit(
+        db, actor=actor, action="incident_feedback", target=f"incident:{incident_id}",
+        details={"kind": kind.value},
+    )
+    db.commit()
+    return row
+
+
+@router.get("/incidents/{incident_id}/feedback", response_model=list[IncidentFeedbackOut])
+def list_incident_feedback(incident_id: int, db: Session = Depends(get_db)) -> list[IncidentFeedback]:
+    _get_incident_or_404(db, incident_id)
+    return list(
+        db.scalars(
+            select(IncidentFeedback)
+            .where(IncidentFeedback.incident_id == incident_id)
+            .order_by(IncidentFeedback.created_at.desc())
+        ).all()
+    )
+
+
+@router.get("/metrics/correlation", response_model=CorrelationMetricsOut)
+def correlation_metrics(db: Session = Depends(get_db)) -> CorrelationMetricsOut:
+    """Correlation engine health/throughput metrics (task section 13) — read
+    access only, no operator login required (nothing here is sensitive).
+    """
+    return CorrelationMetricsOut(**get_correlation_metrics(db))
+
+
+@router.get("/servers", response_model=list[ServerRefOut])
+def list_servers(settings: Settings = Depends(get_settings)) -> list[ServerRefOut]:
+    """Every configured instance's name/platform/base URL — never
+    credentials (see ServerRefOut's own note). Used by the Incidents UI to
+    link out to the source tool where a real URL is configured; a mock-mode
+    "mock" URL or an empty one is filtered out client-side, not here, so the
+    same endpoint also works for whatever else wants this list.
+    """
+    from app.servers import load_servers
+
+    return [ServerRefOut(name=s.name, platform=s.platform, url=s.url) for s in load_servers(settings)]
 
 
 def _csv_response(

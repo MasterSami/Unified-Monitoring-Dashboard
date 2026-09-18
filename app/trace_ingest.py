@@ -40,6 +40,7 @@ signal every other collector already gives, not a guess that one span
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -51,6 +52,8 @@ from app.dependency_graph import record_relationship
 from app.entity_resolution import resolve_named_entity
 from app.fingerprint import compute_fingerprint, normalize_problem_type
 from app.models import Alert, EntityType, RelationshipType, SourcePlatform, TopologySource
+
+logger = logging.getLogger("trace_ingest")
 
 
 @dataclass
@@ -288,4 +291,9 @@ def ingest_trace_spans(db: Session, *, instance: str, spans: list[dict]) -> Trac
 
     db.flush()
     record_occurrences_batch(db, touched)
+    logger.info(
+        "trace ingest (%s): %d span(s) received, %d inserted, %d updated, %d resolved, %d relationship(s) declared",
+        instance, result.received, result.inserted, result.updated, result.resolved,
+        result.relationships_declared,
+    )
     return result

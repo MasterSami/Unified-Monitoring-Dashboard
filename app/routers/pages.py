@@ -28,6 +28,8 @@ from app.models import (
     TopologyNode,
 )
 from app.normalizer import severity_label
+from app.runbook_auth import COOKIE_NAME as RUNBOOK_COOKIE_NAME
+from app.runbook_auth import read_token
 from app.scheduler import get_collector_statuses, get_service
 from app.schemas import PlatformHostCount, SeverityBucket
 from app.servers import load_servers
@@ -105,6 +107,8 @@ templates.env.globals["enable_topology_export"] = get_settings().enable_topology
 templates.env.globals["enable_runbook"] = get_settings().enable_runbook
 # Feature flag for the Dependency Graph view (Correlation Phase 3).
 templates.env.globals["enable_dependency_graph"] = get_settings().enable_dependency_graph
+# Feature flag for the Incidents view (Correlation Phase 6).
+templates.env.globals["enable_incidents"] = get_settings().enable_incidents
 # Platforms that report live availability. Anything outside this set is an
 # inventory source and is labelled as such wherever hosts are counted.
 templates.env.globals["live_platforms"] = LIVE_PLATFORMS
@@ -1789,6 +1793,48 @@ def dependency_graph_page(
             "enabled": True,
             "root": root,
             "has_any_entity": has_any_entity,
+        },
+    )
+
+
+@router.get("/incidents", response_class=HTMLResponse)
+def incidents_page(
+    request: Request, settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Correlation Phase 6: the incident list. A thin shell — the actual
+    fetch/filter/render happens client-side against /api/v1/incidents, same
+    pattern as the Dependency Graph page's own Cytoscape fetch.
+    """
+    if not settings.enable_incidents:
+        return templates.TemplateResponse(
+            request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": False},
+        )
+    return templates.TemplateResponse(
+        request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": True},
+    )
+
+
+@router.get("/incidents/{incident_id}", response_class=HTMLResponse)
+def incident_detail_page(
+    request: Request, incident_id: int, settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Correlation Phase 6: one incident's full operational view — summary,
+    root cause candidates, correlation explanation, timeline, dependency
+    graph, related events by source, impact, correlation types, event
+    detail, and operator feedback. Also a thin shell; every section is
+    fetched client-side from the existing Phase 4/5 JSON API.
+    """
+    if not settings.enable_incidents:
+        return templates.TemplateResponse(
+            request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": False},
+        )
+    is_operator = read_token(settings, request.cookies.get(RUNBOOK_COOKIE_NAME)) is not None
+    return templates.TemplateResponse(
+        request,
+        "incident_detail.html",
+        {
+            "request": request, "active_page": "incidents", "enabled": True,
+            "incident_id": incident_id, "is_operator": is_operator,
         },
     )
 

@@ -1185,10 +1185,105 @@ class Incident(Base):
     root_cause_candidates: Mapped[list] = mapped_column(JSON, default=list)
     #: {str(event_id): SymptomRole.value} for every member in related_events.
     member_roles: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: Distinct source_platform values among every member's occurrences,
+    #: sorted — same convention as LogicalEvent.sources (Correlation Phase 6:
+    #: the Incident list's "Sources" column and its filter).
+    sources: Mapped[list] = mapped_column(JSON, default=list)
     #: Set when status == merged: the surviving Incident's id. This row is
     #: kept, not deleted — see IncidentStatus.merged.
     merged_into_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_update: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+# --- Correlation Phase 6: operational UI + production hardening --------------
+#
+# Nothing here changes what the engine decides (Phases 1-5) — this phase
+# exposes it (the Incidents UI, app/routers/pages.py), lets an operator record
+# a verdict on it (IncidentFeedback, read back but never fed into the
+# deterministic engine itself — task section 10: "do not use it for automatic
+# learning yet"), and makes the engine observable and accountable in
+# production (AuditLog, EngineMetric — see app/metrics.py, app/audit.py).
+
+
+class FeedbackKind(str, enum.Enum):
+    """An operator's verdict on one Incident — see IncidentFeedback."""
+
+    correlation_correct = "correlation_correct"
+    correlation_incorrect = "correlation_incorrect"
+    root_cause_correct = "root_cause_correct"
+    root_cause_incorrect = "root_cause_incorrect"
+
+
+class IncidentFeedback(Base):
+    """One operator's recorded verdict on an Incident's correlation or root
+    cause. Purely observational: nothing in app.correlation_engine or
+    app.incident_engine reads this table — it exists to be read BY a human
+    (or, later, a phase that explicitly opts into using it), not to close a
+    loop on its own. Never deleted or overwritten; a changed mind is a new row.
+    """
+
+    __tablename__ = "incident_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[FeedbackKind] = mapped_column(
+        Enum(FeedbackKind, native_enum=False, length=32), index=True
+    )
+    #: Free-text context ("actually caused by the switch, not the DB") —
+    #: never required, since a bare verdict is still useful signal.
+    note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: The Runbook-authenticated username that submitted this — see
+    #: app.runbook_auth; feedback requires that same login (the only
+    #: authorization this deployment has — see the module note on
+    #: app.routers.api's incident feedback/merge/split endpoints).
+    actor: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AuditLog(Base):
+    """Who did what, to what, and when — every incident-affecting write
+    action a human explicitly took (feedback, merge, split), never a
+    read or an automated engine decision (those are already fully
+    reconstructable from Correlation/CorrelationEvidence — see Phase 4).
+    """
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(255), default="", index=True)
+    #: e.g. "incident_feedback", "incident_merge", "incident_split".
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    #: e.g. "incident:42" — free-text, not a foreign key, so this table
+    #: outlives whatever it refers to (never rewritten if the target changes).
+    target: Mapped[str] = mapped_column(String(255), default="")
+    #: Small, explicitly-chosen context only (e.g. {"kind": "root_cause_incorrect"},
+    #: {"incident_ids": [3, 7]}) — never a raw request body, so no source
+    #: credential or full payload can ever land in this table. See
+    #: app.audit.record_audit.
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class EngineMetric(Base):
+    """A single accumulating counter/timer the correlation engine reports on
+    itself — the two Phase 6 metrics that current table state can't already
+    answer (``correlation_failures``, ``correlation_duration_seconds``);
+    everything else in app.metrics.get_correlation_metrics is a live COUNT
+    over existing tables instead, so it can never drift from reality.
+
+    ``value`` is a running sum, ``count`` a running count of observations —
+    an average is ``value / count`` at read time, never stored redundantly.
+    """
+
+    __tablename__ = "engine_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    value: Mapped[float] = mapped_column(Float, default=0.0)
+    count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )

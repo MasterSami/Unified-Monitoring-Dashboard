@@ -21,6 +21,8 @@ out of the returned :class:`CorrelationOutcome`.
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -33,6 +35,7 @@ from app.correlation_rules import (
     list_rules,
     merge_conditions,
 )
+from app.metrics import increment_counter, record_duration
 from app.models import (
     Alert,
     CanonicalEntity,
@@ -49,6 +52,8 @@ from app.models import (
     RelationshipType,
     TopologySource,
 )
+
+logger = logging.getLogger("correlation_engine")
 
 #: Priority tier per signal (1 highest .. 5 lowest) — see
 #: app.correlation_rules._SIGNAL_TIER for the rule-level version of this.
@@ -536,13 +541,28 @@ def run_correlation_for_event(db: Session, event_id: int) -> list[CorrelationOut
     Returns every outcome (correlated or not), most useful for tests/API
     explainability; callers that only care about persisted correlations can
     filter on ``.correlated``.
+
+    One candidate pair raising is contained to that pair — logged and
+    counted (``correlation_failures``), never allowed to abort every other
+    pair in the same run (same fault-isolation philosophy as
+    app.topology_sync.sync_all). Deliberately does NOT roll back the
+    session: correlate_pair's own writes are upserts (idempotent — a later
+    run over the same pair is safe to repeat), and rolling back here would
+    also discard earlier pairs THIS run already correlated successfully but
+    the caller has not committed yet.
     """
     event = db.get(LogicalEvent, event_id)
     if event is None:
         return []
     outcomes = []
     for candidate in find_candidate_events(db, event):
-        outcomes.append(correlate_pair(db, event.id, candidate.id))
+        try:
+            outcomes.append(correlate_pair(db, event.id, candidate.id))
+        except Exception:  # noqa: BLE001 — contained by design, see docstring
+            logger.exception(
+                "correlate_pair failed for event pair (%s, %s)", event.id, candidate.id,
+            )
+            increment_counter(db, "correlation_failures")
     return outcomes
 
 
@@ -550,8 +570,10 @@ def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, li
     """Run correlation for a batch of events (default: the most recently
     touched non-resolved LogicalEvents, capped at ``limit``). Returns a
     summary, not the full per-pair detail — use run_correlation_for_event
-    for that.
+    for that. Records ``correlation_duration_seconds`` (the task's
+    ``average_processing_time`` metric) for the whole batch.
     """
+    started = time.perf_counter()
     if event_ids is None:
         event_ids = list(
             db.scalars(
@@ -568,4 +590,9 @@ def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, li
             evaluated += 1
             if outcome.correlated:
                 correlated += 1
+    record_duration(db, "correlation_duration_seconds", time.perf_counter() - started)
+    logger.info(
+        "correlation batch: %d event(s), %d pair(s) evaluated, %d correlated",
+        len(event_ids), evaluated, correlated,
+    )
     return {"events_processed": len(event_ids), "pairs_evaluated": evaluated, "pairs_correlated": correlated}

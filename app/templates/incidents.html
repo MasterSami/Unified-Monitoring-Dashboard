@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+{% block title %}Incidents · Unified Monitoring{% endblock %}
+{% block page_title %}Incidents{% endblock %}
+{% block page_sub %}Correlated problems (Correlation Phase 4/5) with a likely root cause candidate and full evidence{% endblock %}
+
+{% block content %}
+{% if not enabled %}
+<div class="card card-pad" style="text-align:center; padding: 48px 24px;">
+  <div style="font-size:40px; margin-bottom: 12px;">⚑</div>
+  <h2 style="margin:0 0 8px;">Incidents is turned off</h2>
+  <p style="color:var(--text-muted); max-width:64ch; margin:0 auto;">
+    This section lists <b>Incidents</b> (Correlation Phase 5) - one or more
+    correlated LogicalEvents (Phase 4), with a ranked root cause candidate,
+    evidence, and the full impact, business and technical.
+  </p>
+  <p style="color:var(--text-faint); margin-top:16px; font-size:13px;">
+    To enable it, set <code>ENABLE_INCIDENTS=true</code> in <code>.env</code>
+    and restart. The underlying <code>/api/v1/incidents*</code> endpoints work
+    regardless of this flag.
+  </p>
+</div>
+{% else %}
+
+<div class="toolbar toolbar-stack">
+  <div class="toolbar-row">
+    <div class="search search-grow">
+      <span class="search-icon">⌕</span>
+      <input type="search" id="ic-root-cause" placeholder="Root cause candidate contains…" autocomplete="off" />
+    </div>
+    <div class="filter-group">
+      <label>
+        <span class="field-lbl">Status</span>
+        <select id="ic-status">
+          <option value="">Any</option>
+          <option value="open">Open</option>
+          <option value="updated">Updated</option>
+          <option value="reopened">Reopened</option>
+          <option value="resolved">Resolved</option>
+          <option value="merged">Merged</option>
+        </select>
+      </label>
+      <label>
+        <span class="field-lbl">Min severity</span>
+        <select id="ic-severity">
+          <option value="">Any</option>
+          <option value="5">5 - Critical</option>
+          <option value="4">4 - High</option>
+          <option value="3">3 - Medium</option>
+          <option value="2">2 - Low</option>
+          <option value="1">1 - Info</option>
+        </select>
+      </label>
+      <label>
+        <span class="field-lbl">Source</span>
+        <select id="ic-source">
+          <option value="">Any</option>
+          <option value="zabbix">Zabbix</option>
+          <option value="dynatrace">Dynatrace</option>
+          <option value="nnmi">NNMi</option>
+          <option value="sitescope">SiteScope</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <div class="toolbar-row">
+    <div class="filter-group">
+      <label><span class="field-lbl">Business service</span><input type="text" id="ic-business-service" placeholder="e.g. Customer360" /></label>
+      <label><span class="field-lbl">Application</span><input type="text" id="ic-application" placeholder="contains…" /></label>
+      <label><span class="field-lbl">Service</span><input type="text" id="ic-service" placeholder="contains…" /></label>
+      <label><span class="field-lbl">API</span><input type="text" id="ic-api" placeholder="contains…" /></label>
+      <label><span class="field-lbl">Database</span><input type="text" id="ic-database" placeholder="contains…" /></label>
+    </div>
+  </div>
+  <div class="toolbar-row">
+    <div class="daterange" title="Incidents that started in this time range">
+      <span class="field-lbl">Started (UTC)</span>
+      <input type="datetime-local" id="ic-start-from" class="dt-input" aria-label="From" />
+      <span class="dt-sep">→</span>
+      <input type="datetime-local" id="ic-start-to" class="dt-input" aria-label="To" />
+    </div>
+    <button class="btn btn-accent" type="button" id="ic-apply">Apply filters</button>
+    <button class="btn" type="button" id="ic-clear">Clear</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th>Title</th>
+          <th style="width:100px">Severity</th>
+          <th style="width:90px">Status</th>
+          <th>Business Service</th>
+          <th>Application</th>
+          <th>Affected API</th>
+          <th>Root Cause Candidate</th>
+          <th style="width:140px">Started</th>
+          <th style="width:90px">Duration</th>
+          <th style="width:70px">Events</th>
+          <th>Sources</th>
+        </tr>
+      </thead>
+      <tbody id="ic-tbody">
+        <tr><td colspan="12"><div class="empty">Loading…</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="ic-pager">
+    <button class="btn" type="button" id="ic-prev">&larr; Prev</button>
+    <span id="ic-page-label">Page 1</span>
+    <button class="btn" type="button" id="ic-next">Next &rarr;</button>
+    <span class="spacer"></span>
+    <span id="ic-count"></span>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if enabled %}
+<script>
+  (function () {
+    var PAGE_SIZE = 50;
+    var page = 1;
+    var tbody = document.getElementById("ic-tbody");
+
+    function esc(s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    }
+
+    function fmtDuration(startIso, lastUpdateIso) {
+      if (!startIso) return "-";
+      var start = new Date(startIso).getTime();
+      var end = lastUpdateIso ? new Date(lastUpdateIso).getTime() : Date.now();
+      var secs = Math.max(0, Math.round((end - start) / 1000));
+      var h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+      if (h > 0) return h + "h " + m + "m";
+      var s = secs % 60;
+      return m + "m " + s + "s";
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "-";
+      return new Date(iso).toISOString().replace("T", " ").slice(0, 16) + "Z";
+    }
+
+    function firstPlusMore(list, key) {
+      if (!list || !list.length) return "-";
+      var first = list[0][key];
+      return list.length > 1 ? first + " (+" + (list.length - 1) + ")" : first;
+    }
+
+    function buildQuery() {
+      var params = new URLSearchParams();
+      var status = document.getElementById("ic-status").value;
+      var severity = document.getElementById("ic-severity").value;
+      var source = document.getElementById("ic-source").value;
+      var bs = document.getElementById("ic-business-service").value.trim();
+      var app = document.getElementById("ic-application").value.trim();
+      var svc = document.getElementById("ic-service").value.trim();
+      var api = document.getElementById("ic-api").value.trim();
+      var db = document.getElementById("ic-database").value.trim();
+      var rc = document.getElementById("ic-root-cause").value.trim();
+      var sf = document.getElementById("ic-start-from").value;
+      var st = document.getElementById("ic-start-to").value;
+      if (status) params.set("status", status);
+      if (severity) params.set("severity_min", severity);
+      if (source) params.set("source", source);
+      if (bs) params.set("business_service", bs);
+      if (app) params.set("application", app);
+      if (svc) params.set("service", svc);
+      if (api) params.set("api", api);
+      if (db) params.set("database", db);
+      if (rc) params.set("root_cause", rc);
+      if (sf) params.set("start_from", sf);
+      if (st) params.set("start_to", st);
+      // Fetch one extra row to know whether a Next page exists, without a
+      // separate count endpoint (task section 11: paginate, never load
+      // every incident into the browser).
+      params.set("limit", PAGE_SIZE + 1);
+      params.set("offset", (page - 1) * PAGE_SIZE);
+      return params.toString();
+    }
+
+    function severityPill(sevInt, sevLabel) {
+      return '<span class="pill sev-pill sev-' + sevInt + '"><span class="dot"></span>' + esc(sevLabel) + "</span>";
+    }
+
+    function statusPill(status) {
+      var ok = status === "resolved";
+      return '<span class="pill ' + (ok ? "status-ok" : "status-down") + '"><span class="dot"></span>' + esc(status) + "</span>";
+    }
+
+    function rowHtml(inc) {
+      var rootCause = inc.root_cause_candidates && inc.root_cause_candidates.length
+        ? esc(inc.root_cause_candidates[0].canonical_name) + (inc.root_cause_candidates.length > 1 ? " (+" + (inc.root_cause_candidates.length - 1) + ")" : "")
+        : '<span class="muted-dash">-</span>';
+      var sources = (inc.sources || []).map(function (s) {
+        return '<span class="badge badge-' + s + '"><span class="dot"></span>' + s + "</span>";
+      }).join(" ");
+      return (
+        '<tr class="ic-row" data-id="' + inc.id + '">' +
+        "<td>#" + inc.id + "</td>" +
+        "<td>" + esc(inc.title) + "</td>" +
+        "<td>" + severityPill(inc.severity_int, inc.severity_label) + "</td>" +
+        "<td>" + statusPill(inc.status) + "</td>" +
+        "<td>" + esc(inc.business_service || "-") + "</td>" +
+        "<td>" + esc(firstPlusMore(inc.affected.applications, "canonical_name")) + "</td>" +
+        "<td>" + esc(firstPlusMore(inc.affected.apis, "canonical_name")) + "</td>" +
+        "<td>" + rootCause + "</td>" +
+        '<td class="mono">' + fmtTime(inc.start_time) + "</td>" +
+        "<td>" + fmtDuration(inc.start_time, inc.status === "resolved" ? inc.last_update : null) + "</td>" +
+        "<td>" + (inc.related_events || []).length + "</td>" +
+        "<td>" + (sources || '<span class="muted-dash">-</span>') + "</td>" +
+        "</tr>"
+      );
+    }
+
+    function load() {
+      tbody.innerHTML = '<tr><td colspan="12"><div class="empty">Loading…</div></td></tr>';
+      fetch("/api/v1/incidents?" + buildQuery())
+        .then(function (r) { return r.json(); })
+        .then(function (incidents) {
+          var hasNext = incidents.length > PAGE_SIZE;
+          var shown = hasNext ? incidents.slice(0, PAGE_SIZE) : incidents;
+          if (!shown.length) {
+            tbody.innerHTML = '<tr><td colspan="12"><div class="empty">No incidents match these filters.</div></td></tr>';
+          } else {
+            tbody.innerHTML = shown.map(rowHtml).join("");
+            tbody.querySelectorAll(".ic-row").forEach(function (row) {
+              row.addEventListener("click", function () {
+                location.href = "/incidents/" + row.dataset.id;
+              });
+            });
+          }
+          document.getElementById("ic-page-label").textContent = "Page " + page;
+          document.getElementById("ic-prev").disabled = page <= 1;
+          document.getElementById("ic-next").disabled = !hasNext;
+          document.getElementById("ic-count").textContent = shown.length + (hasNext ? "+" : "") + " shown";
+        })
+        .catch(function () {
+          tbody.innerHTML = '<tr><td colspan="12"><div class="empty">Failed to load incidents.</div></td></tr>';
+        });
+    }
+
+    document.getElementById("ic-apply").addEventListener("click", function () { page = 1; load(); });
+    document.getElementById("ic-clear").addEventListener("click", function () {
+      ["ic-root-cause", "ic-business-service", "ic-application", "ic-service", "ic-api", "ic-database",
+       "ic-start-from", "ic-start-to"].forEach(function (id) { document.getElementById(id).value = ""; });
+      ["ic-status", "ic-severity", "ic-source"].forEach(function (id) { document.getElementById(id).value = ""; });
+      page = 1;
+      load();
+    });
+    document.getElementById("ic-prev").addEventListener("click", function () { if (page > 1) { page -= 1; load(); } });
+    document.getElementById("ic-next").addEventListener("click", function () { page += 1; load(); });
+    ["ic-root-cause", "ic-business-service", "ic-application", "ic-service", "ic-api", "ic-database"].forEach(function (id) {
+      document.getElementById(id).addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") { page = 1; load(); }
+      });
+    });
+
+    load();
+  })();
+</script>
+{% endif %}
+{% endblock %}

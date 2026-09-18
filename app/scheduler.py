@@ -26,6 +26,7 @@ logger = logging.getLogger("scheduler")
 
 _JOB_ID = "poll_all_collectors"
 _TOPOLOGY_JOB_ID = "poll_topology"
+_CORRELATION_JOB_ID = "correlate_and_form_incidents"
 
 
 class CollectorService:
@@ -493,6 +494,38 @@ def run_topology_now() -> None:
     run_topology(get_settings())
 
 
+def _run_correlation_and_incidents_job() -> None:
+    """Scheduler entry point: correlate recently-active events (Phase 4),
+    then form/update Incidents from the results (Phase 5) — Phase 6's
+    "background processing where appropriate". Only runs when
+    ENABLE_INCIDENTS is on: manual /api/v1/correlation/run and
+    /api/v1/incidents/run calls work regardless of this job.
+
+    Retry is simply "try again next interval": both run_correlation_batch
+    and run_incident_formation are themselves idempotent (upsert-based) and
+    already contain a single bad pair's exception rather than raising it —
+    see their own docstrings — so a transient failure here costs one cycle's
+    freshness, never a duplicate or a half-applied result.
+    """
+    from app.correlation_engine import run_correlation_batch
+    from app.incident_engine import run_incident_formation
+
+    db: Session = SessionLocal()
+    try:
+        correlation_result = run_correlation_batch(db)
+        db.commit()
+        incident_result = run_incident_formation(db)
+        db.commit()
+        logger.info(
+            "correlation/incident background job: %s ; %s", correlation_result, incident_result,
+        )
+    except Exception:  # noqa: BLE001 — must never stop the scheduler
+        db.rollback()
+        logger.exception("correlation/incident background job failed; the next interval will retry")
+    finally:
+        db.close()
+
+
 def _dispatch(job_id: str, func, **kwargs) -> bool:
     """Ask the scheduler to run ``func`` once, right now, in the background.
 
@@ -580,6 +613,23 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
             next_run_time=datetime.now(),
         )
         logger.info("topology collection enabled; polling every %d minute(s)", topo_minutes)
+
+    # Correlation + incident formation (Correlation Phase 4/5/6), gated
+    # behind ENABLE_INCIDENTS — a shorter interval than topology's, since
+    # freshly-polled events are exactly what there is to correlate.
+    if settings.enable_incidents:
+        corr_minutes = max(settings.poll_interval_minutes, 2)
+        scheduler.add_job(
+            _run_correlation_and_incidents_job,
+            trigger="interval",
+            minutes=corr_minutes,
+            id=_CORRELATION_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+            next_run_time=datetime.now() + timedelta(minutes=1),
+        )
+        logger.info("correlation/incident background job enabled; running every %d minute(s)", corr_minutes)
 
     # Capacity forecasting: refit every series overnight, when nobody is
     # looking at the dashboard and the day's samples are all in. Cron rather

@@ -81,6 +81,18 @@
           </span>
           {% endif %}
 
+          {% if enable_incidents %}
+          <div class="nav-section">Correlation</div>
+          <a href="/incidents" class="{{ 'active' if active_page == 'incidents' else '' }}">
+            <span class="ico">⚑</span> Incidents
+          </a>
+          {% else %}
+          <div class="nav-section">Correlation</div>
+          <span class="nav-disabled" title="Coming soon - set ENABLE_INCIDENTS=true">
+            <span class="ico">⚑</span> Incidents <span class="soon">soon</span>
+          </span>
+          {% endif %}
+
           {% if enable_runbook %}
           <div class="nav-section">Operations</div>
           <a href="/runbook" class="{{ 'active' if active_page == 'runbook' else '' }}">

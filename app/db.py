@@ -158,6 +158,11 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "db_calls": "JSON",
         "external_calls": "JSON",
     },
+    "incidents": {
+        # Correlation Phase 6: the Incidents UI's "Sources" column/filter
+        # (app/models.py Incident, app/incident_engine.py).
+        "sources": "JSON",
+    },
 }
 
 
@@ -245,6 +250,10 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # create_all covers it — no separate entry needed here.)
     ("ix_alerts_trace_parent", "alerts", "(trace_id, parent_span_id)"),
     ("ix_alerts_resolved_at", "alerts", "(resolved_at)"),
+    # Correlation Phase 6: the Incident list page's default view (status
+    # filter, most-recently-touched first) and its business_service filter.
+    ("ix_incidents_status_last_update", "incidents", "(status, last_update)"),
+    ("ix_incidents_business_service", "incidents", "(business_service)"),
 ]
 
 

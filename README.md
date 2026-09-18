@@ -227,14 +227,18 @@ nnmi:
 | `POST /api/v1/traces`                 | Ingest one batch of distributed trace spans (topology + error events). |
 | `GET  /api/v1/applications/{id}/health` | An Application's rollup status from its known APIs (`healthy`/`degraded`/`down`). |
 | `POST /api/v1/incidents/run?correlation_id=` | Form/update Incidents from Phase 4 correlations (one or every one). |
-| `GET  /api/v1/incidents`              | Stored incidents (filters: `status`, `business_service`, `event_id`). |
+| `GET  /api/v1/incidents`              | Stored incidents (filters: `status`, `business_service`, `severity_min`, `source`, `application`, `service`, `api`, `database`, `root_cause`, `start_from`, `start_to`, `event_id`). |
 | `GET  /api/v1/incidents/{id}`         | One incident: full summary, timeline, and evidence. |
 | `GET  /api/v1/incidents/{id}/timeline` | Every occurrence's onset/recovery, chronological. |
 | `GET  /api/v1/incidents/{id}/evidence` | Every CorrelationEvidence row behind this incident. |
 | `GET  /api/v1/incidents/{id}/impact`  | Affected entities, plus per-application health rollups. |
-| `GET  /api/v1/incidents/{id}/correlation-graph` | Member entities and the direct relationships between them. |
-| `POST /api/v1/incidents/merge`        | Merge 2+ named incidents into one survivor (never automatic). |
-| `POST /api/v1/incidents/{id}/split`   | Carve given member events into a new incident. |
+| `GET  /api/v1/incidents/{id}/correlation-graph` | Member + topology-adjacent entities, each tagged root_cause_candidate/symptom/healthy_dependency, plus their direct relationships. |
+| `POST /api/v1/incidents/merge`        | Merge 2+ named incidents into one survivor (never automatic). Requires Runbook login. |
+| `POST /api/v1/incidents/{id}/split`   | Carve given member events into a new incident. Requires Runbook login. |
+| `POST /api/v1/incidents/{id}/feedback` | Record an operator's correlation/root-cause verdict. Requires Runbook login. |
+| `GET  /api/v1/incidents/{id}/feedback` | Every recorded feedback entry for this incident. |
+| `GET  /api/v1/metrics/correlation`    | Correlation engine throughput/health metrics (Correlation Phase 6). |
+| `GET  /api/v1/servers`                | Configured instance name/platform/base URL - never credentials. |
 
 Interactive docs at `/docs`.
 
@@ -808,6 +812,101 @@ Automatic incident-to-incident merging (deciding on its own that two
 SEPARATE incidents are related), notification/paging integrations, and a UI
 for any of this are explicitly out of scope here — this phase is the
 engine and its API, not yet a workflow around it.
+
+## Correlation — Phase 6: operational UI + production hardening
+
+Phases 1-5 built the engine; Phase 6 is what an operations engineer actually
+opens. One incident page answers "what failed, when did it start, what's
+affected, why did SAMI'X correlate these events, what evidence supports
+that, and who reported it" without opening four monitoring consoles — and
+the engine underneath it gets the logging, metrics, audit trail, and
+background processing a production system needs.
+
+- **Incidents nav tab** (`ENABLE_INCIDENTS`, off by default like every other
+  optional tab) — `app/templates/incidents.html` (a filterable, paginated
+  list: severity, status, source, business service, application, service,
+  API, database, root cause candidate, and a start-time range) and
+  `app/templates/incident_detail.html` (ten sections in one page: summary,
+  root cause candidate(s) with an explicit "not absolute truth" disclaimer
+  and their evidence, a plain-language "why were these events correlated"
+  checklist derived straight from stored `CorrelationEvidence`, a
+  chronological timeline including recoveries, a Cytoscape dependency graph,
+  related events grouped by monitoring source, the full impact view,
+  correlation type badges, per-event original-vs-normalized detail, and
+  operator feedback). Both are thin shells — the fetch/render happens
+  client-side against the existing Phase 4/5 JSON API, same pattern as the
+  Dependency Graph page (Phase 3).
+  - The dependency graph's node set was widened
+    (`GET /api/v1/incidents/{id}/correlation-graph`) beyond just the
+    incident's own member entities to include everything in its wider
+    topology-reachable `affected` set, so a topology-adjacent entity with no
+    active event of its own can be shown as a distinct **healthy dependency**
+    (dashed border) — not just root cause candidate (diamond) and
+    affected/symptom (solid red ellipse). Shape and border distinguish all
+    three, never color alone.
+- **Operator feedback** — `IncidentFeedback` (Correlation/Root Cause,
+  Correct/Incorrect, plus a free-text note). Purely observational: nothing
+  in `app.correlation_engine` or `app.incident_engine` reads this table back
+  — task section 10's "do not use it for automatic learning yet" is the
+  literal, current behavior, not a caveat. Submitting feedback (and
+  merge/split) requires signing in via the **Runbook** tab — the only
+  authorization this app has; there is no separate login system built for
+  this. `AuditLog` records every one of those three actions (actor, action,
+  target, a small hand-picked `details` dict — never a raw request body, so
+  no credential can land in it).
+- **Correlation engine metrics** (`GET /api/v1/metrics/correlation`,
+  `app/metrics.py`) — the task's own named list. Most of it is a live COUNT
+  over existing tables (so it can never drift from what they actually show);
+  only `correlation_failures` and `average_processing_time` describe process
+  *behavior* and need real instrumentation, via a tiny `EngineMetric`
+  counter/timer table.
+- **Hardening** in `app/correlation_engine.py` and `app/incident_engine.py`:
+  a single bad pair/correlation raising during a batch run is now logged and
+  counted (`correlation_failures`) rather than aborting every other pair in
+  the same run — the same fault-isolation philosophy `app.topology_sync`
+  already used. Retry is simply "run again": every write in this engine
+  (correlation persistence, incident recompute, trace ingest) is already an
+  idempotent upsert, so re-running a batch after a transient failure costs
+  one cycle's freshness, never a duplicate. New indexes back the Incident
+  list's filters and the audit/feedback tables' own lookups.
+- **Background processing** — `app/scheduler.py`'s
+  `_run_correlation_and_incidents_job`, gated behind `ENABLE_INCIDENTS`,
+  runs Phase 4 correlation then Phase 5 incident formation on an interval
+  (`max(poll_interval_minutes, 2)` minutes), the same `BackgroundScheduler`
+  + `max_instances=1` + `coalesce=True` pattern every other job in this app
+  already uses — no separate queue/broker; a single-process POC has no need
+  for one, and the existing manual `/api/v1/correlation/run` /
+  `/api/v1/incidents/run` calls still work inline regardless of this flag.
+  ("Queue support if needed" — not needed here; if this app ever runs
+  multiple worker processes, that's the point to introduce one, not before.)
+- **Security** — feedback/merge/split require the Runbook's signed session
+  cookie (`app.routers.api._require_operator`); 503 (not 401) when Runbook
+  itself isn't configured, since then no one *can* authenticate, which is a
+  deployment gap, not a per-request failure. `GET /api/v1/servers` exposes
+  only `name`/`platform`/`url` — never `user`/`password`/`token` — for the
+  UI's "open in {platform}" links. Management-zone-aware access (also asked
+  for) is not applicable: no source this codebase ingests from carries
+  Dynatrace management-zone membership or any other zone/RBAC attribute
+  today, so there is nothing to filter incident/entity queries by yet.
+
+```bash
+GET  /api/v1/incidents?severity_min=4&source=dynatrace&root_cause=CustomerDB   # filtered, paginated list
+GET  /api/v1/incidents/{id}/correlation-graph        # root_cause_candidate / symptom / healthy_dependency nodes
+POST /api/v1/incidents/{id}/feedback                 # {"kind": "root_cause_correct", "note": "..."} - needs Runbook login
+GET  /api/v1/incidents/{id}/feedback                 # every recorded verdict
+GET  /api/v1/metrics/correlation                     # events_received, correlations_created, average_processing_time, ...
+GET  /api/v1/servers                                 # {name, platform, url} - never credentials
+```
+
+Verified against the mock collectors end-to-end — real Zabbix/Dynatrace/NNMi
+data through the full Phase 1-5 pipeline, then the Incidents pages, the
+extended filters, feedback (unauthenticated 401 → Runbook login → 201),
+`/api/v1/metrics/correlation`, `/api/v1/servers`, and the background job,
+all via the real API and real rendered pages — no synthetic-only shortcuts.
+
+Automatic learning from operator feedback, role-based/management-zone
+authorization beyond the single Runbook login, and a message-queue-backed
+worker are explicitly out of scope here, for the reasons given above.
 
 ## Deploy to a server later
 

@@ -20,6 +20,7 @@ between two equally-plausible origins, both come back as candidates.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -27,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.dependency_graph import DEFAULT_MAX_DEPTH, traverse
+from app.metrics import increment_counter
 from app.models import (
     Alert,
     CanonicalEntity,
@@ -40,6 +42,8 @@ from app.models import (
     LogicalEventStatus,
     SymptomRole,
 )
+
+logger = logging.getLogger("incident_engine")
 
 #: Same "still an active problem" set app.application_health/
 #: app.correlation_engine use.
@@ -302,6 +306,7 @@ def recompute_incident(
     if starts:
         incident.start_time = min(starts)
     incident.business_service = _shared_business_service(occurrences)
+    incident.sources = sorted({o.source_platform.value for o in occurrences})
 
     candidates = root_cause_candidates(db, members, correlation_ids=incident.source_correlation_ids)
     incident.root_cause_candidates = candidates
@@ -380,17 +385,25 @@ def run_incident_formation(db: Session, correlation_ids: list[int] | None = None
     formed = 0
     updated = 0
     for cid in correlation_ids:
-        correlation = db.get(Correlation, cid)
-        if correlation is None:
-            continue
-        existed_before = _find_incident_for_correlation(db, cid) is not None
-        incident = form_or_update_incident_from_correlation(db, correlation)
-        if incident is None:
-            continue
-        if existed_before:
-            updated += 1
-        else:
-            formed += 1
+        try:
+            correlation = db.get(Correlation, cid)
+            if correlation is None:
+                continue
+            existed_before = _find_incident_for_correlation(db, cid) is not None
+            incident = form_or_update_incident_from_correlation(db, correlation)
+            if incident is None:
+                continue
+            if existed_before:
+                updated += 1
+            else:
+                formed += 1
+        except Exception:  # noqa: BLE001 — one bad correlation must not abort the batch
+            logger.exception("incident formation failed for correlation %s", cid)
+            increment_counter(db, "correlation_failures")
+    logger.info(
+        "incident formation: %d correlation(s), %d formed, %d updated",
+        len(correlation_ids), formed, updated,
+    )
     return {
         "correlations_processed": len(correlation_ids),
         "incidents_formed": formed,
