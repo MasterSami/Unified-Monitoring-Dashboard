@@ -200,6 +200,74 @@ class TopologySource(str, enum.Enum):
     manual = "manual"
 
 
+class CorrelationSignal(str, enum.Enum):
+    """One deterministic check between two LogicalEvents (Correlation Phase 4).
+
+    See app/correlation_engine.py for how each is actually computed. Three of
+    these — ``same_host``, ``same_application``, ``multi_source`` — plus
+    ``temporal_relationship`` are never, on their own or in combination with
+    only each other, sufficient to correlate two events (the "false
+    correlation protection" rule); at least one of the remaining signals must
+    also be present. See ``WEAK_SIGNALS`` in that module.
+    """
+
+    same_entity = "same_entity"
+    same_host = "same_host"
+    same_service = "same_service"
+    same_application = "same_application"
+    same_api = "same_api"
+    same_database = "same_database"
+    same_trace = "same_trace"
+    known_dependency = "known_dependency"
+    temporal_relationship = "temporal_relationship"
+    same_business_transaction = "same_business_transaction"
+    multi_source = "multi_source"
+
+
+class CorrelationType(str, enum.Enum):
+    """What KIND of evidence a :class:`Correlation` is primarily built on —
+    derived from its highest-priority contributing signal, with a NETWORK
+    override when a network_device entity is involved in a dependency/
+    topology match. See app.correlation_engine.correlation_type_for.
+    """
+
+    entity = "entity"
+    temporal = "temporal"
+    topology = "topology"
+    dependency = "dependency"
+    multi_source = "multi_source"
+    service = "service"
+    application = "application"
+    api = "api"
+    database = "database"
+    network = "network"
+    trace = "trace"
+    business_transaction = "business_transaction"
+
+
+class CorrelationStatus(str, enum.Enum):
+    """A :class:`Correlation` group's lifecycle state, recomputed from its
+    current membership each time it's touched — same "pure function of
+    current data" philosophy as LogicalEventStatus. See
+    app.correlation_engine._compute_correlation_status for the exact rule
+    behind each one.
+
+    - ``new``: just created this run.
+    - ``updated``: existing group, membership grew this run.
+    - ``correlated``: existing group, unchanged this run, 2+ active members.
+    - ``split``: membership fell below 2 — no longer a valid pairing.
+    - ``resolved``: every current member is resolved.
+    - ``reopened``: was resolved, a new/active member has since joined.
+    """
+
+    new = "new"
+    updated = "updated"
+    correlated = "correlated"
+    split = "split"
+    resolved = "resolved"
+    reopened = "reopened"
+
+
 class RunStatus(str, enum.Enum):
     """Outcome of a collector run."""
 
@@ -861,3 +929,128 @@ class EntityRelationship(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+# --- Correlation Phase 4: deterministic correlation rule engine -------------
+#
+# Decides whether two LogicalEvents (Phase 2) describe the same real-world
+# incident — never by AI/ML, only by fixed, auditable signals (entity
+# identity, Phase 3 topology, trace ids, timing) evaluated against
+# configuration-driven rules. Every correlation records exactly which
+# signals fired and why (CorrelationEvidence) — "explainable" is a hard
+# requirement here, not a nice-to-have.
+
+
+class CorrelationRule(Base):
+    """A configuration-driven rule: what has to be true between two
+    LogicalEvents for them to correlate, and what to do about it.
+
+    ``conditions`` (list[dict], merged into one spec by app.correlation_engine)
+    and ``actions`` (dict) are stored as the task's own example shows them —
+    a flat list of single-purpose condition objects — rather than a bespoke
+    schema, so a rule can be inspected or hand-edited without this class
+    changing. See app.correlation_rules for the validation applied at
+    creation time (a rule built only from weak signals is rejected).
+    """
+
+    __tablename__ = "correlation_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rule_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    #: 1 (highest — Exact Trace) .. 5 (lowest — Temporal). Computed from the
+    #: rule's own strongest required signal at creation time, not editable
+    #: directly — see app.correlation_rules.priority_tier_for.
+    priority_tier: Mapped[int] = mapped_column(Integer, index=True)
+    conditions: Mapped[list] = mapped_column(JSON, default=list)
+    actions: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class CorrelationWeight(Base):
+    """A configurable score weight for one signal. Seeded with the defaults
+    in app.correlation_engine.DEFAULT_WEIGHTS on first use; editable via
+    ``PUT /api/v1/correlation/weights`` without a restart.
+    """
+
+    __tablename__ = "correlation_weights"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal: Mapped[CorrelationSignal] = mapped_column(
+        Enum(CorrelationSignal, native_enum=False, length=32), unique=True
+    )
+    weight: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class Correlation(Base):
+    """A group of 2+ LogicalEvents a rule determined describe the same
+    real-world incident. Never created on weak evidence alone (temporal/
+    same_host/same_application/multi_source) — see the module note above.
+
+    ``member_event_ids`` is the authoritative membership list (LogicalEvent
+    ids); ``score``/``status``/``correlation_type`` are recomputed from it
+    and its evidence on every touch, not hand-maintained.
+    """
+
+    __tablename__ = "correlations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    correlation_type: Mapped[CorrelationType] = mapped_column(
+        Enum(CorrelationType, native_enum=False, length=24), index=True
+    )
+    status: Mapped[CorrelationStatus] = mapped_column(
+        Enum(CorrelationStatus, native_enum=False, length=16),
+        default=CorrelationStatus.new,
+        index=True,
+    )
+    #: The rule_id (app.models.CorrelationRule.rule_id) that most recently
+    #: (re)confirmed this correlation — not necessarily the one that first
+    #: created it, since a stronger rule can supersede a weaker one on
+    #: re-evaluation. Null if the correlation's rule was since deleted.
+    rule_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    #: LogicalEvent ids in this group — the highest-priority-tier member
+    #: (see app.correlation_engine) is index 0 by convention, e.g. the
+    #: network switch in a "switch down + N unreachable hosts" correlation.
+    member_event_ids: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class CorrelationEvidence(Base):
+    """One fact supporting a :class:`Correlation` — exactly what the task's
+    "Correlation Evidence" section asks for: which signal, what its value
+    was, where it came from, when it was observed, and which event/entity
+    it concerns. A correlation with two contributing signals has two of
+    these rows, each independently inspectable.
+    """
+
+    __tablename__ = "correlation_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    correlation_id: Mapped[int] = mapped_column(Integer, index=True)
+    signal: Mapped[CorrelationSignal] = mapped_column(
+        Enum(CorrelationSignal, native_enum=False, length=32), index=True
+    )
+    #: Human-readable value, e.g. "CustomerDB" (same_database), "312s apart"
+    #: (temporal_relationship), or a trace id (same_trace).
+    value: Mapped[str] = mapped_column(String(500), default="")
+    #: Where this evidence came from: a TopologySource value for
+    #: known_dependency, "phase2" for signals read off LogicalEvent/Alert,
+    #: or "engine" for computed ones like temporal_relationship.
+    source: Mapped[str] = mapped_column(String(32), default="")
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    #: The OTHER LogicalEvent this evidence relates the correlation's primary
+    #: member to (a pairwise fact), and the entity involved, if any.
+    related_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    related_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

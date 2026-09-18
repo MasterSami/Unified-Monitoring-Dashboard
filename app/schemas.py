@@ -301,6 +301,95 @@ class PathOut(BaseModel):
     hops: list[DependencyNodeOut] = Field(default_factory=list)
 
 
+class CorrelationRuleIn(BaseModel):
+    """Declare or update a correlation rule (Phase 4).
+
+    ``conditions`` follows the task's own example shape: a list of
+    single-purpose objects, e.g. ``[{"event_type": "NETWORK_DEVICE_DOWN"},
+    {"relationship": "affects"}, {"time_window_seconds": 300}]``. Rejected
+    (422) if it has no ``time_window_seconds`` or if its required signals
+    are all "weak" ones (temporal_relationship/same_host/same_application/
+    multi_source) — see app.correlation_rules.validate_rule_conditions.
+    """
+
+    rule_id: str = Field(min_length=1, max_length=64)
+    name: str = ""
+    enabled: bool = True
+    conditions: list[dict] = Field(min_length=1)
+    actions: dict = Field(default_factory=dict)
+
+
+class CorrelationRuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    rule_id: str
+    name: str
+    enabled: bool
+    priority_tier: int
+    conditions: list
+    actions: dict
+    created_at: datetime
+    updated_at: datetime
+
+
+class CorrelationWeightOut(BaseModel):
+    signal: str
+    weight: float
+
+
+class SignalHitOut(BaseModel):
+    signal: str
+    value: str
+    source: str
+    priority_tier: int
+    related_entity_id: int | None = None
+
+
+class CorrelationOutcomeOut(BaseModel):
+    """The full, explainable result of evaluating one pair of events —
+    mirrors app.correlation_engine.CorrelationOutcome.
+    """
+
+    correlated: bool
+    reason: str
+    hits: list[SignalHitOut] = Field(default_factory=list)
+    score: float = 0.0
+    correlation_type: str | None = None
+    matched_rule_id: str | None = None
+    correlation_id: int | None = None
+    status: str | None = None
+
+
+class CorrelationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    correlation_type: str
+    status: str
+    rule_id: str | None
+    score: float
+    member_event_ids: list[int] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class CorrelationEvidenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    signal: str
+    value: str
+    source: str
+    timestamp: datetime
+    related_event_id: int | None
+    related_entity_id: int | None
+
+
+class CorrelationDetailOut(CorrelationOut):
+    evidence: list[CorrelationEvidenceOut] = Field(default_factory=list)
+
+
 class CollectorStatus(BaseModel):
     """Health snapshot for a single collector instance."""
 

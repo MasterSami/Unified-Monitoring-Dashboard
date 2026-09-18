@@ -227,6 +227,9 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # already implied by index=True on each column.
     ("ix_entrel_from_type", "entity_relationships", "(from_entity_id, relationship_type)"),
     ("ix_entrel_to_type", "entity_relationships", "(to_entity_id, relationship_type)"),
+    # Correlation Phase 4: candidate-pair lookup (app/correlation_engine.py)
+    # and evidence retrieval for one correlation at a time.
+    ("ix_correlation_evidence_correlation", "correlation_evidence", "(correlation_id)"),
 ]
 
 

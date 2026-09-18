@@ -216,6 +216,14 @@ nnmi:
 | `GET  /api/v1/topology/dependencies/{id}` | What it depends on, multi-hop (`max_depth`). |
 | `GET  /api/v1/topology/impact/{id}`   | What's affected if it fails, multi-hop (`max_depth`). |
 | `GET  /api/v1/topology/path`          | Path between two entities (`from_entity_id`, `to_entity_id`). |
+| `GET  /api/v1/correlation/rules`      | Stored correlation rules (filter: `enabled_only`), priority order. |
+| `POST /api/v1/correlation/rules`      | Create/update a rule (422 if it fails false-correlation validation). |
+| `GET  /api/v1/correlation/weights`    | Every signal's current score weight (stored override or default). |
+| `PUT  /api/v1/correlation/weights/{signal}?weight=` | Set one signal's weight. |
+| `POST /api/v1/correlation/evaluate?event_a_id=&event_b_id=` | Explain whether/why two events would correlate, without persisting. |
+| `POST /api/v1/correlation/run?event_id=` | Run correlation for one event (or every open one, batched). |
+| `GET  /api/v1/correlations`           | Stored correlations (filters: `status`, `correlation_type`, `event_id`). |
+| `GET  /api/v1/correlations/{id}`      | One correlation's members plus its full evidence trail. |
 
 Interactive docs at `/docs`.
 
@@ -599,6 +607,87 @@ dependency, and affected nodes are told apart by shape and border style as
 well as color (a diamond root, solid-bordered dependencies, dashed-bordered
 affected entities), and a node with a live Phase 2 logical event against it
 is marked distinctly too — not a color-only distinction.
+
+## Correlation — Phase 4: correlation rule engine
+
+Phase 2 groups repeated reports of the *same* problem; Phase 3 knows how
+entities relate to each other. Phase 4 is the piece that actually decides
+whether *two different* logical events are the same real-world incident —
+"the switch went down, and that's why five hosts behind it just went
+unreachable" versus "two unrelated applications happened to fail at the same
+moment." **Configuration-driven, deterministic — no AI/ML, no learned
+scoring.** Every correlation is one specific rule matching one specific set
+of signals, and that rule and those signals are stored as evidence.
+
+- `app/models.py` — `CorrelationSignal` (11 checks — `same_entity`,
+  `same_host`, `same_service`, `same_application`, `same_api`,
+  `same_database`, `same_trace`, `known_dependency`,
+  `temporal_relationship`, `same_business_transaction`, `multi_source`),
+  `CorrelationType` (12 labels describing *why* a group formed — `network`
+  is a distinct override for a network-device-rooted `known_dependency`
+  match, not just another topology hit), `CorrelationStatus` (`new` /
+  `updated` / `correlated` / `split` / `resolved` / `reopened`, recomputed
+  fresh from the group's current members every time, never hand-tracked).
+  Four new tables: `CorrelationRule` (config, upserted on `rule_id`),
+  `CorrelationWeight` (per-signal score override), `Correlation` (a formed
+  group — type, status, score, member event ids), `CorrelationEvidence`
+  (one row per signal hit that contributed, always attributable back to a
+  specific related event/entity).
+- `app/correlation_rules.py` — rule storage and the false-correlation
+  guardrail. A rule is a flat list of single-purpose condition objects (the
+  task's own example shape: `[{"event_type": "..."}, {"relationship":
+  "..."}, {"time_window_seconds": 300}]`), merged into one spec.
+  **`temporal_relationship`, `same_host`, `same_application`, and
+  `multi_source` are never, alone or combined only with each other,
+  sufficient to correlate** — a rule that would need nothing else is
+  rejected at creation time with a 422, not silently accepted and quietly
+  ignored later. Every rule must declare a `time_window_seconds` from the
+  six allowed windows (1/2/5/10/15/30 minutes). A rule's priority tier is
+  derived from its strongest required signal, not set by hand.
+- `app/correlation_engine.py` — the engine itself. `compute_signals()`
+  checks all 11 signals between a pair of logical events (topology-aware:
+  `known_dependency` walks Phase 3's `EntityRelationship` table one hop in
+  either direction). Enabled rules are tried in priority order — **Exact
+  Trace > Explicit Dependency (manual/cmdb/explicit_config source) >
+  Topology (dynatrace/monitoring source) > Entity > Temporal** — and the
+  first rule whose required signals are actually present wins; which of the
+  two `known_dependency` tiers applies is decided per-match from the
+  connecting relationship's own recorded source, not fixed per rule. A
+  match's score sums its distinct matched signal *kinds* against
+  configurable weights (`same_trace` 30, `known_dependency` 25, `same_entity`
+  20, ... — see `DEFAULT_WEIGHTS`), so a five-signal match outscores a
+  one-signal match on the same pair. `correlate_pair()` is the single entry
+  point: it either merges into an existing correlation (growing it and
+  moving its status to `updated`, or `reopened` if every member had been
+  resolved), starts a new one (`new`), or explains exactly why nothing
+  qualified — false-correlation protection is enforced twice, once at rule
+  creation and again defensively at evaluation, so no stored rule can ever
+  correlate on weak signals alone even if one somehow existed.
+  `run_correlation_batch()` finds candidate pairs the same way Phase 3 finds
+  neighbors (same entity, one topology hop, or within a time window) and
+  evaluates each pair once.
+
+```bash
+POST /api/v1/correlation/rules                              # declare a rule (422 on a weak-signals-only rule)
+GET  /api/v1/correlation/rules?enabled_only=true             # list, priority order
+GET  /api/v1/correlation/weights                             # every signal's current score weight
+PUT  /api/v1/correlation/weights/same_trace?weight=35         # override one
+POST /api/v1/correlation/evaluate?event_a_id=&event_b_id=    # explain a pair without persisting anything
+POST /api/v1/correlation/run                                 # correlate every open logical event
+GET  /api/v1/correlations?status=correlated                  # stored groups
+GET  /api/v1/correlations/{id}                                # one group's members + full evidence trail
+```
+
+Verified against the mock collectors end-to-end (real Zabbix/Dynatrace/NNMi
+mock data through `upsert_*` -> entity resolution -> dedup ->
+`topology_sync` -> `correlate_pair`), not just synthetic unit data — the
+real run correctly formed multi-signal groups with a full, inspectable
+evidence trail and correctly left unrelated simultaneous events uncorrelated.
+
+Root cause ranking (which member of a correlated group is the actual cause
+versus a symptom) and incident management workflows (assignment, manual
+merge/split, notifications) are explicitly out of scope here — they consume
+this phase's `Correlation` groups as input, not extend this engine.
 
 ## Deploy to a server later
 

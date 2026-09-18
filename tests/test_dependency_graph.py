@@ -145,10 +145,19 @@ class TestNetworkToHost:
 
             written = sync_nnmi_relationships(db)
             db.commit()
+
+            # source is a global TopologySource enum value that other tests'
+            # data may also use, so scope by this edge's own source_reference
+            # (set by app.topology_sync to nnmi:<instance>:<external_id>)
+            # rather than trusting this test owns every monitoring-sourced row.
+            edge_ref = f"nnmi:{INST}:l2-1"
             assert written == 1
 
             rel = db.scalars(
-                select(EntityRelationship).where(EntityRelationship.source == TopologySource.monitoring)
+                select(EntityRelationship).where(
+                    EntityRelationship.source == TopologySource.monitoring,
+                    EntityRelationship.source_reference == edge_ref,
+                )
             ).one()
             assert rel.relationship_type == RelationshipType.connects_to
             from_e = db.get(CanonicalEntity, rel.from_entity_id)
@@ -160,11 +169,11 @@ class TestNetworkToHost:
             written_again = sync_nnmi_relationships(db)
             db.commit()
             assert written_again == 1
-            count = db.scalar(
-                select(EntityRelationship.id).where(EntityRelationship.source == TopologySource.monitoring)
-            )
             all_rows = db.scalars(
-                select(EntityRelationship).where(EntityRelationship.source == TopologySource.monitoring)
+                select(EntityRelationship).where(
+                    EntityRelationship.source == TopologySource.monitoring,
+                    EntityRelationship.source_reference == edge_ref,
+                )
             ).all()
             assert len(all_rows) == 1
         finally:
@@ -194,8 +203,14 @@ class TestDynatraceSync:
             written = sync_dynatrace_relationships(db)
             db.commit()
             assert written == 1
+            # Scope by this edge's own source_reference, not a blanket
+            # source-only filter — other tests may also write
+            # dynatrace-sourced relationships (a global TopologySource value).
             rel = db.scalars(
-                select(EntityRelationship).where(EntityRelationship.source == TopologySource.dynatrace)
+                select(EntityRelationship).where(
+                    EntityRelationship.source == TopologySource.dynatrace,
+                    EntityRelationship.source_reference == f"dynatrace:{INST}:call-1",
+                )
             ).one()
             assert rel.relationship_type == RelationshipType.calls
             assert "Checkout Service" in rel.evidence and "Payment Service" in rel.evidence

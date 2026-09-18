@@ -18,6 +18,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
+from app.correlation_engine import correlate_pair, run_correlation_batch, run_correlation_for_event
+from app.correlation_rules import create_rule, get_weights, list_rules, set_weight
 from app.db import get_db
 from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
@@ -26,6 +28,9 @@ from app.models import (
     Alert,
     CanonicalEntity,
     CollectorRun,
+    Correlation,
+    CorrelationEvidence,
+    CorrelationSignal,
     EntityAlias,
     EntityIP,
     EntityManualMapping,
@@ -66,6 +71,13 @@ from app.topology_sync import sync_all
 from app.schemas import (
     AlertOut,
     CollectorStatus,
+    CorrelationDetailOut,
+    CorrelationEvidenceOut,
+    CorrelationOut,
+    CorrelationOutcomeOut,
+    CorrelationRuleIn,
+    CorrelationRuleOut,
+    CorrelationWeightOut,
     DependencyNodeOut,
     DirectRelationshipsOut,
     EntityMappingIn,
@@ -726,6 +738,142 @@ def get_path(
         from_entity_id=from_entity_id, to_entity_id=to_entity_id,
         found=hops is not None,
         hops=[DependencyNodeOut(**vars(n)) for n in (hops or [])],
+    )
+
+
+# --- Correlation Phase 4: deterministic correlation rule engine -------------
+
+
+@router.get("/correlation/rules", response_model=list[CorrelationRuleOut])
+def list_correlation_rules(
+    enabled_only: bool = Query(default=False), db: Session = Depends(get_db),
+) -> list:
+    """Rules ordered by priority tier (1 = highest, Exact Trace .. 5 =
+    lowest, Temporal)."""
+    return list_rules(db, enabled_only=enabled_only)
+
+
+@router.post("/correlation/rules", response_model=CorrelationRuleOut, status_code=201)
+def create_correlation_rule(payload: CorrelationRuleIn, db: Session = Depends(get_db)):
+    """Create or update a rule (upsert on rule_id). Rejected (422) if it has
+    no time_window_seconds, an invalid one, or relies only on weak signals
+    — see app.correlation_rules.validate_rule_conditions.
+    """
+    try:
+        rule = create_rule(
+            db, rule_id=payload.rule_id, name=payload.name, enabled=payload.enabled,
+            conditions=payload.conditions, actions=payload.actions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    db.commit()
+    return rule
+
+
+@router.get("/correlation/weights", response_model=list[CorrelationWeightOut])
+def list_correlation_weights(db: Session = Depends(get_db)) -> list[CorrelationWeightOut]:
+    weights = get_weights(db)
+    return [CorrelationWeightOut(signal=sig.value, weight=w) for sig, w in weights.items()]
+
+
+@router.put("/correlation/weights/{signal}", response_model=CorrelationWeightOut)
+def update_correlation_weight(
+    signal: str, weight: float = Query(...), db: Session = Depends(get_db),
+) -> CorrelationWeightOut:
+    try:
+        sig = CorrelationSignal(signal)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="unknown signal") from None
+    row = set_weight(db, sig, weight)
+    db.commit()
+    return CorrelationWeightOut(signal=row.signal.value, weight=row.weight)
+
+
+@router.post("/correlation/evaluate", response_model=CorrelationOutcomeOut)
+def evaluate_correlation(
+    event_a_id: int = Query(...), event_b_id: int = Query(...), db: Session = Depends(get_db),
+) -> CorrelationOutcomeOut:
+    """Explicitly evaluate one pair of LogicalEvents. Always returns a full
+    explanation, including why NOT — no rule matched, or only weak signals
+    (temporal/same_host/same_application/multi_source) were present.
+    """
+    if db.get(LogicalEvent, event_a_id) is None or db.get(LogicalEvent, event_b_id) is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    outcome = correlate_pair(db, event_a_id, event_b_id)
+    db.commit()
+    return CorrelationOutcomeOut(
+        correlated=outcome.correlated, reason=outcome.reason, score=outcome.score,
+        correlation_type=outcome.correlation_type.value if outcome.correlation_type else None,
+        matched_rule_id=outcome.matched_rule_id, correlation_id=outcome.correlation_id,
+        status=outcome.status.value if outcome.status else None,
+        hits=[
+            {"signal": h.signal.value, "value": h.value, "source": h.source,
+             "priority_tier": h.priority_tier, "related_entity_id": h.related_entity_id}
+            for h in outcome.hits
+        ],
+    )
+
+
+@router.post("/correlation/run")
+def run_correlation(
+    event_id: int | None = Query(default=None), db: Session = Depends(get_db),
+) -> dict:
+    """Run correlation for one event against its candidates (``event_id``
+    given) or a bounded batch of recently-active events (omitted).
+    """
+    if event_id is not None:
+        if db.get(LogicalEvent, event_id) is None:
+            raise HTTPException(status_code=404, detail="event not found")
+        outcomes = run_correlation_for_event(db, event_id)
+        db.commit()
+        return {
+            "pairs_evaluated": len(outcomes),
+            "pairs_correlated": sum(1 for o in outcomes if o.correlated),
+        }
+    result = run_correlation_batch(db)
+    db.commit()
+    return result
+
+
+@router.get("/correlations", response_model=list[CorrelationOut])
+def list_correlations(
+    status: str | None = Query(default=None),
+    correlation_type: str | None = Query(default=None),
+    event_id: int | None = Query(default=None, description="Either member"),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[Correlation]:
+    stmt = select(Correlation)
+    if status:
+        stmt = stmt.where(Correlation.status == status)
+    if correlation_type:
+        stmt = stmt.where(Correlation.correlation_type == correlation_type)
+    stmt = stmt.order_by(Correlation.updated_at.desc())
+    size, start = _page_window(limit, offset, settings)
+    if event_id is not None:
+        rows = [c for c in db.scalars(stmt).all() if event_id in (c.member_event_ids or [])]
+        return rows[start : start + size]
+    return list(db.scalars(stmt.offset(start).limit(size)).all())
+
+
+@router.get("/correlations/{correlation_id}", response_model=CorrelationDetailOut)
+def get_correlation(correlation_id: int, db: Session = Depends(get_db)) -> CorrelationDetailOut:
+    correlation = db.get(Correlation, correlation_id)
+    if correlation is None:
+        raise HTTPException(status_code=404, detail="correlation not found")
+    evidence = db.scalars(
+        select(CorrelationEvidence)
+        .where(CorrelationEvidence.correlation_id == correlation_id)
+        .order_by(CorrelationEvidence.id.asc())
+    ).all()
+    return CorrelationDetailOut(
+        id=correlation.id, correlation_type=correlation.correlation_type.value,
+        status=correlation.status.value, rule_id=correlation.rule_id, score=correlation.score,
+        member_event_ids=correlation.member_event_ids, created_at=correlation.created_at,
+        updated_at=correlation.updated_at,
+        evidence=[CorrelationEvidenceOut.model_validate(e) for e in evidence],
     )
 
 
