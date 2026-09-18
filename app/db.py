@@ -220,6 +220,13 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     ("ix_logical_events_entity_id", "logical_events", "(entity_id)"),
     ("ix_logical_events_status", "logical_events", "(status)"),
     ("ix_logical_events_last_seen", "logical_events", "(last_seen)"),
+    # Correlation Phase 3: dependency graph traversal (app/dependency_graph.py)
+    # walks from_entity_id (upstream) and to_entity_id (downstream) for one
+    # entity at a time, filtered by relationship_type — this is the composite
+    # each traversal step actually needs, not just the single-column indexes
+    # already implied by index=True on each column.
+    ("ix_entrel_from_type", "entity_relationships", "(from_entity_id, relationship_type)"),
+    ("ix_entrel_to_type", "entity_relationships", "(to_entity_id, relationship_type)"),
 ]
 
 

@@ -205,6 +205,102 @@ class LogicalEventOut(BaseModel):
     updated_at: datetime
 
 
+class RelationshipOut(BaseModel):
+    """One EntityRelationship row, as stored — one source's claim."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source: str
+    source_reference: str
+    relationship_type: str
+    from_entity_id: int
+    to_entity_id: int
+    evidence: str | None
+    confidence: float | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RelationshipIn(BaseModel):
+    """Declare a relationship between two existing canonical entities.
+
+    ``source`` should be ``manual``, ``cmdb``, or ``explicit_config`` for
+    anything entered this way — ``dynatrace``/``monitoring`` are written
+    only by app.topology_sync, from data this app actually observed.
+    """
+
+    source: str = Field(default="manual")
+    source_reference: str = ""
+    relationship_type: str
+    from_entity_id: int
+    to_entity_id: int
+    evidence: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class RelatedEntityOut(BaseModel):
+    """One neighbor in a one-hop view (app.dependency_graph.direct_relationships)."""
+
+    relationship_id: int
+    entity_id: int
+    entity_type: str | None
+    canonical_name: str | None
+    relationship_type: str
+    source: str
+    evidence: str | None
+    confidence: float | None
+
+
+class DirectRelationshipsOut(BaseModel):
+    """One entity's immediate neighbors, both directions, as stored."""
+
+    entity_id: int
+    outgoing: list[RelatedEntityOut] = Field(default_factory=list)
+    incoming: list[RelatedEntityOut] = Field(default_factory=list)
+
+
+class DependencyNodeOut(BaseModel):
+    """One entity reached during a traversal — see app.dependency_graph."""
+
+    entity_id: int
+    entity_type: str
+    canonical_name: str
+    depth: int
+    relationship_type: str
+    source: str
+    via_entity_id: int
+    path: list[int] = Field(default_factory=list)
+    #: True if this entity has an open/deduplicated/reopened LogicalEvent
+    #: (Phase 2) right now — real data, not a guess. Filled in by the API
+    #: route (app.dependency_graph itself has no Phase 2 dependency), so the
+    #: UI can tell a healthy node from one with an active issue.
+    has_active_issue: bool = False
+
+
+class TraversalOut(BaseModel):
+    """The result of a dependency/impact traversal."""
+
+    root_entity_id: int
+    root_entity_type: str
+    root_canonical_name: str
+    root_has_active_issue: bool = False
+    direction: str
+    nodes: list[DependencyNodeOut] = Field(default_factory=list)
+    max_depth: int
+    truncated: bool
+    cycle_detected: bool
+
+
+class PathOut(BaseModel):
+    """A path between two entities, or none if unreachable within bounds."""
+
+    from_entity_id: int
+    to_entity_id: int
+    found: bool
+    hops: list[DependencyNodeOut] = Field(default_factory=list)
+
+
 class CollectorStatus(BaseModel):
     """Health snapshot for a single collector instance."""
 

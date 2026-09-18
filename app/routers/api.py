@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
 from app.models import (
     PLATFORM_ORDER,
@@ -28,14 +29,18 @@ from app.models import (
     EntityAlias,
     EntityIP,
     EntityManualMapping,
+    EntityRelationship,
     EntityType,
     Host,
     HostStatus,
     LogicalEvent,
+    LogicalEventStatus,
+    RelationshipType,
     RunStatus,
     SourcePlatform,
     TopologyEdge,
     TopologyNode,
+    TopologySource,
 )
 from app.normalizer import severity_label
 from app.scheduler import (
@@ -57,9 +62,12 @@ from app.topology import (
     dynatrace_unified_rows,
     nnmi_connection_rows,
 )
+from app.topology_sync import sync_all
 from app.schemas import (
     AlertOut,
     CollectorStatus,
+    DependencyNodeOut,
+    DirectRelationshipsOut,
     EntityMappingIn,
     EntityMappingOut,
     EntityOut,
@@ -69,10 +77,15 @@ from app.schemas import (
     IngestResult,
     LogicalEventOccurrenceOut,
     LogicalEventOut,
+    PathOut,
     PlatformHostCount,
+    RelatedEntityOut,
+    RelationshipIn,
+    RelationshipOut,
     SeverityBucket,
     SiteScopeIngest,
     SummaryOut,
+    TraversalOut,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
@@ -519,6 +532,201 @@ def get_logical_event_occurrences(
         .order_by(Alert.started_at.desc().nullslast())
     )
     return list(db.scalars(stmt).all())
+
+
+# --- Correlation Phase 3: dependency graph -----------------------------------
+#
+# A SEPARATE surface from the existing /topology/graph (raw per-platform
+# NNMi/Dynatrace topology) — this one is the resolved-entity graph. See the
+# module note above EntityRelationship in app/models.py.
+
+
+@router.get("/topology/relationships", response_model=list[RelationshipOut])
+def list_relationships(
+    from_entity_id: int | None = Query(default=None),
+    to_entity_id: int | None = Query(default=None),
+    entity_id: int | None = Query(default=None, description="Either direction"),
+    relationship_type: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[EntityRelationship]:
+    """Every stored relationship, as-is — every source's own claim, never
+    collapsed into one "true" answer.
+    """
+    stmt = select(EntityRelationship)
+    if from_entity_id is not None:
+        stmt = stmt.where(EntityRelationship.from_entity_id == from_entity_id)
+    if to_entity_id is not None:
+        stmt = stmt.where(EntityRelationship.to_entity_id == to_entity_id)
+    if entity_id is not None:
+        stmt = stmt.where(
+            (EntityRelationship.from_entity_id == entity_id)
+            | (EntityRelationship.to_entity_id == entity_id)
+        )
+    if relationship_type:
+        stmt = stmt.where(EntityRelationship.relationship_type == relationship_type)
+    if source:
+        stmt = stmt.where(EntityRelationship.source == source)
+    size, start = _page_window(limit, offset, settings)
+    stmt = stmt.order_by(EntityRelationship.id.asc()).offset(start).limit(size)
+    return list(db.scalars(stmt).all())
+
+
+@router.post("/topology/relationships", response_model=RelationshipOut, status_code=201)
+def create_relationship(
+    payload: RelationshipIn, db: Session = Depends(get_db)
+) -> EntityRelationship:
+    """Declare a relationship between two existing canonical entities.
+
+    For ``manual``/``cmdb``/``explicit_config`` claims — see the module note
+    in app/topology_sync.py for why those three have no automated feed here.
+    """
+    try:
+        source = TopologySource(payload.source)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="unknown source") from None
+    try:
+        rel_type = RelationshipType(payload.relationship_type)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="unknown relationship_type") from None
+    if db.get(CanonicalEntity, payload.from_entity_id) is None:
+        raise HTTPException(status_code=404, detail="from_entity_id not found")
+    if db.get(CanonicalEntity, payload.to_entity_id) is None:
+        raise HTTPException(status_code=404, detail="to_entity_id not found")
+    if payload.from_entity_id == payload.to_entity_id:
+        raise HTTPException(status_code=422, detail="an entity cannot relate to itself")
+
+    row = record_relationship(
+        db,
+        source=source,
+        relationship_type=rel_type,
+        from_entity_id=payload.from_entity_id,
+        to_entity_id=payload.to_entity_id,
+        source_reference=payload.source_reference,
+        evidence=payload.evidence,
+        confidence=payload.confidence,
+    )
+    db.commit()
+    return row
+
+
+@router.post("/topology/sync")
+def run_topology_sync(db: Session = Depends(get_db)) -> dict[str, int]:
+    """Re-derive dynatrace/monitoring relationships from the topology tables
+    app.topology already collects. Safe to re-run — see record_relationship's
+    upsert semantics.
+    """
+    result = sync_all(db)
+    db.commit()
+    return result
+
+
+@router.get("/topology/entities/{entity_id}", response_model=DirectRelationshipsOut)
+def get_entity_relationships(
+    entity_id: int, db: Session = Depends(get_db)
+) -> DirectRelationshipsOut:
+    """One entity's immediate neighbors, both directions, every source."""
+    if db.get(CanonicalEntity, entity_id) is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    rels = direct_relationships(db, entity_id)
+    return DirectRelationshipsOut(
+        entity_id=entity_id,
+        outgoing=[RelatedEntityOut(**r) for r in rels["outgoing"]],
+        incoming=[RelatedEntityOut(**r) for r in rels["incoming"]],
+    )
+
+
+def _active_issue_entity_ids(db: Session, entity_ids: set[int]) -> set[int]:
+    """Which of these entities have an open/deduplicated/reopened LogicalEvent
+    right now — real Phase 2 data, one batched query, not a per-node lookup.
+    """
+    if not entity_ids:
+        return set()
+    rows = db.scalars(
+        select(LogicalEvent.entity_id).where(
+            LogicalEvent.entity_id.in_(entity_ids),
+            LogicalEvent.status.in_((
+                LogicalEventStatus.open, LogicalEventStatus.deduplicated,
+                LogicalEventStatus.reopened,
+            )),
+        )
+    ).all()
+    return {eid for eid in rows if eid is not None}
+
+
+def _traversal_out(db: Session, entity: CanonicalEntity, result) -> TraversalOut:
+    all_ids = {n.entity_id for n in result.nodes} | {entity.id}
+    unhealthy = _active_issue_entity_ids(db, all_ids)
+    return TraversalOut(
+        root_entity_id=result.root_entity_id,
+        root_entity_type=entity.entity_type.value,
+        root_canonical_name=entity.canonical_name,
+        root_has_active_issue=entity.id in unhealthy,
+        direction=result.direction,
+        nodes=[
+            DependencyNodeOut(**vars(n), has_active_issue=n.entity_id in unhealthy)
+            for n in result.nodes
+        ],
+        max_depth=result.max_depth, truncated=result.truncated,
+        cycle_detected=result.cycle_detected,
+    )
+
+
+@router.get("/topology/dependencies/{entity_id}", response_model=TraversalOut)
+def get_dependencies(
+    entity_id: int,
+    max_depth: int = Query(default=5, ge=1, le=25),
+    db: Session = Depends(get_db),
+) -> TraversalOut:
+    """What this entity depends on — direct, one-hop, and multi-hop, cycle-safe."""
+    entity = db.get(CanonicalEntity, entity_id)
+    if entity is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    result = traverse(db, entity_id, direction="upstream", max_depth=max_depth)
+    return _traversal_out(db, entity, result)
+
+
+@router.get("/topology/impact/{entity_id}", response_model=TraversalOut)
+def get_impact(
+    entity_id: int,
+    max_depth: int = Query(default=5, ge=1, le=25),
+    db: Session = Depends(get_db),
+) -> TraversalOut:
+    """What is affected if this entity fails — direct, one-hop, and
+    multi-hop, cycle-safe. Answers "what depends on this host", "which
+    applications/APIs depend on this database", "which business services
+    are affected" — filter the returned nodes by entity_type client-side.
+    """
+    entity = db.get(CanonicalEntity, entity_id)
+    if entity is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    result = traverse(db, entity_id, direction="downstream", max_depth=max_depth)
+    return _traversal_out(db, entity, result)
+
+
+@router.get("/topology/path", response_model=PathOut)
+def get_path(
+    from_entity_id: int = Query(...),
+    to_entity_id: int = Query(...),
+    max_depth: int = Query(default=25, ge=1, le=25),
+    db: Session = Depends(get_db),
+) -> PathOut:
+    """Is ``to_entity_id`` reachable upstream from ``from_entity_id``, and
+    how — e.g. is Customer API indirectly dependent on CustomerDB.
+    """
+    if db.get(CanonicalEntity, from_entity_id) is None:
+        raise HTTPException(status_code=404, detail="from_entity_id not found")
+    if db.get(CanonicalEntity, to_entity_id) is None:
+        raise HTTPException(status_code=404, detail="to_entity_id not found")
+    hops = find_path(db, from_entity_id, to_entity_id, max_depth=max_depth)
+    return PathOut(
+        from_entity_id=from_entity_id, to_entity_id=to_entity_id,
+        found=hops is not None,
+        hops=[DependencyNodeOut(**vars(n)) for n in (hops or [])],
+    )
 
 
 def _csv_response(

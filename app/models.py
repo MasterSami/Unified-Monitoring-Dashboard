@@ -74,11 +74,12 @@ class HostStatus(str, enum.Enum):
 class EntityType(str, enum.Enum):
     """Kinds of thing a :class:`CanonicalEntity` can represent.
 
-    Phase 1 (entity resolution) only ever creates ``host`` entities — that is
-    the only kind any current collector can resolve deterministically. The
-    rest exist so the schema does not need to change again when a later
-    Correlation phase learns to resolve services/applications/etc from the
-    topology graph.
+    Phase 1 (entity resolution) only ever created ``host`` entities — the
+    only kind that phase's collectors could resolve deterministically.
+    Phase 3 (app/topology_sync.py) additionally resolves ``service`` and
+    ``network_device`` entities from Dynatrace/NNMi topology data, reusing
+    the exact same resolver. The remaining kinds stay schema-ready for
+    whatever a later phase or a manually-declared relationship needs.
     """
 
     host = "host"
@@ -89,6 +90,7 @@ class EntityType(str, enum.Enum):
     database = "database"
     external_service = "external_service"
     business_service = "business_service"
+    load_balancer = "load_balancer"
 
 
 class ResolutionMethod(str, enum.Enum):
@@ -140,6 +142,62 @@ class LogicalEventStatus(str, enum.Enum):
     deduplicated = "deduplicated"
     resolved = "resolved"
     reopened = "reopened"
+
+
+class RelationshipType(str, enum.Enum):
+    """How one :class:`CanonicalEntity` relates to another (Phase 3).
+
+    Split into two directional families for dependency-graph traversal —
+    see app/dependency_graph.py:
+
+    - "dependency" edges (``depends_on``, ``calls``, ``hosted_on``,
+      ``connects_to``, ``routes_to``, ``uses``): stored as *from* needs
+      *to*. A failure of ``to`` propagates back to ``from`` — e.g.
+      ``CustomerService --depends_on--> CustomerDB``: DB trouble affects
+      CustomerService, not the other way round.
+    - "impact" edges (``affects``, ``provides``, ``part_of``,
+      ``member_of``): already phrased in the failure-propagation direction —
+      *from*'s failure propagates forward to ``to``. ``LoadBalancer
+      --provides--> ServiceA`` means the load balancer failing affects
+      ServiceA, exactly as stored. ``part_of``/``member_of`` belong here,
+      not with the dependency edges, even though they read like one: "API
+      --part_of--> Customer360" does not mean the API needs Customer360 to
+      function — it means the API's own trouble is part of what can go
+      wrong with Customer360, so it propagates the SAME direction as the
+      edge is stored, from the part to the whole.
+    """
+
+    depends_on = "depends_on"
+    calls = "calls"
+    hosted_on = "hosted_on"
+    connects_to = "connects_to"
+    routes_to = "routes_to"
+    uses = "uses"
+    provides = "provides"
+    part_of = "part_of"
+    member_of = "member_of"
+    affects = "affects"
+
+
+class TopologySource(str, enum.Enum):
+    """Where a :class:`EntityRelationship` row came from.
+
+    Multiple sources may each independently record what amounts to the same
+    real-world relationship — CMDB and Dynatrace can both know
+    "CustomerService depends on CustomerDB" — and neither is silently
+    merged into or overwritten by the other; each keeps its own row, its
+    own evidence, and its own confidence. See app/topology_sync.py for
+    which sources this codebase can actually populate automatically today
+    (``dynatrace``, ``monitoring``) versus which are only ever written by a
+    human or a script calling the API directly (``explicit_config``,
+    ``cmdb``, ``manual`` — this app has no live CMDB feed to connect to).
+    """
+
+    explicit_config = "explicit_config"
+    cmdb = "cmdb"
+    dynatrace = "dynatrace"
+    monitoring = "monitoring"
+    manual = "manual"
 
 
 class RunStatus(str, enum.Enum):
@@ -738,6 +796,67 @@ class LogicalEvent(Base):
     title: Mapped[str] = mapped_column(String(512), default="")
     current_severity_int: Mapped[int] = mapped_column(Integer, default=1)
     current_severity_label: Mapped[str] = mapped_column(String(32), default="info")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+# --- Correlation Phase 3: topology / dependency graph ------------------------
+#
+# A deterministic graph over CanonicalEntity nodes (Phase 1) — never over raw
+# per-platform Host/TopologyNode rows, so "CustomerService depends on
+# CustomerDB" means the same thing regardless of which tool originally
+# reported either end. This is a SEPARATE graph from the pre-existing
+# TopologyNode/TopologyEdge tables (NNMi L2 devices, Dynatrace's raw service
+# map) — those record what a platform's own topology API returned, scoped to
+# one (platform, instance); this one records resolved, source-attributed
+# relationships between canonical entities, several sources deep if they
+# disagree. app/topology_sync.py is the bridge: it reads the existing
+# TopologyNode/TopologyEdge rows and writes EntityRelationship rows from them,
+# it does not replace either table.
+
+
+class EntityRelationship(Base):
+    """One source's claim that ``from_entity`` relates to ``to_entity``.
+
+    Never silently merged with another source's claim about the same pair —
+    CMDB and Dynatrace can each record "CustomerService depends_on
+    CustomerDB" and both rows persist, each with its own evidence. Re-sending
+    the identical claim from the SAME source is idempotent (upsert on the
+    unique key below), so re-running a sync job doesn't grow the table.
+    """
+
+    __tablename__ = "entity_relationships"
+    __table_args__ = (
+        UniqueConstraint(
+            "source", "source_reference", "from_entity_id", "to_entity_id",
+            "relationship_type", name="uq_entity_relationship",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source: Mapped[TopologySource] = mapped_column(
+        Enum(TopologySource, native_enum=False, length=16), index=True
+    )
+    #: Free-text pointer to where this came from (a CMDB CI id, the Dynatrace
+    #: relationship's own external id, "declared by <user> via API"). ``""``
+    #: (never NULL, same convention as Host.source_instance) for sources that
+    #: don't have a natural reference to record, so the unique key above
+    #: still holds.
+    source_reference: Mapped[str] = mapped_column(String(255), default="")
+    relationship_type: Mapped[RelationshipType] = mapped_column(
+        Enum(RelationshipType, native_enum=False, length=16), index=True
+    )
+    #: Both match CanonicalEntity.id — not FKs, same convention as elsewhere.
+    from_entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    to_entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: Why this relationship is believed to exist, e.g. "Dynatrace call path
+    #: Customer API -> CustomerService" or "CMDB dependency". Shown as-is.
+    evidence: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: How much to trust this claim, 0..1. Fixed per source (see
+    #: app/topology_sync.py DEFAULT_CONFIDENCE), not derived from the data.
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

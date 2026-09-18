@@ -71,6 +71,15 @@
             <span class="ico">◉</span> Topology <span class="soon">soon</span>
           </span>
           {% endif %}
+          {% if enable_dependency_graph %}
+          <a href="/dependency-graph" class="{{ 'active' if active_page == 'dependency_graph' else '' }}">
+            <span class="ico">⛓</span> Dependencies
+          </a>
+          {% else %}
+          <span class="nav-disabled" title="Coming soon - set ENABLE_DEPENDENCY_GRAPH=true">
+            <span class="ico">⛓</span> Dependencies <span class="soon">soon</span>
+          </span>
+          {% endif %}
 
           {% if enable_runbook %}
           <div class="nav-section">Operations</div>

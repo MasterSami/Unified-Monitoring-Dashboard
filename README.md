@@ -209,6 +209,13 @@ nnmi:
 | `GET  /api/v1/logical-events`         | Deduplicated logical events (filters: `status`, `entity_id`, `platform`, `q`). |
 | `GET  /api/v1/logical-events/{id}`    | One logical event's aggregate state. |
 | `GET  /api/v1/logical-events/{id}/occurrences` | Every original Alert row folded into it. |
+| `GET  /api/v1/topology/relationships` | Stored entity relationships (filters: `from_entity_id`, `to_entity_id`, `entity_id`, `relationship_type`, `source`). |
+| `POST /api/v1/topology/relationships` | Declare a relationship between two entities. |
+| `POST /api/v1/topology/sync`          | Re-derive relationships from Dynatrace/NNMi topology data. |
+| `GET  /api/v1/topology/entities/{id}` | One entity's immediate neighbors, both directions. |
+| `GET  /api/v1/topology/dependencies/{id}` | What it depends on, multi-hop (`max_depth`). |
+| `GET  /api/v1/topology/impact/{id}`   | What's affected if it fails, multi-hop (`max_depth`). |
+| `GET  /api/v1/topology/path`          | Path between two entities (`from_entity_id`, `to_entity_id`). |
 
 Interactive docs at `/docs`.
 
@@ -537,6 +544,61 @@ GET /api/v1/logical-events/{id}/occurrences         # every original Alert row f
 Topology correlation, API/database correlation, root cause, and incident
 grouping are explicitly not implemented here — they are later phases that
 read logical events as their input, not this phase's job.
+
+## Correlation — Phase 3: topology / dependency graph
+
+Knowing "CustomerService depends on CustomerDB" and "Customer API calls
+CustomerService" separately is not the same as knowing Customer API is
+*indirectly* dependent on CustomerDB. Phase 3 is a deterministic graph over
+Phase 1's canonical entities that answers exactly that — several hops deep,
+cycle-safe, no AI/ML.
+
+- `app/models.py` — a new `EntityRelationship` table: one source's claim
+  that one entity relates to another (`DEPENDS_ON`, `CALLS`, `HOSTED_ON`,
+  `CONNECTS_TO`, `ROUTES_TO`, `USES`, `PROVIDES`, `PART_OF`, `MEMBER_OF`,
+  `AFFECTS`), with its own evidence and confidence. Never silently merged
+  with another source's claim about the same pair — CMDB and Dynatrace can
+  each record the same dependency and both rows persist. This is a
+  *separate* graph from the pre-existing `TopologyNode`/`TopologyEdge`
+  tables (NNMi's raw network map, Dynatrace's raw service map) — those
+  record what a platform's own topology API returned; this one records
+  resolved, source-attributed relationships between canonical entities.
+- `app/dependency_graph.py` — the traversal engine. Every relationship type
+  falls into one of two families for direction purposes: "dependency" edges
+  (depends_on/calls/hosted_on/connects_to/routes_to/uses — *from* needs
+  *to*, so a failure of *to* propagates back to *from*) and "impact" edges
+  (affects/provides/part_of/member_of — already stored in the
+  failure-propagation direction). "Upstream" and "downstream" traversal are
+  mirror images of each other under this one rule. Cycle-safe by
+  construction: a visited-node set plus a hard-capped max depth (25, even if
+  a caller asks for more) means a cyclic graph terminates exactly like an
+  acyclic one.
+- `app/topology_sync.py` — bridges the existing Topology feature into this
+  graph: Dynatrace's collected service call paths become `CALLS`
+  relationships, NNMi's L2 network connections become `CONNECTS_TO`
+  relationships, both resolved to canonical entities via the same Phase 1
+  resolver. `explicit_config`/`cmdb`/`manual` have no automated feed in this
+  environment — there is no CMDB API connected anywhere in this codebase —
+  and are populated by a human or a script through the API below, same as
+  Phase 1's manual entity mappings.
+
+```bash
+GET  /api/v1/topology/relationships              # every stored relationship, filterable
+POST /api/v1/topology/relationships               # declare one (manual/cmdb/explicit_config)
+POST /api/v1/topology/sync                        # re-derive from Dynatrace/NNMi topology data
+GET  /api/v1/topology/entities/{id}                # one entity's immediate neighbors, both directions
+GET  /api/v1/topology/dependencies/{id}            # what it depends on — multi-hop, cycle-safe
+GET  /api/v1/topology/impact/{id}                  # what's affected if it fails — multi-hop, cycle-safe
+GET  /api/v1/topology/path?from_entity_id=&to_entity_id=  # is B reachable upstream from A, and how
+```
+
+A **Dependencies** nav tab (`ENABLE_DEPENDENCY_GRAPH`, off by default like
+every other optional tab) visualizes this: search for an entity, see what it
+depends on and what would be affected if it failed, several hops out. Root,
+dependency, and affected nodes are told apart by shape and border style as
+well as color (a diamond root, solid-bordered dependencies, dashed-bordered
+affected entities), and a node with a live Phase 2 logical event against it
+is marked distinctly too — not a color-only distinction.
 
 ## Deploy to a server later
 

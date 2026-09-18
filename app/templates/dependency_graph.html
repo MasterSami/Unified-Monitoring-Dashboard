@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}Dependency Graph · Unified Monitoring{% endblock %}
+{% block page_title %}Dependency Graph{% endblock %}
+{% block page_sub %}What this entity depends on, and what would be affected if it failed{% endblock %}
+
+{% block content %}
+{% if not enabled %}
+<div class="card card-pad" style="text-align:center; padding: 48px 24px;">
+  <div style="font-size:40px; margin-bottom: 12px;">⛓</div>
+  <h2 style="margin:0 0 8px;">Dependency Graph is turned off</h2>
+  <p style="color:var(--text-muted); max-width:64ch; margin:0 auto;">
+    This section walks the <b>resolved-entity dependency graph</b> (Correlation
+    Phase 3) - what a service, API, database, or host depends on, and what
+    would be affected if it failed, several hops deep.
+  </p>
+  <p style="color:var(--text-faint); margin-top:16px; font-size:13px;">
+    To enable it, set <code>ENABLE_DEPENDENCY_GRAPH=true</code> in <code>.env</code>
+    and restart. The underlying <code>/api/v1/topology/*</code> endpoints work
+    regardless of this flag.
+  </p>
+</div>
+{% else %}
+
+<div class="topo-bar">
+  <div class="search search-grow">
+    <span class="search-icon">⌕</span>
+    <input
+      type="search"
+      id="dg-search"
+      placeholder="Find an entity by name…"
+      autocomplete="off"
+      value="{{ root.canonical_name if root else '' }}"
+    />
+    <div id="dg-search-results" class="dg-search-results" hidden></div>
+  </div>
+
+  <div class="spacer"></div>
+
+  <label class="topo-inst">
+    <span>Max depth</span>
+    <select id="dg-max-depth">
+      <option value="1">1 hop</option>
+      <option value="3">3 hops</option>
+      <option value="5" selected>5 hops</option>
+      <option value="10">10 hops</option>
+      <option value="25">25 hops (full)</option>
+    </select>
+  </label>
+</div>
+
+{% if not has_any_entity %}
+<div class="card">
+  <div class="empty">
+    <span class="big">⛓</span>
+    No entities resolved yet.
+    <div style="margin-top:10px; font-size:13px; color:var(--text-faint);">
+      Entities appear once Phase 1 (entity resolution) has run against real
+      hosts, or once a relationship is declared via
+      <code>POST /api/v1/topology/relationships</code>.
+    </div>
+  </div>
+</div>
+{% else %}
+
+<div class="card" id="dg-card">
+  <div class="card-head">
+    <h3 id="dg-title">{{ root.canonical_name if root else 'Search for an entity above' }}</h3>
+    <span class="hint" id="dg-hint">
+      {% if root %}upstream = what it depends on · downstream = what depends on it{% else %}pick an entity to see its dependency graph{% endif %}
+    </span>
+  </div>
+  <div id="dg-empty" class="empty" {{ '' if not root else 'hidden' }}>
+    <span class="big">⛓</span>
+    Search for a host, service, API, or database above.
+  </div>
+  <div id="cy" class="topo-graph" {{ '' if not root else '' }}
+       data-entity-id="{{ root.id if root else '' }}"></div>
+  <div class="topo-legend dg-legend">
+    <span><i class="lg dg-shape-diamond" style="background:var(--accent)"></i> Root (★) - the entity you're inspecting</span>
+    <span><i class="lg dg-shape-ellipse" style="background:#2563eb"></i> Dependency - solid border, what the root needs</span>
+    <span><i class="lg dg-shape-rect" style="background:#d97706"></i> Affected - dashed border, what needs the root</span>
+    <span><i class="lg" style="background:var(--down)"></i> ⚠ Active issue (Phase 2, live)</span>
+  </div>
+</div>
+
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if enabled and has_any_entity %}
+<script src="/static/cytoscape.min.js?v={{ asset_version }}"></script>
+<script>
+  (function () {
+    var searchInput = document.getElementById("dg-search");
+    var resultsBox = document.getElementById("dg-search-results");
+    var maxDepthSel = document.getElementById("dg-max-depth");
+    var cyEl = document.getElementById("cy");
+    var titleEl = document.getElementById("dg-title");
+    var hintEl = document.getElementById("dg-hint");
+    var emptyEl = document.getElementById("dg-empty");
+    var cy = null;
+    var searchTimer = null;
+
+    function setUrlEntity(id) {
+      var url = new URL(location.href);
+      url.searchParams.set("entity_id", id);
+      history.replaceState(null, "", url);
+    }
+
+    searchInput.addEventListener("input", function () {
+      var q = searchInput.value.trim();
+      clearTimeout(searchTimer);
+      if (q.length < 2) { resultsBox.hidden = true; return; }
+      searchTimer = setTimeout(function () {
+        fetch("/api/v1/entities?q=" + encodeURIComponent(q) + "&limit=15")
+          .then(function (r) { return r.json(); })
+          .then(function (entities) {
+            resultsBox.innerHTML = "";
+            if (!entities.length) {
+              resultsBox.innerHTML = '<div class="dg-search-empty">No matches</div>';
+              resultsBox.hidden = false;
+              return;
+            }
+            entities.forEach(function (e) {
+              var row = document.createElement("button");
+              row.type = "button";
+              row.className = "dg-search-row";
+              row.textContent = e.canonical_name + "  ·  " + e.entity_type;
+              row.onclick = function () {
+                resultsBox.hidden = true;
+                searchInput.value = e.canonical_name;
+                loadEntity(e.entity_id, e.canonical_name);
+              };
+              resultsBox.appendChild(row);
+            });
+            resultsBox.hidden = false;
+          });
+      }, 200);
+    });
+    document.addEventListener("click", function (ev) {
+      if (!resultsBox.contains(ev.target) && ev.target !== searchInput) resultsBox.hidden = true;
+    });
+
+    maxDepthSel.addEventListener("change", function () {
+      var id = cyEl.dataset.entityId;
+      if (id) loadEntity(id, titleEl.textContent);
+    });
+
+    function nodeStyleFor(category, hasIssue) {
+      if (category === "root") return { shape: "diamond", color: "var(--accent, #4f46e5)", border: "solid", width: 3 };
+      if (hasIssue) return {
+        shape: category === "dependency" ? "ellipse" : "round-rectangle",
+        color: "var(--down, #dc2626)",
+        border: category === "dependency" ? "solid" : "dashed",
+        width: 2.5,
+      };
+      return {
+        shape: category === "dependency" ? "ellipse" : "round-rectangle",
+        color: category === "dependency" ? "#2563eb" : "#d97706",
+        border: category === "dependency" ? "solid" : "dashed",
+        width: 1.5,
+      };
+    }
+
+    function loadEntity(id, name) {
+      cyEl.dataset.entityId = id;
+      setUrlEntity(id);
+      titleEl.textContent = name || ("Entity " + id);
+      hintEl.textContent = "loading…";
+      emptyEl.hidden = true;
+
+      Promise.all([
+        fetch("/api/v1/topology/dependencies/" + id + "?max_depth=" + maxDepthSel.value).then(function (r) { return r.json(); }),
+        fetch("/api/v1/topology/impact/" + id + "?max_depth=" + maxDepthSel.value).then(function (r) { return r.json(); }),
+      ]).then(function (results) {
+        var deps = results[0], impact = results[1];
+        hintEl.textContent = "upstream = what it depends on · downstream = what depends on it"
+          + (deps.truncated || impact.truncated ? " · truncated at max depth" : "")
+          + (deps.cycle_detected || impact.cycle_detected ? " · cycle detected in graph" : "");
+
+        var elements = [];
+        var seen = {};
+        function addNode(entityId, label, category, hasIssue, isRoot) {
+          if (seen[entityId]) return;
+          seen[entityId] = true;
+          var st = nodeStyleFor(isRoot ? "root" : category, hasIssue);
+          var prefix = isRoot ? "★ " : (hasIssue ? "⚠ " : "");
+          elements.push({
+            data: { id: "n" + entityId, label: prefix + label, shape: st.shape,
+                     color: st.color, borderStyle: st.border, borderWidth: st.width },
+          });
+        }
+        addNode(deps.root_entity_id, deps.root_canonical_name, "root", deps.root_has_active_issue, true);
+        deps.nodes.forEach(function (n) {
+          addNode(n.entity_id, n.canonical_name, "dependency", n.has_active_issue, false);
+          elements.push({
+            data: { id: "e-dep-" + n.via_entity_id + "-" + n.entity_id,
+                     source: "n" + n.via_entity_id, target: "n" + n.entity_id,
+                     kind: "dependency", label: n.relationship_type },
+          });
+        });
+        impact.nodes.forEach(function (n) {
+          addNode(n.entity_id, n.canonical_name, "affected", n.has_active_issue, false);
+          elements.push({
+            data: { id: "e-imp-" + n.via_entity_id + "-" + n.entity_id,
+                     source: "n" + n.via_entity_id, target: "n" + n.entity_id,
+                     kind: "affected", label: n.relationship_type },
+          });
+        });
+
+        if (cy) cy.destroy();
+        if (elements.length <= 1) {
+          cyEl.innerHTML = '<div class="empty" style="padding:60px;">No dependencies or impact recorded for this entity yet.</div>';
+          return;
+        }
+        cyEl.innerHTML = "";
+        cy = cytoscape({
+          container: cyEl,
+          elements: elements,
+          wheelSensitivity: 0.25,
+          layout: { name: "breadthfirst", directed: true, padding: 30, spacingFactor: 1.3 },
+          style: [
+            {
+              selector: "node",
+              style: {
+                shape: "data(shape)",
+                "background-color": "data(color)",
+                "border-color": "data(color)",
+                "border-width": "data(borderWidth)",
+                "border-style": "data(borderStyle)",
+                label: "data(label)",
+                color: "var(--text, #16181d)",
+                "font-size": "11px",
+                "font-weight": "600",
+                "text-valign": "bottom",
+                "text-margin-y": "6px",
+                width: 22,
+                height: 22,
+              },
+            },
+            {
+              selector: "edge",
+              style: {
+                width: 1.5,
+                "line-color": function (ele) { return ele.data("kind") === "dependency" ? "#2563eb" : "#d97706"; },
+                "target-arrow-color": function (ele) { return ele.data("kind") === "dependency" ? "#2563eb" : "#d97706"; },
+                "curve-style": "bezier",
+                "target-arrow-shape": "triangle",
+                "line-style": function (ele) { return ele.data("kind") === "dependency" ? "solid" : "dashed"; },
+                "font-size": "9px",
+                label: "data(label)",
+                color: "var(--text-faint, #9ca3af)",
+              },
+            },
+          ],
+        });
+      }).catch(function () {
+        hintEl.textContent = "failed to load";
+      });
+    }
+
+    var initialId = cyEl.dataset.entityId;
+    if (initialId) loadEntity(initialId, "{{ root.canonical_name if root else '' }}");
+  })();
+</script>
+{% endif %}
+{% endblock %}

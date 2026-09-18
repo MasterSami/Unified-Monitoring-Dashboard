@@ -19,6 +19,7 @@ from app.models import (
     LIVE_PLATFORMS,
     PLATFORM_ORDER,
     Alert,
+    CanonicalEntity,
     CapacityForecast,
     Host,
     HostStatus,
@@ -102,6 +103,8 @@ templates.env.globals["enable_export"] = get_settings().enable_export
 templates.env.globals["enable_topology_export"] = get_settings().enable_topology_export
 # Feature flag for the Runbook (admin script library).
 templates.env.globals["enable_runbook"] = get_settings().enable_runbook
+# Feature flag for the Dependency Graph view (Correlation Phase 3).
+templates.env.globals["enable_dependency_graph"] = get_settings().enable_dependency_graph
 # Platforms that report live availability. Anything outside this set is an
 # inventory source and is labelled as such wherever hosts are counted.
 templates.env.globals["live_platforms"] = LIVE_PLATFORMS
@@ -1750,6 +1753,44 @@ def topology_page(
         )
 
     return templates.TemplateResponse(request, "topology.html", ctx)
+
+
+@router.get("/dependency-graph", response_class=HTMLResponse)
+def dependency_graph_page(
+    request: Request,
+    entity_id: int | None = None,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Correlation Phase 3: the resolved-entity dependency/impact graph.
+
+    Deliberately a thin shell — the actual dependencies/impact fetch and
+    Cytoscape render happen client-side against /api/v1/topology/*, same
+    pattern as the Topology page's graph mode. Gated behind
+    ``ENABLE_DEPENDENCY_GRAPH`` (default off), same convention as every
+    other optional nav tab.
+    """
+    if not settings.enable_dependency_graph:
+        return templates.TemplateResponse(
+            request,
+            "dependency_graph.html",
+            {"request": request, "active_page": "dependency_graph", "enabled": False},
+        )
+
+    root: CanonicalEntity | None = db.get(CanonicalEntity, entity_id) if entity_id else None
+    has_any_entity = db.scalar(select(CanonicalEntity.id).limit(1)) is not None
+
+    return templates.TemplateResponse(
+        request,
+        "dependency_graph.html",
+        {
+            "request": request,
+            "active_page": "dependency_graph",
+            "enabled": True,
+            "root": root,
+            "has_any_entity": has_any_entity,
+        },
+    )
 
 
 @router.get("/alerts", response_class=HTMLResponse)

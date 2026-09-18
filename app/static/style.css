@@ -2155,6 +2155,57 @@ td.mono {
 .topo-tables {
   align-items: start;
 }
+
+/* --- Dependency Graph (Correlation Phase 3) -------------------------------- */
+
+.dg-search-results {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.dg-search-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.dg-search-row:hover {
+  background: var(--surface-2);
+}
+.dg-search-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+/* Shape modifiers for the legend swatches — shape is not the only signal
+   (color still differs per category too), but it must never be the only
+   one either; see the node styling in dependency_graph.html. */
+.dg-legend i.dg-shape-diamond {
+  border-radius: 2px;
+  transform: rotate(45deg);
+  width: 9px;
+  height: 9px;
+}
+.dg-legend i.dg-shape-ellipse {
+  border-radius: 50%;
+}
+.dg-legend i.dg-shape-rect {
+  border-radius: 3px;
+}
 @media (max-width: 900px) {
   .topo-tables {
     grid-template-columns: 1fr;

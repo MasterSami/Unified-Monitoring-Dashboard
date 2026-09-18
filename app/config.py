@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # exports on independently. Enable it yourself from .env.
     enable_topology_export: bool = False
 
+    # Feature flag for the Dependency Graph view (Correlation Phase 3) — the
+    # resolved-entity dependency/impact graph, separate from the raw Topology
+    # view above. Kept OFF by default like every other optional nav tab;
+    # enable it yourself from .env. The underlying /api/v1/topology/* graph
+    # endpoints are always on regardless — this flag only gates the page.
+    enable_dependency_graph: bool = False
+
     # --- Runbook (admin script library) -------------------------------------
     # Feature flag for the Runbook tab — the team's library of operational
     # scripts, browsable and runnable from the UI. OFF by default; enable it
