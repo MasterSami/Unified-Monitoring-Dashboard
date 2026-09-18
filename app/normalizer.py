@@ -479,6 +479,7 @@ def upsert_alerts(
     for external_id, row in existing.items():
         if external_id not in seen_external_ids and not row.resolved:
             row.resolved = True
+            row.resolved_at = now
             row.status = "resolved"
             row.updated_at = now
             # Its LogicalEvent's status (open/deduplicated -> resolved) needs
@@ -570,6 +571,12 @@ def upsert_resolved_alerts(
         row.title = item.get("title", "")
         row.started_at = item.get("started_at")
         row.resolved = True
+        # Set once, like original_severity — a resolved-history row's own
+        # resolution time is never in this dict (the source tools polled here
+        # give no separate "resolved at" field), so "when SAMI'X first
+        # recorded it resolved" is the closest honest answer, not re-stamped
+        # on every re-backfill of the same row.
+        row.resolved_at = row.resolved_at or now
         row.raw_payload = item.get("raw_payload", {})
         row.updated_at = now
         _apply_canonical_fields(

@@ -91,6 +91,9 @@ class EntityType(str, enum.Enum):
     external_service = "external_service"
     business_service = "business_service"
     load_balancer = "load_balancer"
+    #: A named business flow (e.g. "Update Customer") that sits between a
+    #: business_service and the API(s) it drives — Correlation Phase 5.
+    business_transaction = "business_transaction"
 
 
 class ResolutionMethod(str, enum.Enum):
@@ -405,6 +408,13 @@ class Alert(Base):
         DateTime(timezone=True), nullable=True
     )
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    #: When ``resolved`` last flipped True — set once, at that transition
+    #: (never on every poll like ``updated_at``), so a Correlation Phase 5
+    #: incident timeline can show a real recovery time distinct from "this
+    #: row was merely touched again". Null until the first resolution.
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # --- SiteScope context (nullable; other platforms leave these unset) ----
     #: Raw event state (e.g. "back to default", "error"). State-wins drives sev.
     state: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -491,6 +501,20 @@ class Alert(Base):
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Distributed trace context (Correlation Phase 5) — populated only by
+    #: app.trace_ingest, the one path that ingests per-request span data;
+    #: every other collector leaves these null, same as the fields above.
+    http_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Explicit error flag, independent of severity_int — a span carries no
+    #: Zabbix-style severity of its own; this is what a trace-derived
+    #: problem actually failed on.
+    is_error: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    #: Names of databases/external services this span's sibling spans (same
+    #: trace_id, parent_span_id == this span's span_id) called — read
+    #: straight off the trace, never guessed.
+    db_calls: Mapped[list] = mapped_column(JSON, default=list)
+    external_calls: Mapped[list] = mapped_column(JSON, default=list)
 
     # --- Deduplication (Correlation Phase 2) ---------------------------------
     #: This platform's problem_type/title/metric_name reduced to a stable
@@ -1054,3 +1078,117 @@ class CorrelationEvidence(Base):
     related_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     related_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+# --- Correlation Phase 5: application architecture + incidents ---------------
+#
+# Phase 4 decides whether two LogicalEvents are the same real-world problem.
+# Phase 5 is the layer above that: turning one or more Correlation groups into
+# a first-class Incident, ranking which of its member entities is most likely
+# the actual cause (never claimed as certain — see RootCauseCandidate's own
+# note), and rolling application-level health up from its individual APIs
+# rather than treating one failing endpoint as the whole application down.
+# See app/incident_engine.py, app/application_health.py, app/trace_ingest.py.
+
+
+class SymptomRole(str, enum.Enum):
+    """How one LogicalEvent relates to the Incident it's classified under.
+
+    - ``primary``: on a root_cause_candidate entity — the event(s) closest to
+      where the incident actually originated, per current evidence.
+    - ``related_symptom``: correlated into the same incident, but on a
+      different (downstream/affected) entity.
+    - ``independent``: evaluated as a candidate but NOT included — kept for
+      explainability (why something that looked related was ruled out), never
+      as a reason to delete or hide the event itself.
+    """
+
+    primary = "primary"
+    related_symptom = "related_symptom"
+    independent = "independent"
+
+
+class IncidentStatus(str, enum.Enum):
+    """An :class:`Incident`'s lifecycle state, recomputed from its current
+    membership every time it's touched — same "pure function of current
+    data" philosophy as LogicalEventStatus/CorrelationStatus.
+
+    - ``open``: active, steady state.
+    - ``updated``: membership grew this run.
+    - ``resolved``: every member LogicalEvent is resolved.
+    - ``reopened``: was resolved, a new/active member has since joined.
+    - ``merged``: absorbed into another Incident (see ``merged_into_id``) —
+      terminal; kept in place rather than deleted, per "never delete
+      symptoms".
+    """
+
+    open = "open"
+    updated = "updated"
+    resolved = "resolved"
+    reopened = "reopened"
+    merged = "merged"
+
+
+class Incident(Base):
+    """A named, correlated real-world problem — one or more Phase 4
+    :class:`Correlation` groups, elevated to something a human (or another
+    system) can track: a title, a severity, a status, who/what it affects,
+    and — where the evidence actually supports it — which entity most likely
+    caused it.
+
+    Every summary field here (``severity_*``, ``status``, ``affected``,
+    ``root_cause_candidates``, ``member_roles``, ``correlation_types``) is
+    recomputed from ``related_events`` and ``source_correlation_ids`` on
+    every touch by app.incident_engine.recompute_incident — never
+    hand-maintained, so it can't drift from what those groups currently show.
+    """
+
+    __tablename__ = "incidents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[IncidentStatus] = mapped_column(
+        Enum(IncidentStatus, native_enum=False, length=16),
+        default=IncidentStatus.open,
+        index=True,
+    )
+    #: Worst CURRENTLY ACTIVE member's severity (falls back to worst overall
+    #: once every member is resolved) — same convention as LogicalEvent's.
+    severity_int: Mapped[int] = mapped_column(Integer, default=1)
+    severity_label: Mapped[str] = mapped_column(String(32), default="info")
+    #: Earliest first_seen among every member LogicalEvent — when this
+    #: real-world problem actually began, not when SAMI'X noticed it.
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: A single business_service label when every member event agrees on one
+    #: (Alert.business_service); null when they disagree or none carry one —
+    #: never guessed at.
+    business_service: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Which Phase 4 Correlation groups this incident was built from — more
+    #: than one after a deliberate merge (see app.incident_engine.merge_incidents).
+    source_correlation_ids: Mapped[list] = mapped_column(JSON, default=list)
+    #: The authoritative membership list (LogicalEvent ids) — union of every
+    #: source correlation's own member_event_ids.
+    related_events: Mapped[list] = mapped_column(JSON, default=list)
+    #: Distinct CorrelationType values seen across every contributing
+    #: correlation's evidence — what KINDS of evidence this incident rests on.
+    correlation_types: Mapped[list] = mapped_column(JSON, default=list)
+    #: {"applications": [...], "services": [...], "apis": [...],
+    #:  "databases": [...], "hosts": [...], "network_devices": [...]} — each
+    #: entry {"entity_id": int, "canonical_name": str}. One JSON column
+    #: rather than six, unpacked into the six named fields the task asks for
+    #: at the API layer (see schemas.IncidentOut).
+    affected: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: [{"entity_id", "entity_type", "canonical_name", "evidence": [str,...],
+    #:   "evidence_count": int}, ...] — every entity the evidence points to as
+    #: a POSSIBLE origin, ranked, never collapsed to one claimed-certain
+    #: cause. See app.incident_engine.root_cause_candidates.
+    root_cause_candidates: Mapped[list] = mapped_column(JSON, default=list)
+    #: {str(event_id): SymptomRole.value} for every member in related_events.
+    member_roles: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: Set when status == merged: the surviving Incident's id. This row is
+    #: kept, not deleted — see IncidentStatus.merged.
+    merged_into_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_update: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

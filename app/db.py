@@ -149,6 +149,14 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "normalized_problem_type": "VARCHAR(64)",
         "fingerprint": "VARCHAR(512)",
         "logical_event_id": "INTEGER",
+        # Correlation Phase 5: recovery timestamp + trace/span request context
+        # (app/models.py Alert, app/trace_ingest.py).
+        "resolved_at": "DATETIME",
+        "http_status_code": "INTEGER",
+        "duration_ms": "FLOAT",
+        "is_error": "BOOLEAN",
+        "db_calls": "JSON",
+        "external_calls": "JSON",
     },
 }
 
@@ -230,6 +238,13 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # Correlation Phase 4: candidate-pair lookup (app/correlation_engine.py)
     # and evidence retrieval for one correlation at a time.
     ("ix_correlation_evidence_correlation", "correlation_evidence", "(correlation_id)"),
+    # Correlation Phase 5: trace ingest sibling-span lookup (app/trace_ingest.py
+    # reads every span sharing a trace_id/parent_span_id to build db_calls/
+    # external_calls and the timeline), and the recovery-timeline scan over
+    # resolved_at. (Incident.status is already index=True on the model, so
+    # create_all covers it — no separate entry needed here.)
+    ("ix_alerts_trace_parent", "alerts", "(trace_id, parent_span_id)"),
+    ("ix_alerts_resolved_at", "alerts", "(resolved_at)"),
 ]
 
 

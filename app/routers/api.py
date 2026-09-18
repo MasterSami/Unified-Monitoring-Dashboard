@@ -17,12 +17,14 @@ from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, defer
 
+from app.application_health import compute_application_health
 from app.config import Settings, get_settings
 from app.correlation_engine import correlate_pair, run_correlation_batch, run_correlation_for_event
 from app.correlation_rules import create_rule, get_weights, list_rules, set_weight
 from app.db import get_db
 from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
+from app.incident_engine import build_timeline, merge_incidents, run_incident_formation, split_incident
 from app.models import (
     PLATFORM_ORDER,
     Alert,
@@ -38,6 +40,7 @@ from app.models import (
     EntityType,
     Host,
     HostStatus,
+    Incident,
     LogicalEvent,
     LogicalEventStatus,
     RelationshipType,
@@ -48,6 +51,7 @@ from app.models import (
     TopologySource,
 )
 from app.normalizer import severity_label
+from app.trace_ingest import ingest_trace_spans
 from app.scheduler import (
     get_collector_statuses,
     get_service,
@@ -70,6 +74,7 @@ from app.topology import (
 from app.topology_sync import sync_all
 from app.schemas import (
     AlertOut,
+    ApplicationHealthOut,
     CollectorStatus,
     CorrelationDetailOut,
     CorrelationEvidenceOut,
@@ -86,6 +91,17 @@ from app.schemas import (
     EntitySourceRef,
     EventOut,
     HostOut,
+    IncidentAffectedOut,
+    IncidentCorrelationGraphOut,
+    IncidentDetailOut,
+    IncidentEvidenceEntryOut,
+    IncidentGraphEdgeOut,
+    IncidentGraphNodeOut,
+    IncidentImpactOut,
+    IncidentMergeIn,
+    IncidentOut,
+    IncidentSplitIn,
+    IncidentTimelineEntryOut,
     IngestResult,
     LogicalEventOccurrenceOut,
     LogicalEventOut,
@@ -97,6 +113,8 @@ from app.schemas import (
     SeverityBucket,
     SiteScopeIngest,
     SummaryOut,
+    TraceIngestIn,
+    TraceIngestResultOut,
     TraversalOut,
 )
 
@@ -875,6 +893,236 @@ def get_correlation(correlation_id: int, db: Session = Depends(get_db)) -> Corre
         updated_at=correlation.updated_at,
         evidence=[CorrelationEvidenceOut.model_validate(e) for e in evidence],
     )
+
+
+# --- Correlation Phase 5: application architecture + incidents --------------
+
+
+@router.post("/traces", response_model=TraceIngestResultOut, status_code=201)
+def ingest_traces(payload: TraceIngestIn, db: Session = Depends(get_db)) -> TraceIngestResultOut:
+    """Ingest one batch of distributed trace spans (Correlation Phase 5).
+
+    No current pull collector produces span-level trace data — see
+    app.trace_ingest's module note — so a real deployment points an APM's
+    trace exporter here, the same way the SiteScope forwarder pushes into
+    /ingest/sitescope rather than being polled.
+    """
+    result = ingest_trace_spans(
+        db, instance=payload.source_instance,
+        spans=[s.model_dump() for s in payload.spans],
+    )
+    db.commit()
+    return TraceIngestResultOut(
+        received=result.received, inserted=result.inserted, updated=result.updated,
+        resolved=result.resolved, relationships_declared=result.relationships_declared,
+    )
+
+
+@router.get("/applications/{entity_id}/health", response_model=ApplicationHealthOut)
+def get_application_health(entity_id: int, db: Session = Depends(get_db)) -> ApplicationHealthOut:
+    """An Application's rollup status from its known APIs — never "down"
+    just because one endpoint is failing. See app.application_health.
+    """
+    health = compute_application_health(db, entity_id)
+    if health is None:
+        raise HTTPException(status_code=404, detail="application entity not found")
+    return ApplicationHealthOut(
+        application_entity_id=health.application_entity_id, application_name=health.application_name,
+        status=health.status, total_apis=health.total_apis,
+        affected_apis=health.affected_apis, healthy_apis=health.healthy_apis,
+    )
+
+
+@router.post("/incidents/run")
+def run_incidents(
+    correlation_id: int | None = Query(default=None), db: Session = Depends(get_db),
+) -> dict:
+    """Form/update Incidents from Phase 4 Correlations — one
+    (``correlation_id`` given) or every non-split correlation, most recent
+    first, bounded the same way run_correlation_batch is.
+    """
+    if correlation_id is not None:
+        if db.get(Correlation, correlation_id) is None:
+            raise HTTPException(status_code=404, detail="correlation not found")
+        result = run_incident_formation(db, [correlation_id])
+    else:
+        result = run_incident_formation(db)
+    db.commit()
+    return result
+
+
+@router.get("/incidents", response_model=list[IncidentOut])
+def list_incidents(
+    status: str | None = Query(default=None),
+    business_service: str | None = Query(default=None),
+    event_id: int | None = Query(default=None, description="Any member LogicalEvent id"),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[Incident]:
+    stmt = select(Incident)
+    if status:
+        stmt = stmt.where(Incident.status == status)
+    if business_service:
+        stmt = stmt.where(Incident.business_service == business_service)
+    stmt = stmt.order_by(Incident.last_update.desc())
+    size, start = _page_window(limit, offset, settings)
+    if event_id is not None:
+        rows = [i for i in db.scalars(stmt).all() if event_id in (i.related_events or [])]
+        return rows[start : start + size]
+    return list(db.scalars(stmt.offset(start).limit(size)).all())
+
+
+def _get_incident_or_404(db: Session, incident_id: int) -> Incident:
+    incident = db.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return incident
+
+
+def _incident_members(db: Session, incident: Incident) -> list[LogicalEvent]:
+    return [
+        m for m in (db.get(LogicalEvent, eid) for eid in (incident.related_events or [])) if m is not None
+    ]
+
+
+def _incident_evidence(db: Session, incident: Incident) -> list[IncidentEvidenceEntryOut]:
+    if not incident.source_correlation_ids:
+        return []
+    rows = db.scalars(
+        select(CorrelationEvidence)
+        .where(CorrelationEvidence.correlation_id.in_(incident.source_correlation_ids))
+        .order_by(CorrelationEvidence.timestamp.asc())
+    ).all()
+    return [
+        IncidentEvidenceEntryOut(
+            correlation_id=row.correlation_id, signal=row.signal.value, value=row.value,
+            source=row.source, timestamp=row.timestamp, related_event_id=row.related_event_id,
+            related_entity_id=row.related_entity_id,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/incidents/{incident_id}", response_model=IncidentDetailOut)
+def get_incident(incident_id: int, db: Session = Depends(get_db)) -> IncidentDetailOut:
+    incident = _get_incident_or_404(db, incident_id)
+    timeline = build_timeline(db, _incident_members(db, incident))
+    return IncidentDetailOut(
+        **IncidentOut.model_validate(incident).model_dump(),
+        timeline=[IncidentTimelineEntryOut(**e) for e in timeline],
+        evidence=_incident_evidence(db, incident),
+    )
+
+
+@router.get("/incidents/{incident_id}/timeline", response_model=list[IncidentTimelineEntryOut])
+def get_incident_timeline(incident_id: int, db: Session = Depends(get_db)) -> list[IncidentTimelineEntryOut]:
+    incident = _get_incident_or_404(db, incident_id)
+    return [IncidentTimelineEntryOut(**e) for e in build_timeline(db, _incident_members(db, incident))]
+
+
+@router.get("/incidents/{incident_id}/evidence", response_model=list[IncidentEvidenceEntryOut])
+def get_incident_evidence(incident_id: int, db: Session = Depends(get_db)) -> list[IncidentEvidenceEntryOut]:
+    incident = _get_incident_or_404(db, incident_id)
+    return _incident_evidence(db, incident)
+
+
+@router.get("/incidents/{incident_id}/impact", response_model=IncidentImpactOut)
+def get_incident_impact(incident_id: int, db: Session = Depends(get_db)) -> IncidentImpactOut:
+    incident = _get_incident_or_404(db, incident_id)
+    affected = IncidentAffectedOut(**(incident.affected or {}))
+    app_health: list[ApplicationHealthOut] = []
+    for app_ref in affected.applications:
+        health = compute_application_health(db, app_ref.entity_id)
+        if health is not None:
+            app_health.append(ApplicationHealthOut(
+                application_entity_id=health.application_entity_id, application_name=health.application_name,
+                status=health.status, total_apis=health.total_apis,
+                affected_apis=health.affected_apis, healthy_apis=health.healthy_apis,
+            ))
+    return IncidentImpactOut(
+        incident_id=incident.id, affected=affected, business_service=incident.business_service,
+        application_health=app_health,
+    )
+
+
+@router.get("/incidents/{incident_id}/correlation-graph", response_model=IncidentCorrelationGraphOut)
+def get_incident_correlation_graph(
+    incident_id: int, db: Session = Depends(get_db),
+) -> IncidentCorrelationGraphOut:
+    """Every member entity of this incident, plus the direct EntityRelationship
+    edges stored between them — a small, drawable graph, not a re-traversal.
+    """
+    incident = _get_incident_or_404(db, incident_id)
+    members = _incident_members(db, incident)
+    entity_ids = {m.entity_id for m in members if m.entity_id is not None}
+    entities = {
+        e.id: e for e in db.scalars(select(CanonicalEntity).where(CanonicalEntity.id.in_(entity_ids))).all()
+    } if entity_ids else {}
+    root_ids = {c["entity_id"] for c in (incident.root_cause_candidates or [])}
+    events_by_entity: dict[int, list[int]] = {}
+    for m in members:
+        if m.entity_id is not None:
+            events_by_entity.setdefault(m.entity_id, []).append(m.id)
+
+    nodes = [
+        IncidentGraphNodeOut(
+            entity_id=eid, entity_type=entity.entity_type.value, canonical_name=entity.canonical_name,
+            role="root_cause_candidate" if eid in root_ids else "member",
+            logical_event_ids=events_by_entity.get(eid, []),
+        )
+        for eid, entity in entities.items()
+    ]
+    edges: list[IncidentGraphEdgeOut] = []
+    if entity_ids:
+        rels = db.scalars(
+            select(EntityRelationship).where(
+                EntityRelationship.from_entity_id.in_(entity_ids),
+                EntityRelationship.to_entity_id.in_(entity_ids),
+            )
+        ).all()
+        edges = [
+            IncidentGraphEdgeOut(
+                from_entity_id=r.from_entity_id, to_entity_id=r.to_entity_id,
+                relationship_type=r.relationship_type.value, source=r.source.value,
+            )
+            for r in rels
+        ]
+    return IncidentCorrelationGraphOut(incident_id=incident.id, nodes=nodes, edges=edges)
+
+
+@router.post("/incidents/merge", response_model=IncidentOut)
+def merge_incidents_endpoint(payload: IncidentMergeIn, db: Session = Depends(get_db)) -> Incident:
+    """Merge 2+ incidents into one survivor. Only ever explicit — the
+    caller naming these specific ids IS the deterministic evidence the task
+    requires (section 12); the engine never merges on its own initiative.
+    """
+    for iid in payload.incident_ids:
+        if db.get(Incident, iid) is None:
+            raise HTTPException(status_code=404, detail=f"incident {iid} not found")
+    try:
+        survivor = merge_incidents(db, payload.incident_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    db.commit()
+    return survivor
+
+
+@router.post("/incidents/{incident_id}/split", response_model=IncidentOut)
+def split_incident_endpoint(
+    incident_id: int, payload: IncidentSplitIn, db: Session = Depends(get_db),
+) -> Incident:
+    """Carve the given member events out into a brand-new incident. The
+    original keeps everything else — no member is ever deleted.
+    """
+    _get_incident_or_404(db, incident_id)
+    try:
+        new_incident = split_incident(db, incident_id, payload.event_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    db.commit()
+    return new_incident
 
 
 def _csv_response(

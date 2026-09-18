@@ -390,6 +390,168 @@ class CorrelationDetailOut(CorrelationOut):
     evidence: list[CorrelationEvidenceOut] = Field(default_factory=list)
 
 
+class TraceSpanIn(BaseModel):
+    """One hop of one distributed trace — Correlation Phase 5. All fields
+    but ``trace_id``/``span_id`` are optional; declare whichever layers this
+    span actually names (see app.trace_ingest for exactly what each implies).
+    """
+
+    trace_id: str = Field(min_length=1, max_length=64)
+    span_id: str = Field(min_length=1, max_length=64)
+    parent_span_id: str | None = None
+    application: str | None = None
+    service: str | None = None
+    api: str | None = None
+    endpoint: str | None = None
+    http_method: str | None = None
+    database: str | None = None
+    external_service: str | None = None
+    business_transaction: str | None = None
+    business_service: str | None = None
+    duration_ms: float | None = None
+    status_code: int | None = None
+    error: bool = False
+    #: A later span for the same (trace_id, span_id) marking a prior
+    #: error resolved — see app.trace_ingest's module note on recovery.
+    resolved: bool = False
+    started_at: datetime | None = None
+
+
+class TraceIngestIn(BaseModel):
+    source_instance: str = Field(min_length=1, max_length=64)
+    spans: list[TraceSpanIn] = Field(min_length=1)
+
+
+class TraceIngestResultOut(BaseModel):
+    received: int
+    inserted: int
+    updated: int
+    resolved: int
+    relationships_declared: int
+
+
+class RootCauseCandidateOut(BaseModel):
+    """One POSSIBLE origin of an incident, with the evidence for it — never
+    a single claimed-certain cause. See app.incident_engine.root_cause_candidates.
+    """
+
+    entity_id: int
+    entity_type: str
+    canonical_name: str
+    evidence: list[str] = Field(default_factory=list)
+    evidence_count: int
+
+
+class AffectedEntityOut(BaseModel):
+    entity_id: int
+    canonical_name: str
+
+
+class IncidentAffectedOut(BaseModel):
+    applications: list[AffectedEntityOut] = Field(default_factory=list)
+    services: list[AffectedEntityOut] = Field(default_factory=list)
+    apis: list[AffectedEntityOut] = Field(default_factory=list)
+    databases: list[AffectedEntityOut] = Field(default_factory=list)
+    hosts: list[AffectedEntityOut] = Field(default_factory=list)
+    network_devices: list[AffectedEntityOut] = Field(default_factory=list)
+
+
+class IncidentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    status: str
+    severity_int: int
+    severity_label: str
+    start_time: datetime | None
+    last_update: datetime
+    business_service: str | None
+    related_events: list[int] = Field(default_factory=list)
+    correlation_types: list[str] = Field(default_factory=list)
+    source_correlation_ids: list[int] = Field(default_factory=list)
+    affected: IncidentAffectedOut
+    root_cause_candidates: list[RootCauseCandidateOut] = Field(default_factory=list)
+    member_roles: dict[str, str] = Field(default_factory=dict)
+    merged_into_id: int | None = None
+    created_at: datetime
+
+
+class IncidentTimelineEntryOut(BaseModel):
+    timestamp: datetime
+    event_id: int
+    entity_id: int | None
+    entity_name: str
+    description: str
+    #: "onset" | "recovery"
+    kind: str
+    source_platform: str
+
+
+class IncidentEvidenceEntryOut(BaseModel):
+    correlation_id: int
+    signal: str
+    value: str
+    source: str
+    timestamp: datetime
+    related_event_id: int | None
+    related_entity_id: int | None
+
+
+class IncidentDetailOut(IncidentOut):
+    timeline: list[IncidentTimelineEntryOut] = Field(default_factory=list)
+    evidence: list[IncidentEvidenceEntryOut] = Field(default_factory=list)
+
+
+class ApplicationHealthOut(BaseModel):
+    application_entity_id: int
+    application_name: str
+    #: "healthy" | "degraded" | "down"
+    status: str
+    total_apis: int
+    affected_apis: list[dict] = Field(default_factory=list)
+    healthy_apis: list[dict] = Field(default_factory=list)
+
+
+class IncidentImpactOut(BaseModel):
+    incident_id: int
+    affected: IncidentAffectedOut
+    business_service: str | None
+    #: One entry per affected application actually reachable in the
+    #: dependency graph from an incident member — see app.application_health.
+    application_health: list[ApplicationHealthOut] = Field(default_factory=list)
+
+
+class IncidentGraphNodeOut(BaseModel):
+    entity_id: int
+    entity_type: str
+    canonical_name: str
+    #: "root_cause_candidate" | "member"
+    role: str
+    logical_event_ids: list[int] = Field(default_factory=list)
+
+
+class IncidentGraphEdgeOut(BaseModel):
+    from_entity_id: int
+    to_entity_id: int
+    relationship_type: str
+    source: str
+
+
+class IncidentCorrelationGraphOut(BaseModel):
+    incident_id: int
+    nodes: list[IncidentGraphNodeOut] = Field(default_factory=list)
+    edges: list[IncidentGraphEdgeOut] = Field(default_factory=list)
+
+
+class IncidentMergeIn(BaseModel):
+    incident_ids: list[int] = Field(min_length=2)
+
+
+class IncidentSplitIn(BaseModel):
+    event_ids: list[int] = Field(min_length=1)
+
+
 class CollectorStatus(BaseModel):
     """Health snapshot for a single collector instance."""
 

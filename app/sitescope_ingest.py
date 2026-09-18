@@ -130,6 +130,8 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
         row.severity_label = ev.severity_label
         row.title = ev.title
         row.started_at = ev.started_at
+        if ev.resolved and not row.resolved:
+            row.resolved_at = now
         row.resolved = ev.resolved
         row.state = ev.state
         row.dedup_key = ev.dedup_key

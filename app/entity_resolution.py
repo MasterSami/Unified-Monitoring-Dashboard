@@ -455,6 +455,37 @@ def resolve_host_entity(
     )
 
 
+def resolve_named_entity(db: Session, *, entity_type: EntityType, name: str) -> int:
+    """Resolve an application-layer entity (service/api/database/application/
+    external_service/business_transaction/business_service — Correlation
+    Phase 5) by exact name within its own type.
+
+    Deliberately NOT :func:`resolve_host_entity`: that resolver's hostname/
+    alias buckets are shared across every entity it has ever seen, with no
+    entity_type filter at any step — safe when only host/service/
+    network_device existed (topology_sync's own service and network_device
+    names rarely collided with a hostname), but risky now that api/database/
+    application names come from free-text trace data and could coincidentally
+    match an unrelated entity of a different kind. A plain, type-scoped exact
+    match on ``canonical_name`` has no such cross-type collision risk and
+    needs no IP/FQDN evidence chain — a trace span names its own service/api/
+    database directly, there is nothing weaker to fall back through.
+    """
+    name = name.strip()
+    existing = db.scalar(
+        select(CanonicalEntity).where(
+            CanonicalEntity.entity_type == entity_type,
+            CanonicalEntity.canonical_name == name,
+        )
+    )
+    if existing is not None:
+        return existing.id
+    entity = CanonicalEntity(entity_type=entity_type, canonical_name=name)
+    db.add(entity)
+    db.flush()
+    return entity.id
+
+
 def resolve_hosts_batch(
     db: Session,
     *,

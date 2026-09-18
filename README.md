@@ -224,6 +224,17 @@ nnmi:
 | `POST /api/v1/correlation/run?event_id=` | Run correlation for one event (or every open one, batched). |
 | `GET  /api/v1/correlations`           | Stored correlations (filters: `status`, `correlation_type`, `event_id`). |
 | `GET  /api/v1/correlations/{id}`      | One correlation's members plus its full evidence trail. |
+| `POST /api/v1/traces`                 | Ingest one batch of distributed trace spans (topology + error events). |
+| `GET  /api/v1/applications/{id}/health` | An Application's rollup status from its known APIs (`healthy`/`degraded`/`down`). |
+| `POST /api/v1/incidents/run?correlation_id=` | Form/update Incidents from Phase 4 correlations (one or every one). |
+| `GET  /api/v1/incidents`              | Stored incidents (filters: `status`, `business_service`, `event_id`). |
+| `GET  /api/v1/incidents/{id}`         | One incident: full summary, timeline, and evidence. |
+| `GET  /api/v1/incidents/{id}/timeline` | Every occurrence's onset/recovery, chronological. |
+| `GET  /api/v1/incidents/{id}/evidence` | Every CorrelationEvidence row behind this incident. |
+| `GET  /api/v1/incidents/{id}/impact`  | Affected entities, plus per-application health rollups. |
+| `GET  /api/v1/incidents/{id}/correlation-graph` | Member entities and the direct relationships between them. |
+| `POST /api/v1/incidents/merge`        | Merge 2+ named incidents into one survivor (never automatic). |
+| `POST /api/v1/incidents/{id}/split`   | Carve given member events into a new incident. |
 
 Interactive docs at `/docs`.
 
@@ -688,6 +699,115 @@ Root cause ranking (which member of a correlated group is the actual cause
 versus a symptom) and incident management workflows (assignment, manual
 merge/split, notifications) are explicitly out of scope here — they consume
 this phase's `Correlation` groups as input, not extend this engine.
+
+## Correlation — Phase 5: application architecture + incidents
+
+Phase 4 decides whether two logical events are the same real-world problem.
+Phase 5 extends *what* it can reason about — from infrastructure into
+application architecture (Business Service → Application → Service → API →
+Database) and distributed traces — and turns a correlated group into a
+first-class **Incident**: a title, a severity, who it affects, a
+chronological timeline, and — where the evidence actually supports it —
+which entity most likely caused it. **Still no AI/ML, still fully
+explainable, still never a single claimed-certain cause.**
+
+- `app/models.py` — `EntityType.business_transaction` (a named business flow
+  between a business_service and the API(s) it drives); six new `Alert`
+  columns for per-request trace context (`resolved_at`, `http_status_code`,
+  `duration_ms`, `is_error`, `db_calls`, `external_calls`); `SymptomRole`
+  (`primary` / `related_symptom` / `independent`) and `IncidentStatus`
+  (`open` / `updated` / `resolved` / `reopened` / `merged`); the `Incident`
+  table itself. Every Incident summary field (severity, status, `affected`,
+  `root_cause_candidates`, `member_roles`, `correlation_types`) is
+  recomputed from its membership on every touch — same "pure function of
+  current data" discipline as `LogicalEventStatus`/`CorrelationStatus`.
+- `app/trace_ingest.py` — the ingest path for distributed trace spans. No
+  current collector pulls request-level trace data (Dynatrace's Problems v2
+  API, the only feed this app polls, aggregates a whole problem, not
+  individual spans), so this is a **push** endpoint (`POST /api/v1/traces`),
+  the same shape as the existing SiteScope forwarder. Each span declares its
+  own slice of application topology — Application *provides* Service
+  *provides* API (an impact chain — a parent's trouble reaches its child,
+  reusing the exact `LoadBalancer provides ServiceA` direction already
+  documented on `RelationshipType`), Service/API *depends_on* Database and
+  *uses* ExternalService (a dependency chain), API *part_of*
+  BusinessTransaction *part_of* BusinessService (an impact chain the other
+  way, reusing the exact `API part_of Customer360` example already on that
+  same enum) — via Phase 3's own `record_relationship`, no new relationship
+  types. Only ERRORING spans become canonical events, fingerprinted through
+  the same Phase 2 pipeline as every other source; a healthy span exists
+  only to declare topology. Recovery is explicit: a later span for the same
+  `(trace_id, span_id)` marked `"resolved": true`, the same "a poll says
+  this row is fixed now" signal every other collector already gives.
+- `app/application_health.py` — an Application is never "down" just because
+  one API is failing:
+
+  ```
+  GET /customer         healthy
+  POST /customer/update failed
+  DELETE /customer      healthy
+  -> Application: DEGRADED, affected API: POST /customer/update
+  ```
+
+  "Known APIs" comes from the same topology Phase 3 built and trace ingest
+  populates, walked with Phase 3's own unmodified
+  `dependency_graph.traverse(direction="downstream")` — Application-level
+  trouble already propagates exactly that direction, so "what's affected if
+  the Application fails" and "what APIs does it have" are the same
+  traversal.
+- `app/incident_engine.py` — the incident layer itself:
+  - **Root cause candidates**: a deterministic graph question, not a score.
+    Within one incident's own member entities, any entity nothing ELSE in
+    the group is downstream of is a candidate — ranked earliest-onset
+    first, each with its own evidence (onset time, which other members
+    depend on it, matching `CorrelationEvidence` rows, traced call counts).
+    A genuine tie (no dependency edge distinguishes two origins) surfaces
+    as two candidates, never a coin flip — task section 14's "show all
+    candidates with evidence, do not fabricate certainty" is the literal
+    behavior, not a caveat.
+  - **Timeline**: every occurrence's onset, and — once it has recovered —
+    its recovery, chronologically. "DB recovered → Service recovered → API
+    recovered" falls out for free: they're just later rows in the same
+    timeline, already tied together by membership.
+  - **Symptom classification**: a member on a root-cause entity is
+    `PRIMARY`, everything else correlated in is `RELATED_SYMPTOM`. No
+    member is ever removed from an incident once linked.
+  - **Merge/split**: `merge_incidents()` only ever runs when a caller names
+    specific incident ids — the engine never merges on its own initiative
+    (task section 12: "only merge when deterministic evidence supports
+    it" — the caller naming them together IS that evidence). `split_incident()`
+    carves member events into a new Incident; the original keeps everything
+    else, nothing is deleted.
+  - `form_or_update_incident_from_correlation()` is the bridge from Phase 4:
+    one Correlation group becomes (or updates) one Incident;
+    `run_incident_formation()` batches this the same way
+    `run_correlation_batch` batches Phase 4.
+
+```bash
+POST /api/v1/traces                                    # ingest a batch of trace spans
+GET  /api/v1/applications/{id}/health                   # healthy / degraded / down
+POST /api/v1/incidents/run                               # form/update incidents from correlations
+GET  /api/v1/incidents?status=open                       # stored incidents
+GET  /api/v1/incidents/{id}                               # summary + timeline + evidence
+GET  /api/v1/incidents/{id}/timeline                      # chronological onset/recovery
+GET  /api/v1/incidents/{id}/evidence                      # every supporting CorrelationEvidence row
+GET  /api/v1/incidents/{id}/impact                        # affected entities + per-app health
+GET  /api/v1/incidents/{id}/correlation-graph              # member entities + their direct edges
+POST /api/v1/incidents/merge                              # {"incident_ids": [...]}
+POST /api/v1/incidents/{id}/split                          # {"event_ids": [...]}
+```
+
+Verified against the mock collectors end-to-end — real Zabbix/Dynatrace/NNMi
+data through the full Phase 1-4 pipeline, then `POST /api/v1/traces` for a
+CustomerService/CustomerDB/Customer360 scenario, correlation, and incident
+formation, all via the real API. The real run caught and fixed a genuine bug
+(a database-layer span's title fell back to its ambient service name instead
+of naming the database that actually failed) before this landed.
+
+Automatic incident-to-incident merging (deciding on its own that two
+SEPARATE incidents are related), notification/paging integrations, and a UI
+for any of this are explicitly out of scope here — this phase is the
+engine and its API, not yet a workflow around it.
 
 ## Deploy to a server later
 
