@@ -17,7 +17,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.canonical_event import adapt_event
+from app.dedup import record_occurrences_batch
 from app.entity_resolution import resolve_hosts_batch
+from app.fingerprint import compute_fingerprint, normalize_problem_type
 from app.models import Alert, Host, HostStatus, SourcePlatform
 
 # --- Severity scale ---------------------------------------------------------
@@ -397,6 +399,21 @@ def _apply_canonical_fields(
         # see EntityType / the CanonicalEntity module note.
         row.entity_type = "host" if host.entity_id is not None else None
 
+    # Fingerprinting (Correlation Phase 2) — needs entity_id, so this runs
+    # after the host lookup above, not before it.
+    row.normalized_problem_type = normalize_problem_type(
+        problem_type=row.problem_type, title=row.title, metric_name=row.metric_name,
+    )
+    row.fingerprint = compute_fingerprint(
+        entity_id=row.entity_id,
+        normalized_problem_type=row.normalized_problem_type,
+        metric_name=row.metric_name,
+        api_id=row.api_id,
+        service_id=row.service_id,
+        database_id=row.database_id,
+        network_device_id=row.network_device_id,
+    )
+
 
 def upsert_alerts(
     db: Session,
@@ -416,6 +433,7 @@ def upsert_alerts(
     """
     now = _utcnow()
     seen_external_ids: set[str] = set()
+    touched_rows: list[Alert] = []
 
     existing = {
         a.external_id: a
@@ -455,6 +473,7 @@ def upsert_alerts(
             row, {**item, "source_instance": instance}, platform,
             by_external_id, by_hostname, is_new=is_new, resolved=False, now=now,
         )
+        touched_rows.append(row)
 
     # Reconcile: previously-active alerts missing this run are resolved.
     for external_id, row in existing.items():
@@ -462,8 +481,12 @@ def upsert_alerts(
             row.resolved = True
             row.status = "resolved"
             row.updated_at = now
+            # Its LogicalEvent's status (open/deduplicated -> resolved) needs
+            # recomputing even though this row's own fingerprint is unchanged.
+            touched_rows.append(row)
 
     db.flush()
+    record_occurrences_batch(db, touched_rows)
     return len(seen_external_ids)
 
 
@@ -516,6 +539,7 @@ def upsert_resolved_alerts(
             existing[a.external_id] = a
     by_external_id, by_hostname = _lookup_hosts_for_alerts(db, platform, instance, alerts)
     inserted = 0
+    touched_rows: list[Alert] = []
     for item in alerts:
         external_id = str(item["external_id"])
         row = existing.get(external_id)
@@ -542,6 +566,7 @@ def upsert_resolved_alerts(
         row.severity_int = sev
         row.severity_label = item.get("severity_label") or severity_label(sev)
         row.host_hostname = item.get("host_hostname")
+        row.host_external_id = item.get("host_external_id")
         row.title = item.get("title", "")
         row.started_at = item.get("started_at")
         row.resolved = True
@@ -551,6 +576,8 @@ def upsert_resolved_alerts(
             row, {**item, "source_instance": instance}, platform,
             by_external_id, by_hostname, is_new=is_new, resolved=True, now=now,
         )
+        touched_rows.append(row)
     db.flush()
+    record_occurrences_batch(db, touched_rows)
     return inserted
 

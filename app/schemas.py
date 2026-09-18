@@ -164,6 +164,47 @@ class EntityMappingIn(BaseModel):
     note: str | None = None
 
 
+class LogicalEventOccurrenceOut(BaseModel):
+    """One source occurrence linked to a :class:`LogicalEventOut` — never
+    merged or deleted, always its own source/source_event_id/original_severity.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_platform: str
+    source_instance: str
+    external_id: str
+    original_severity: str | None
+    severity_label: str
+    title: str
+    host_hostname: str | None
+    started_at: datetime | None
+    resolved: bool
+    status: str | None
+
+
+class LogicalEventOut(BaseModel):
+    """A deduplicated group of occurrences sharing one fingerprint."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    fingerprint: str
+    entity_id: int | None
+    normalized_problem_type: str
+    status: str
+    occurrence_count: int
+    first_seen: datetime | None
+    last_seen: datetime | None
+    sources: list[str] = Field(default_factory=list)
+    title: str
+    current_severity_int: int
+    current_severity_label: str
+    created_at: datetime
+    updated_at: datetime
+
+
 class CollectorStatus(BaseModel):
     """Health snapshot for a single collector instance."""
 

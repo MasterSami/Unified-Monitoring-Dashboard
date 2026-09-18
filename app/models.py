@@ -114,6 +114,34 @@ class ResolutionMethod(str, enum.Enum):
     conflict = "conflict"
 
 
+class LogicalEventStatus(str, enum.Enum):
+    """A :class:`LogicalEvent`'s lifecycle state (Correlation Phase 2).
+
+    Recomputed from scratch every time the logical event is touched — never
+    incrementally maintained — so the stored value can never drift from what
+    a fresh scan of its occurrences would show. See
+    ``app.dedup._recompute_logical_events`` for the exact, deterministic rule
+    each state is derived from:
+
+    - ``open``: exactly one occurrence, unresolved, unchanged since it was
+      first seen.
+    - ``updated``: still exactly one occurrence, but its severity has moved
+      on from what it started at (``Alert.severity_label != original_severity``).
+    - ``deduplicated``: two or more occurrences are folded into this logical
+      event and at least one is still unresolved — the steady state for a
+      recurring condition.
+    - ``resolved``: every occurrence linked to it is resolved.
+    - ``reopened``: it had reached ``resolved``, and a new, unresolved
+      occurrence has since linked to it.
+    """
+
+    open = "open"
+    updated = "updated"
+    deduplicated = "deduplicated"
+    resolved = "resolved"
+    reopened = "reopened"
+
+
 class RunStatus(str, enum.Enum):
     """Outcome of a collector run."""
 
@@ -337,6 +365,21 @@ class Alert(Base):
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parent_span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # --- Deduplication (Correlation Phase 2) ---------------------------------
+    #: This platform's problem_type/title/metric_name reduced to a stable
+    #: category with no dynamic values ("CPU utilization is 97%" -> "CPU_HIGH")
+    #: — see app/fingerprint.py. Never used for entity resolution.
+    normalized_problem_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Deterministic dedup key: entity + normalized_problem_type (+ metric/
+    #: api/service/database/network_device where relevant). Kept as the raw
+    #: composite string, not a hash, so it stays directly readable — see
+    #: app/fingerprint.py:compute_fingerprint. Null when the alert has no
+    #: resolved entity (see the same module) — nothing to fingerprint against.
+    fingerprint: Mapped[str | None] = mapped_column(String(512), nullable=True, index=True)
+    #: Matches LogicalEvent.id (see app/dedup.py), not a FK — same convention
+    #: as entity_id.
+    logical_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -641,3 +684,61 @@ class EntityManualMapping(Base):
     source_identifier: Mapped[str] = mapped_column(String(255), index=True)
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+# --- Correlation Phase 2: deduplication --------------------------------------
+#
+# Deduplication is NOT correlation: a LogicalEvent groups occurrences that are
+# the SAME deterministic condition recurring or being reported by more than
+# one source (Zabbix "CPU utilization is 91%" + Dynatrace "CPU saturation" on
+# the same host) — never different problems that merely share a host, a time
+# window, or an application. That grouping (temporal/topology/incident
+# correlation) is later phases; this table only ever groups occurrences whose
+# fingerprint — resolved entity + normalized problem type (+ metric/api/
+# service/database/network_device where relevant) — is identical.
+
+
+class LogicalEvent(Base):
+    """A deduplicated group of :class:`Alert` occurrences sharing one
+    fingerprint. The occurrences themselves are never deleted or merged —
+    each keeps its own source, source_event_id (``external_id``), and
+    original_severity; this row only aggregates them for display.
+
+    Every field here is recomputed from its linked occurrences on each touch
+    (see ``app.dedup._recompute_logical_events``), never hand-incremented, so
+    it can never drift from what a fresh scan of ``Alert`` would show.
+    """
+
+    __tablename__ = "logical_events"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_logical_event_fingerprint"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(512), index=True)
+    #: Matches CanonicalEntity.id, not a FK — same convention as elsewhere.
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    normalized_problem_type: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[LogicalEventStatus] = mapped_column(
+        Enum(LogicalEventStatus, native_enum=False, length=16),
+        default=LogicalEventStatus.open,
+        index=True,
+    )
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    #: Distinct source_platform values among its occurrences, sorted — e.g.
+    #: ["dynatrace", "zabbix"] once both have reported the same condition.
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    #: Representative fields for display: the highest-severity CURRENTLY
+    #: ACTIVE occurrence (falling back to the highest overall once every
+    #: occurrence is resolved) — not simply "the latest", so an escalating
+    #: group shows its worst active state rather than whichever alert
+    #: happened to poll last.
+    title: Mapped[str] = mapped_column(String(512), default="")
+    current_severity_int: Mapped[int] = mapped_column(Integer, default=1)
+    current_severity_label: Mapped[str] = mapped_column(String(32), default="info")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

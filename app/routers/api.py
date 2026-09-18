@@ -31,6 +31,7 @@ from app.models import (
     EntityType,
     Host,
     HostStatus,
+    LogicalEvent,
     RunStatus,
     SourcePlatform,
     TopologyEdge,
@@ -66,6 +67,8 @@ from app.schemas import (
     EventOut,
     HostOut,
     IngestResult,
+    LogicalEventOccurrenceOut,
+    LogicalEventOut,
     PlatformHostCount,
     SeverityBucket,
     SiteScopeIngest,
@@ -441,6 +444,81 @@ def create_entity_mapping(
         resolution_confidence=1.0,
         is_manual=True,
     )
+
+
+# --- Correlation Phase 2: deduplicated logical events -----------------------
+
+
+@router.get("/logical-events", response_model=list[LogicalEventOut])
+def list_logical_events(
+    status: str | None = Query(default=None),
+    entity_id: int | None = Query(default=None),
+    platform: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[LogicalEvent]:
+    """Deduplicated logical events (see app/dedup.py) — each groups occurrences
+    that share one fingerprint (same resolved entity + normalized problem
+    type), never events that merely share a host, a time window, or an
+    application. ``platform`` filters to groups with at least one occurrence
+    from that source.
+    """
+    stmt = select(LogicalEvent)
+    if status:
+        stmt = stmt.where(LogicalEvent.status == status)
+    if entity_id is not None:
+        stmt = stmt.where(LogicalEvent.entity_id == entity_id)
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(LogicalEvent.title).like(like)
+            | func.lower(LogicalEvent.normalized_problem_type).like(like)
+        )
+    stmt = stmt.order_by(LogicalEvent.last_seen.desc().nullslast())
+    size, start = _page_window(limit, offset, settings)
+    if platform:
+        # sources is a JSON list — filtering it portably across SQLite and
+        # PostgreSQL needs Python, so paginate after filtering rather than in
+        # SQL. LogicalEvent rows are one per distinct (entity, problem type),
+        # far fewer than raw events, so this stays cheap.
+        rows = [r for r in db.scalars(stmt).all() if platform in (r.sources or [])]
+        return rows[start : start + size]
+    stmt = stmt.offset(start).limit(size)
+    return list(db.scalars(stmt).all())
+
+
+@router.get("/logical-events/{logical_event_id}", response_model=LogicalEventOut)
+def get_logical_event(logical_event_id: int, db: Session = Depends(get_db)) -> LogicalEvent:
+    le = db.get(LogicalEvent, logical_event_id)
+    if le is None:
+        raise HTTPException(status_code=404, detail="logical event not found")
+    return le
+
+
+@router.get(
+    "/logical-events/{logical_event_id}/occurrences",
+    response_model=list[LogicalEventOccurrenceOut],
+)
+def get_logical_event_occurrences(
+    logical_event_id: int, db: Session = Depends(get_db)
+) -> list[Alert]:
+    """Every original source occurrence folded into this logical event.
+
+    None are merged or deleted — each keeps its own source, source_event_id
+    (``external_id``), and original_severity, exactly as first reported.
+    """
+    if db.get(LogicalEvent, logical_event_id) is None:
+        raise HTTPException(status_code=404, detail="logical event not found")
+    stmt = (
+        select(Alert)
+        .options(defer(Alert.raw_payload))
+        .where(Alert.logical_event_id == logical_event_id)
+        .order_by(Alert.started_at.desc().nullslast())
+    )
+    return list(db.scalars(stmt).all())
 
 
 def _csv_response(

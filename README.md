@@ -206,6 +206,9 @@ nnmi:
 | `GET  /api/v1/entities/{id}`          | One entity: aliases, IPs, every source row resolved to it. |
 | `GET  /api/v1/entity-mappings`        | Source-identifier -> entity, manual + automatic (filters: `entity_id`, `platform`). |
 | `POST /api/v1/entity-mappings`        | Declare an explicit source-identifier -> entity mapping. |
+| `GET  /api/v1/logical-events`         | Deduplicated logical events (filters: `status`, `entity_id`, `platform`, `q`). |
+| `GET  /api/v1/logical-events/{id}`    | One logical event's aggregate state. |
+| `GET  /api/v1/logical-events/{id}/occurrences` | Every original Alert row folded into it. |
 
 Interactive docs at `/docs`.
 
@@ -483,6 +486,57 @@ POST /api/v1/entity-mappings        # declare an explicit mapping (e.g. an
 Correlating alerts into incidents, walking the topology graph, and root-cause
 ranking are explicitly out of scope for this phase — they build on this
 identity layer rather than reinventing it.
+
+## Correlation — Phase 2: fingerprinting + deduplication
+
+Ten episodes of the same recurring problem on the same host show up as ten
+separate rows today — Zabbix re-firing the same trigger, or the same
+condition reported by two different tools. Phase 2 groups those into one
+**logical event** with an occurrence count, without deleting or merging
+anything underneath it. **This is deduplication, not correlation** — it only
+ever groups occurrences that are the identical deterministic condition
+(same resolved entity, same normalized problem type); it never merges
+different problems just because they share a host, a time window, or an
+application. That grouping is a later phase.
+
+- `app/fingerprint.py` — two pure, DB-free functions. `normalize_problem_type()`
+  strips dynamic values out of a source's own wording with a fixed, ordered
+  list of keyword rules (no AI/ML): `"CPU utilization is 91%"`,
+  `"...is 94%"`, `"...is 97%"` all normalize to `CPU_HIGH`; text matching no
+  rule falls back to a dynamic-value-stripped version of its own title, so
+  unrelated problems never collapse into one catch-all bucket.
+  `compute_fingerprint()` combines the resolved entity with that normalized
+  type (plus metric/api/service/database/network_device where the event
+  actually carries one) into a deterministic, human-readable key — kept as
+  a plain string like `entity:42|problem:CPU_HIGH`, not a hash, so you can
+  read straight off it why two alerts did or didn't dedupe together. An
+  alert with no resolved entity gets no fingerprint at all, rather than one
+  guessed from a raw hostname.
+- `app/dedup.py` — links occurrences sharing a fingerprint to one
+  `LogicalEvent` row, batched the same way Phase 1's entity resolution is.
+  Every aggregate field (occurrence count, first/last seen, sources,
+  representative severity, status) is recomputed from a fresh scan of its
+  linked occurrences each time it's touched, never hand-incremented, so it
+  can't drift from what the underlying `Alert` rows actually show.
+- Idempotency falls out of the design: an occurrence is one specific `Alert`
+  row, already unique on `(source_platform, source_instance, external_id)`
+  by Phase 1's own upsert semantics. Re-polling the same source event
+  updates that row in place and is a no-op here too — it never creates a
+  second logical event or inflates the occurrence count.
+- Status (`open` / `updated` / `deduplicated` / `resolved` / `reopened`) is a
+  pure function of the group's current occurrences, not tracked history —
+  see the `LogicalEventStatus` docstring in `app/models.py` for the exact
+  rule behind each one.
+
+```bash
+GET /api/v1/logical-events                        # filter: status, entity_id, platform, q
+GET /api/v1/logical-events/{id}                    # one group's aggregate state
+GET /api/v1/logical-events/{id}/occurrences         # every original Alert row folded into it
+```
+
+Topology correlation, API/database correlation, root cause, and incident
+grouping are explicitly not implemented here — they are later phases that
+read logical events as their input, not this phase's job.
 
 ## Deploy to a server later
 

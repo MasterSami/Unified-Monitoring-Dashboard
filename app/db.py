@@ -145,6 +145,10 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "trace_id": "VARCHAR(64)",
         "span_id": "VARCHAR(64)",
         "parent_span_id": "VARCHAR(64)",
+        # Correlation Phase 2: deduplication (app/fingerprint.py, app/dedup.py).
+        "normalized_problem_type": "VARCHAR(64)",
+        "fingerprint": "VARCHAR(512)",
+        "logical_event_id": "INTEGER",
     },
 }
 
@@ -207,6 +211,15 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # started_at (the event's "timestamp") is already indexed as
     # ix_alerts_started_at above.
     ("ix_hosts_cmdb_id", "hosts", "(cmdb_id)"),
+    # Correlation Phase 2: deduplication (app/dedup.py). fingerprint is the
+    # batch-prefetch lookup key on both tables; logical_event_id backs the
+    # /logical-events/{id}/occurrences query and the per-run aggregate recompute.
+    ("ix_alerts_fingerprint", "alerts", "(fingerprint)"),
+    ("ix_alerts_logical_event_id", "alerts", "(logical_event_id)"),
+    ("ix_logical_events_fingerprint", "logical_events", "(fingerprint)"),
+    ("ix_logical_events_entity_id", "logical_events", "(entity_id)"),
+    ("ix_logical_events_status", "logical_events", "(status)"),
+    ("ix_logical_events_last_seen", "logical_events", "(last_seen)"),
 ]
 
 

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.dedup import record_occurrences_batch
 from app.entity_resolution import resolve_hosts_batch
 from app.models import Alert, Host, HostStatus, SourcePlatform
 from app.normalizer import _apply_canonical_fields, _lookup_hosts_for_alerts
@@ -110,6 +111,7 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
         db, SourcePlatform.sitescope, events[0].source_instance, items
     )
 
+    touched_rows: list[Alert] = []
     for ev, item in zip(events, items):
         key = (ev.source_instance, ev.external_id)
         row = batch.get(key)
@@ -139,6 +141,9 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
             SourcePlatform.sitescope, by_external_id, by_hostname,
             is_new=is_new, resolved=ev.resolved, now=now,
         )
+        touched_rows.append(row)
+    db.flush()
+    record_occurrences_batch(db, touched_rows)
     return inserted, updated
 
 
