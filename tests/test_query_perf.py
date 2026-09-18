@@ -281,7 +281,13 @@ def test_ingest_hosts_are_prefetched_too(client):
         db.close()
 
     assert inserted == 30
-    assert len([s for s in sql if s.lower().startswith("select")]) <= 2
+    # 1 for the existing-hosts prefetch, plus a small fixed number for
+    # Correlation Phase 1 entity resolution's own batched prefetch
+    # (app.entity_resolution.build_resolution_context: manual mappings, IPs,
+    # hostname aliases — a handful of IN() queries covering the WHOLE batch,
+    # not one per host). Still flat regardless of how many hosts are in the
+    # batch, which is the property this test actually guards.
+    assert len([s for s in sql if s.lower().startswith("select")]) <= 6
 
 
 # --- servers.yaml parse cache -----------------------------------------------

@@ -19,10 +19,16 @@ from sqlalchemy.orm import Session, defer
 
 from app.config import Settings, get_settings
 from app.db import get_db
+from app.entity_resolution import create_manual_mapping
 from app.models import (
     PLATFORM_ORDER,
     Alert,
+    CanonicalEntity,
     CollectorRun,
+    EntityAlias,
+    EntityIP,
+    EntityManualMapping,
+    EntityType,
     Host,
     HostStatus,
     RunStatus,
@@ -53,6 +59,11 @@ from app.topology import (
 from app.schemas import (
     AlertOut,
     CollectorStatus,
+    EntityMappingIn,
+    EntityMappingOut,
+    EntityOut,
+    EntitySourceRef,
+    EventOut,
     HostOut,
     IngestResult,
     PlatformHostCount,
@@ -189,6 +200,247 @@ def list_alerts(
         .limit(size)
     )
     return list(db.scalars(stmt).all())
+
+
+# --- Correlation Phase 1: canonical events + entity resolution --------------
+
+
+@router.get("/events", response_model=list[EventOut])
+def list_events(
+    platform: str | None = Query(default=None),
+    instance: str | None = Query(default=None),
+    entity_id: int | None = Query(default=None),
+    resolved: bool | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[Alert]:
+    """Canonical monitoring events (the Alert table's full Phase-1 schema).
+
+    Unlike ``/alerts`` (kept as-is for existing consumers) this returns every
+    canonical field: source identity, preserved original severity/
+    description, resolved entity, and whatever a source's adapter filled in.
+    ``resolved`` omitted returns both; ``true``/``false`` filters to one.
+    """
+    stmt = select(Alert).options(defer(Alert.raw_payload))
+    if platform:
+        stmt = stmt.where(Alert.source_platform == platform)
+    if instance:
+        stmt = stmt.where(Alert.source_instance == instance)
+    if entity_id is not None:
+        stmt = stmt.where(Alert.entity_id == entity_id)
+    if resolved is not None:
+        stmt = stmt.where(Alert.resolved.is_(resolved))
+    if q:
+        like = f"%{q.lower()}%"
+        stmt = stmt.where(
+            func.lower(Alert.title).like(like)
+            | func.lower(func.coalesce(Alert.host_hostname, "")).like(like)
+            | func.lower(func.coalesce(Alert.external_id, "")).like(like)
+        )
+    size, start = _page_window(limit, offset, settings)
+    stmt = (
+        stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc().nullslast())
+        .offset(start)
+        .limit(size)
+    )
+    return list(db.scalars(stmt).all())
+
+
+def _entity_out(
+    db: Session, entity: CanonicalEntity, *, with_sources: bool
+) -> EntityOut:
+    aliases = list(
+        db.scalars(
+            select(EntityAlias.alias).where(EntityAlias.entity_id == entity.id)
+        ).all()
+    )
+    ips = list(
+        db.scalars(select(EntityIP.ip).where(EntityIP.entity_id == entity.id)).all()
+    )
+    sources: list[EntitySourceRef] = []
+    if with_sources:
+        for h in db.scalars(select(Host).where(Host.entity_id == entity.id)).all():
+            sources.append(
+                EntitySourceRef(
+                    source_platform=h.source_platform.value,
+                    source_instance=h.source_instance,
+                    external_id=h.external_id,
+                    hostname=h.hostname,
+                    resolution_method=h.resolution_method,
+                    resolution_confidence=h.resolution_confidence,
+                )
+            )
+    return EntityOut(
+        entity_id=entity.id,
+        entity_type=entity.entity_type.value,
+        canonical_name=entity.canonical_name,
+        cmdb_id=entity.cmdb_id,
+        aliases=aliases,
+        ips=ips,
+        source_entities=sources,
+    )
+
+
+@router.get("/entities", response_model=list[EntityOut])
+def list_entities(
+    entity_type: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[EntityOut]:
+    """Resolved canonical entities. ``q`` matches the name, an alias, or an IP."""
+    stmt = select(CanonicalEntity)
+    if entity_type:
+        stmt = stmt.where(CanonicalEntity.entity_type == entity_type)
+    if q:
+        like = f"%{q.lower()}%"
+        matching_ids = set(
+            db.scalars(
+                select(EntityAlias.entity_id).where(
+                    func.lower(EntityAlias.alias).like(like)
+                )
+            ).all()
+        ) | set(
+            db.scalars(
+                select(EntityIP.entity_id).where(func.lower(EntityIP.ip).like(like))
+            ).all()
+        )
+        cond = func.lower(CanonicalEntity.canonical_name).like(like)
+        if matching_ids:
+            cond = cond | CanonicalEntity.id.in_(matching_ids)
+        stmt = stmt.where(cond)
+    size, start = _page_window(limit, offset, settings)
+    stmt = stmt.order_by(CanonicalEntity.id.asc()).offset(start).limit(size)
+    entities = list(db.scalars(stmt).all())
+    return [_entity_out(db, e, with_sources=False) for e in entities]
+
+
+@router.get("/entities/{entity_id}", response_model=EntityOut)
+def get_entity(entity_id: int, db: Session = Depends(get_db)) -> EntityOut:
+    """One entity's full detail: aliases, IPs, and every source row resolved
+    to it (with the method/confidence each one was resolved by).
+    """
+    entity = db.get(CanonicalEntity, entity_id)
+    if entity is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+    return _entity_out(db, entity, with_sources=True)
+
+
+@router.get("/entity-mappings", response_model=list[EntityMappingOut])
+def list_entity_mappings(
+    entity_id: int | None = Query(default=None),
+    platform: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    offset: int | None = Query(default=None, ge=0),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> list[EntityMappingOut]:
+    """Every known ``source identifier -> entity`` mapping.
+
+    Combines admin-declared manual mappings with every automatically
+    resolved Host row that has an entity — the same union a later
+    correlation phase would need to answer "why is this entity what it is".
+    """
+    size, start = _page_window(limit, offset, settings)
+    out: list[EntityMappingOut] = []
+
+    manual_stmt = select(EntityManualMapping)
+    if entity_id is not None:
+        manual_stmt = manual_stmt.where(EntityManualMapping.entity_id == entity_id)
+    if platform:
+        manual_stmt = manual_stmt.where(EntityManualMapping.source_platform == platform)
+    for m in db.scalars(manual_stmt).all():
+        out.append(
+            EntityMappingOut(
+                source_platform=m.source_platform.value,
+                source_instance=m.source_instance,
+                source_identifier=m.source_identifier,
+                hostname=None,
+                entity_id=m.entity_id,
+                resolution_method="manual_mapping",
+                resolution_confidence=1.0,
+                is_manual=True,
+            )
+        )
+
+    host_stmt = select(Host).where(Host.entity_id.isnot(None))
+    if entity_id is not None:
+        host_stmt = host_stmt.where(Host.entity_id == entity_id)
+    if platform:
+        host_stmt = host_stmt.where(Host.source_platform == platform)
+    for h in db.scalars(host_stmt).all():
+        out.append(
+            EntityMappingOut(
+                source_platform=h.source_platform.value,
+                source_instance=h.source_instance,
+                source_identifier=h.external_id,
+                hostname=h.hostname,
+                entity_id=h.entity_id,  # type: ignore[arg-type]
+                resolution_method=h.resolution_method or "unknown",
+                resolution_confidence=h.resolution_confidence,
+                is_manual=False,
+            )
+        )
+    return out[start : start + size]
+
+
+@router.post("/entity-mappings", response_model=EntityMappingOut, status_code=201)
+def create_entity_mapping(
+    payload: EntityMappingIn, db: Session = Depends(get_db)
+) -> EntityMappingOut:
+    """Declare an explicit source-identifier-to-entity mapping.
+
+    Checked first, ahead of every automatic resolution method — see
+    app/entity_resolution.py. Pass ``entity_id`` to attach to an existing
+    entity, or omit it (with ``entity_type``/``canonical_name``) to create a
+    new one, e.g. to pre-declare an identity before the source has reported
+    it at all.
+    """
+    try:
+        platform = SourcePlatform(payload.source_platform)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="unknown source_platform") from None
+
+    entity_id = payload.entity_id
+    if entity_id is None:
+        try:
+            entity_type = EntityType(payload.entity_type)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="unknown entity_type") from None
+        entity = CanonicalEntity(
+            entity_type=entity_type,
+            canonical_name=payload.canonical_name or payload.source_identifier,
+        )
+        db.add(entity)
+        db.flush()
+        entity_id = entity.id
+    elif db.get(CanonicalEntity, entity_id) is None:
+        raise HTTPException(status_code=404, detail="entity not found")
+
+    mapping = create_manual_mapping(
+        db,
+        entity_id=entity_id,
+        source_platform=platform,
+        source_instance=payload.source_instance,
+        source_identifier=payload.source_identifier,
+        note=payload.note,
+    )
+    db.commit()
+    return EntityMappingOut(
+        source_platform=mapping.source_platform.value,
+        source_instance=mapping.source_instance,
+        source_identifier=mapping.source_identifier,
+        hostname=None,
+        entity_id=mapping.entity_id,
+        resolution_method="manual_mapping",
+        resolution_confidence=1.0,
+        is_manual=True,
+    )
 
 
 def _csv_response(

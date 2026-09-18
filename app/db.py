@@ -94,6 +94,12 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "owner_email": "VARCHAR(255)",
         "agent_deployed": "BOOLEAN",
         "ip_all": "VARCHAR(512)",
+        # Correlation Phase 1: entity resolution (app/entity_resolution.py).
+        "fqdn": "VARCHAR(255)",
+        "cmdb_id": "VARCHAR(128)",
+        "entity_id": "INTEGER",
+        "resolution_method": "VARCHAR(32)",
+        "resolution_confidence": "FLOAT",
     },
     "alerts": {
         "state": "VARCHAR(64)",
@@ -101,6 +107,44 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "metric_missing": "BOOLEAN",
         "monitor_name": "VARCHAR(512)",
         "host_external_id": "VARCHAR(128)",
+        # Correlation Phase 1: canonical event fields (app/models.py Alert,
+        # app/canonical_event.py). See those modules for what populates each.
+        "status": "VARCHAR(24)",
+        "last_seen": "DATETIME",
+        "original_severity": "VARCHAR(32)",
+        "original_description": "VARCHAR(1024)",
+        "payload_ref": "VARCHAR(128)",
+        "host_ip": "VARCHAR(64)",
+        "fqdn": "VARCHAR(255)",
+        "host_group": "VARCHAR(255)",
+        "host_owner": "VARCHAR(255)",
+        "entity_id": "INTEGER",
+        "entity_type": "VARCHAR(32)",
+        "event_type": "VARCHAR(32)",
+        "problem_type": "VARCHAR(128)",
+        "tags": "JSON",
+        "application_id": "INTEGER",
+        "application_name": "VARCHAR(255)",
+        "service_id": "INTEGER",
+        "service_name": "VARCHAR(255)",
+        "api_id": "INTEGER",
+        "api_name": "VARCHAR(255)",
+        "endpoint": "VARCHAR(512)",
+        "http_method": "VARCHAR(16)",
+        "database_id": "INTEGER",
+        "database_name": "VARCHAR(255)",
+        "network_device_id": "INTEGER",
+        "network_device_name": "VARCHAR(255)",
+        "metric_name": "VARCHAR(255)",
+        "metric_value": "FLOAT",
+        "metric_unit": "VARCHAR(32)",
+        "threshold": "FLOAT",
+        "environment": "VARCHAR(64)",
+        "location": "VARCHAR(128)",
+        "business_service": "VARCHAR(255)",
+        "trace_id": "VARCHAR(64)",
+        "span_id": "VARCHAR(64)",
+        "parent_span_id": "VARCHAR(64)",
     },
 }
 
@@ -150,6 +194,19 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     ("ix_capfc_class_eta", "capacity_forecast",
      "(classification, days_to_threshold_90)"),
     ("ix_capfc_host", "capacity_forecast", "(host_id)"),
+    # Correlation Phase 1: entity resolution + /events lookups (task's own
+    # "avoid unnecessary full-table scans" list — source_event_id and source
+    # are already covered by uq_alert_platform_instance_external / the
+    # existing source_platform index).
+    ("ix_hosts_entity_id", "hosts", "(entity_id)"),
+    ("ix_alerts_entity_id", "alerts", "(entity_id)"),
+    ("ix_alerts_host_ip", "alerts", "(host_ip)"),
+    ("ix_alerts_service_id", "alerts", "(service_id)"),
+    ("ix_alerts_application_id", "alerts", "(application_id)"),
+    ("ix_alerts_trace_id", "alerts", "(trace_id)"),
+    # started_at (the event's "timestamp") is already indexed as
+    # ix_alerts_started_at above.
+    ("ix_hosts_cmdb_id", "hosts", "(cmdb_id)"),
 ]
 
 

@@ -71,6 +71,49 @@ class HostStatus(str, enum.Enum):
     disabled = "disabled"
 
 
+class EntityType(str, enum.Enum):
+    """Kinds of thing a :class:`CanonicalEntity` can represent.
+
+    Phase 1 (entity resolution) only ever creates ``host`` entities — that is
+    the only kind any current collector can resolve deterministically. The
+    rest exist so the schema does not need to change again when a later
+    Correlation phase learns to resolve services/applications/etc from the
+    topology graph.
+    """
+
+    host = "host"
+    network_device = "network_device"
+    application = "application"
+    service = "service"
+    api = "api"
+    database = "database"
+    external_service = "external_service"
+    business_service = "business_service"
+
+
+class ResolutionMethod(str, enum.Enum):
+    """How a source's identifier was resolved to a :class:`CanonicalEntity`.
+
+    Ordered by the priority :func:`app.entity_resolution.resolve_host_entity`
+    checks them in (strongest evidence first). ``new_entity`` is not really a
+    "match" — nothing matched, so a new identity was established; it is
+    marked with full confidence because it asserts nothing beyond "this is a
+    thing we have not seen before". ``conflict`` means the input evidence
+    pointed at more than one existing entity — resolution deliberately
+    refuses to guess.
+    """
+
+    manual_mapping = "manual_mapping"
+    cmdb_exact_match = "cmdb_exact_match"
+    ip_exact_match = "ip_exact_match"
+    fqdn_exact_match = "fqdn_exact_match"
+    hostname_exact_match = "hostname_exact_match"
+    alias_match = "alias_match"
+    source_mapping = "source_mapping"
+    new_entity = "new_entity"
+    conflict = "conflict"
+
+
 class RunStatus(str, enum.Enum):
     """Outcome of a collector run."""
 
@@ -138,6 +181,21 @@ class Host(Base):
     #: Extra capacity attributes (cores, mem_total_gb, disk_total_gb, …).
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # --- Entity resolution (Correlation Phase 1) -----------------------------
+    #: Fully-qualified domain name, when the source reports one distinctly
+    #: from ``hostname``. Used for FQDN_EXACT_MATCH — one rung below IP,
+    #: one above hostname, since an FQDN collides across environments far
+    #: less often than a bare hostname does.
+    fqdn: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: An external CMDB/asset identifier, when the source has one (e.g. the
+    #: Digital View asset serial). Used for CMDB_EXACT_MATCH.
+    cmdb_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    #: The :class:`CanonicalEntity` this source row was resolved to, and how.
+    #: Plain int/string columns, not a FK — same convention as every other
+    #: cross-entity reference in this schema (see module docstring).
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    resolution_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    resolution_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=_utcnow,
@@ -147,7 +205,22 @@ class Host(Base):
 
 
 class Alert(Base):
-    """An alert / problem / incident, normalized across all platforms."""
+    """A canonical monitoring event, normalized across all platforms.
+
+    This is the canonical event model for Correlation Phase 1: every field a
+    source can report (severity, host identity, timestamps) plus the columns
+    a later correlation phase needs (resolved entity, metric context, trace
+    context) live on this one row, rather than in a second "Event" table —
+    ``Alert`` already *is* "one normalized monitoring event", so a parallel
+    table would just be the same rows twice under a different name.
+
+    The original values a source reported are never overwritten once set:
+    ``original_severity``/``original_description`` are set only on first
+    insert (see :func:`app.normalizer.upsert_alerts`), even though
+    ``severity_label``/``title`` continue to track the source's current view
+    on every later poll. ``raw_payload`` keeps the entire original payload
+    regardless.
+    """
 
     __tablename__ = "alerts"
     __table_args__ = (
@@ -188,6 +261,83 @@ class Alert(Base):
     #: Full monitor path (group hierarchy + monitor name).
     monitor_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    # --- Canonical event: identity & lifecycle -------------------------------
+    #: "open" | "resolved" — a platform-independent mirror of ``resolved``,
+    #: for callers that want a single status field regardless of source.
+    status: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    #: Last time this exact source event was seen again (every poll bumps
+    #: this and ``updated_at`` together; kept as its own column because a
+    #: later phase may need "still active as of" independent of row edits).
+    last_seen: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The severity/description exactly as first reported, preserved even
+    #: after ``severity_label``/``title`` move on to reflect the source's
+    #: current view — set once, on insert, never overwritten.
+    original_severity: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    original_description: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: How this event's raw payload can be retrieved again. ``raw_payload``
+    #: is stored inline on this same row today, so this is currently just a
+    #: locator for it (``platform:instance:external_id``) — kept as its own
+    #: field so payloads can move to external/cold storage later without a
+    #: schema change to whatever already reads this column.
+    payload_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # --- Canonical event: resolved entity (copied from the matched Host at
+    # write time by app.normalizer._apply_canonical_fields) ------------------
+    host_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    fqdn: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    host_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Named host_owner, not owner: app.routers.pages._attach_escalation
+    #: already sets a *transient* (never persisted) ``.owner`` attribute on
+    #: Alert objects for the Escalate feature's read-time owner lookup — a
+    #: same-named mapped column here would shadow it and risk the transient
+    #: value being written back on a session that happens to flush/commit.
+    host_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: Matches CanonicalEntity.id (see app/entity_resolution.py), not a FK.
+    #: Always entity_type="host" in Phase 1 — only Host rows are resolved.
+    entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # --- Canonical event: source-specific adapter output ---------------------
+    #: A fixed label per platform (e.g. "zabbix_trigger"), set by the
+    #: matching function in app/canonical_event.py.
+    event_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: The closest thing the source exposes to a problem category, where one
+    #: exists (e.g. Dynatrace's rankedEvents[0].eventType). Null where the
+    #: source has nothing beyond severity + a free-text title.
+    problem_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: Tags/labels carried on the source payload, passed through as-is.
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+
+    # --- Canonical event: broader context (schema-ready, mostly unpopulated
+    # in Phase 1 — no current collector resolves these; see module note in
+    # app/canonical_event.py). Kept here rather than in a later migration so
+    # a Phase 2+ correlation engine has a stable column to write into. -------
+    application_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    application_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    service_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    service_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    api_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    api_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    endpoint: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    http_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    database_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    database_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    network_device_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    network_device_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metric_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metric_unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    environment: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    location: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    business_service: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parent_span_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=_utcnow,
@@ -363,3 +513,131 @@ class CollectorRun(Base):
     hosts_collected: Mapped[int] = mapped_column(Integer, default=0)
     alerts_collected: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+
+
+# --- Correlation Phase 1: canonical entities ---------------------------------
+#
+# The same physical/logical thing (a host, later a service or application) is
+# seen independently by several platforms under several different identifiers
+# — Zabbix's "APP01", Dynatrace's "app-prod-01", NNMi's "APP01_TE". These four
+# tables are where that gets resolved to one shared identity, deterministically
+# and explainably (see app/entity_resolution.py for the matching algorithm).
+#
+# Kept as their own tables rather than folded into Host: a Host row already
+# means "one platform's view of one thing" (that is the whole reason it is
+# scoped to (platform, instance, external_id)); a CanonicalEntity means "the
+# thing itself", which can outlive, predate, or be claimed by zero Host rows
+# (e.g. a manual mapping declared before the source ever reports it, or an
+# Application/Service entity no current collector produces a Host row for at
+# all). Host gains only a plain entity_id/resolution_method/confidence — its
+# own resolved answer — not a duplicate of this table's contents.
+
+
+class CanonicalEntity(Base):
+    """One resolved identity — a host, and in later phases a service, an
+    application, etc. — shared across however many platforms report it.
+    """
+
+    __tablename__ = "canonical_entities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_type: Mapped[EntityType] = mapped_column(
+        Enum(EntityType, native_enum=False, length=24),
+        default=EntityType.host,
+        index=True,
+    )
+    #: Best display name at creation time (usually the first source's
+    #: hostname). Not re-derived later — renaming on every poll would make
+    #: an entity's identity feel unstable even though its id never changes.
+    canonical_name: Mapped[str] = mapped_column(String(255), default="")
+    #: External CMDB/asset id, when one was available at resolution time.
+    cmdb_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    #: Free-form extra context a later phase may want (e.g. a business unit
+    #: pulled from a source tag). Empty in Phase 1.
+    entity_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class EntityIP(Base):
+    """One IP address known to belong to a :class:`CanonicalEntity`.
+
+    Not unique on ``ip`` alone: two different entities disagreeing about who
+    owns an address is a real, if rare, data-quality condition (a reused DHCP
+    lease, a misconfigured source) and resolution needs to be able to observe
+    it and refuse to guess (:data:`ResolutionMethod.conflict`) rather than the
+    schema silently making it impossible to represent. Unique per
+    ``(entity_id, ip)`` so re-registering the same address is a no-op, not a
+    growing table of duplicate rows.
+    """
+
+    __tablename__ = "entity_ips"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "ip", name="uq_entity_ip"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    ip: Mapped[str] = mapped_column(String(64), index=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class EntityAlias(Base):
+    """One alternate name known to belong to a :class:`CanonicalEntity`.
+
+    ``alias_type`` separates hostnames, FQDNs, and free-form aliases because
+    they are matched at different priority (see
+    :func:`app.entity_resolution.resolve_host_entity`) and a bare hostname is
+    far more likely to collide across two unrelated entities than an FQDN is.
+    Same non-unique-on-value-alone reasoning as :class:`EntityIP`.
+    """
+
+    __tablename__ = "entity_aliases"
+    __table_args__ = (
+        UniqueConstraint("entity_id", "alias_type", "alias", name="uq_entity_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    #: hostname | fqdn | alias
+    alias_type: Mapped[str] = mapped_column(String(16), index=True)
+    #: Stored lowercased/trimmed — matching is always exact-but-case-insensitive.
+    alias: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class EntityManualMapping(Base):
+    """An admin-declared "this source identifier is this entity" override.
+
+    The only kind of mapping that can exist *before* the source has ever
+    reported the thing — every other resolution method needs a Host row (or
+    an existing entity to match against) to work from. Checked first, ahead
+    of every automatic method, which is what "explicit SAMI'X entity mapping"
+    ranking above CMDB/IP/hostname matching in the resolution priority means
+    in practice: a human's stated answer is never second-guessed by a
+    heuristic.
+    """
+
+    __tablename__ = "entity_manual_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_platform", "source_instance", "source_identifier",
+            name="uq_entity_manual_mapping",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    source_platform: Mapped[SourcePlatform] = mapped_column(
+        Enum(SourcePlatform, native_enum=False, length=16), index=True
+    )
+    source_instance: Mapped[str] = mapped_column(String(64), default="")
+    #: The source's own identifier — usually a hostname, sometimes the
+    #: platform's internal id, whatever an admin was looking at when they
+    #: made the mapping.
+    source_identifier: Mapped[str] = mapped_column(String(255), index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.canonical_event import adapt_event
+from app.entity_resolution import resolve_hosts_batch
 from app.models import Alert, Host, HostStatus, SourcePlatform
 
 # --- Severity scale ---------------------------------------------------------
@@ -189,6 +191,12 @@ def upsert_hosts(
     #: Rows touched this run, so capacity sampling can reach their ids after
     #: the flush without re-querying.
     touched: dict[str, Host] = {}
+    #: Hosts whose identity actually needs (re-)resolving this run — see the
+    #: identity_unchanged check below. Resolved together, once, after the
+    #: main loop (app.entity_resolution.resolve_hosts_batch), not one at a
+    #: time, so a steady-state poll of an unchanged estate costs zero extra
+    #: queries and even a fully-new batch costs a small constant number.
+    needs_resolution: list[dict] = []
 
     existing = {
         h.external_id: h
@@ -257,11 +265,49 @@ def upsert_hosts(
         row.raw_payload = item.get("raw_payload", {})
         row.updated_at = now
 
+        # Entity resolution (Correlation Phase 1). Queued for the batched
+        # resolve below, skipped entirely when nothing this row is matched
+        # on has changed and it already resolved once — the overwhelming
+        # majority of a steady-state poll, since identity signals rarely
+        # change between one run and the next.
+        new_fqdn = item.get("fqdn")
+        new_cmdb_id = item.get("cmdb_id") or (item.get("raw_payload") or {}).get("serial")
+        identity_unchanged = (
+            row.entity_id is not None
+            and row.ip == item.get("ip")
+            and row.hostname == (item.get("hostname") or external_id)
+            and row.fqdn == new_fqdn
+        )
+        if "fqdn" in item:
+            row.fqdn = new_fqdn
+        if new_cmdb_id:
+            row.cmdb_id = new_cmdb_id
+        if not identity_unchanged:
+            needs_resolution.append({
+                "external_id": external_id,
+                "hostname": row.hostname,
+                "ip": row.ip,
+                "ip_all": row.ip_all,
+                "fqdn": row.fqdn,
+                "cmdb_id": row.cmdb_id,
+                "prior_entity_id": row.entity_id,
+            })
+
     # Reconcile: hosts not present this run become unknown.
     for external_id, row in existing.items():
         if external_id not in seen_external_ids and row.status != HostStatus.unknown:
             row.status = HostStatus.unknown
             row.updated_at = now
+
+    if needs_resolution:
+        results = resolve_hosts_batch(
+            db, platform=platform, instance=instance, items=needs_resolution
+        )
+        for external_id, result in results.items():
+            row = touched[external_id]
+            row.entity_id = result.entity_id
+            row.resolution_method = result.method.value
+            row.resolution_confidence = result.confidence
 
     db.flush()
 
@@ -273,6 +319,83 @@ def upsert_hosts(
     record_samples(db, platform.value, hosts, touched, now=now)
 
     return len(seen_external_ids)
+
+
+def _lookup_hosts_for_alerts(
+    db: Session, platform: SourcePlatform, instance: str, alerts: list[dict]
+) -> tuple[dict[str, Host], dict[str, Host]]:
+    """Batched Host lookup for the entity/owner context alerts inherit.
+
+    Alerts reference their host by ``host_external_id`` when the source
+    provides one (Zabbix, Dynatrace), or only by ``host_hostname`` when it
+    does not (NNMi, SiteScope) — so both indexes are built from one query.
+    One round trip for the whole batch, not one per alert.
+    """
+    external_ids = {
+        str(a["host_external_id"]) for a in alerts if a.get("host_external_id")
+    }
+    hostnames = {
+        str(a["host_hostname"]).strip().lower()
+        for a in alerts if a.get("host_hostname")
+    }
+    if not external_ids and not hostnames:
+        return {}, {}
+    rows = db.scalars(
+        select(Host).where(
+            Host.source_platform == platform,
+            Host.source_instance == instance,
+        )
+    ).all()
+    by_external_id = {h.external_id: h for h in rows if h.external_id in external_ids}
+    by_hostname = {
+        h.hostname.strip().lower(): h
+        for h in rows if h.hostname and h.hostname.strip().lower() in hostnames
+    }
+    return by_external_id, by_hostname
+
+
+def _apply_canonical_fields(
+    row: Alert,
+    item: dict,
+    platform: SourcePlatform,
+    by_external_id: dict[str, Host],
+    by_hostname: dict[str, Host],
+    *,
+    is_new: bool,
+    resolved: bool,
+    now: datetime,
+) -> None:
+    """Fill the Correlation-Phase-1 canonical fields on ``row`` (in place).
+
+    Split out of :func:`upsert_alerts`/:func:`upsert_resolved_alerts` so both
+    the live and the history-backfill path enrich alerts the same way.
+    """
+    for field, value in adapt_event(platform, item).items():
+        setattr(row, field, value)
+
+    row.status = "resolved" if resolved else "open"
+    row.last_seen = now
+    row.payload_ref = f"{platform.value}:{item.get('source_instance', '')}:{row.external_id}"
+
+    # Original values are recorded once, on first sight, and never touched
+    # again — see the Alert docstring. Everything else in this function may
+    # legitimately change on every poll (e.g. a host's owner changing hands).
+    if is_new:
+        row.original_severity = item.get("severity_label") or row.severity_label
+        row.original_description = item.get("title") or row.title
+
+    host = by_external_id.get(item.get("host_external_id"))
+    if host is None and item.get("host_hostname"):
+        host = by_hostname.get(str(item["host_hostname"]).strip().lower())
+    if host is not None:
+        row.host_ip = host.ip
+        row.fqdn = host.fqdn
+        row.host_group = host.group_name
+        row.host_owner = host.owner
+        row.entity_id = host.entity_id
+        # Phase 1 only ever resolves Host rows, so this is always "host" —
+        # see EntityType / the CanonicalEntity module note.
+        row.entity_type = "host" if host.entity_id is not None else None
 
 
 def upsert_alerts(
@@ -303,11 +426,13 @@ def upsert_alerts(
             )
         ).all()
     }
+    by_external_id, by_hostname = _lookup_hosts_for_alerts(db, platform, instance, alerts)
 
     for item in alerts:
         external_id = str(item["external_id"])
         seen_external_ids.add(external_id)
         row = existing.get(external_id)
+        is_new = row is None
         if row is None:
             row = Alert(
                 source_platform=platform,
@@ -326,11 +451,16 @@ def upsert_alerts(
         row.resolved = False
         row.raw_payload = item.get("raw_payload", {})
         row.updated_at = now
+        _apply_canonical_fields(
+            row, {**item, "source_instance": instance}, platform,
+            by_external_id, by_hostname, is_new=is_new, resolved=False, now=now,
+        )
 
     # Reconcile: previously-active alerts missing this run are resolved.
     for external_id, row in existing.items():
         if external_id not in seen_external_ids and not row.resolved:
             row.resolved = True
+            row.status = "resolved"
             row.updated_at = now
 
     db.flush()
@@ -384,10 +514,12 @@ def upsert_resolved_alerts(
             )
         ).all():
             existing[a.external_id] = a
+    by_external_id, by_hostname = _lookup_hosts_for_alerts(db, platform, instance, alerts)
     inserted = 0
     for item in alerts:
         external_id = str(item["external_id"])
         row = existing.get(external_id)
+        is_new = row is None
         if row is None:
             match_id = item.get("match_external_id")
             if match_id is not None:
@@ -415,6 +547,10 @@ def upsert_resolved_alerts(
         row.resolved = True
         row.raw_payload = item.get("raw_payload", {})
         row.updated_at = now
+        _apply_canonical_fields(
+            row, {**item, "source_instance": instance}, platform,
+            by_external_id, by_hostname, is_new=is_new, resolved=True, now=now,
+        )
     db.flush()
     return inserted
 

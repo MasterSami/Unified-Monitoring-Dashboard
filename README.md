@@ -201,6 +201,11 @@ nnmi:
 | `POST /api/v1/collectors/run`         | Trigger every instance now (the UI "Refresh now").|
 | `POST /api/v1/collectors/{instance}/run` | Trigger one instance now.                     |
 | `POST /api/v1/collectors/{instance}/test-mail?to=` | Zabbix: send a test email.        |
+| `GET  /api/v1/events`                 | Canonical events — full Alert schema (filters: `platform`, `instance`, `entity_id`, `resolved`, `q`). |
+| `GET  /api/v1/entities`               | Resolved canonical entities (filters: `entity_type`, `q`). |
+| `GET  /api/v1/entities/{id}`          | One entity: aliases, IPs, every source row resolved to it. |
+| `GET  /api/v1/entity-mappings`        | Source-identifier -> entity, manual + automatic (filters: `entity_id`, `platform`). |
+| `POST /api/v1/entity-mappings`        | Declare an explicit source-identifier -> entity mapping. |
 
 Interactive docs at `/docs`.
 
@@ -427,6 +432,57 @@ address nobody happened to search for. Every address Dynatrace reports for a
 host is now kept (comma-joined, the same convention `group_name` already uses
 for Zabbix's multi-group hosts) and searched alongside the primary one; the
 primary is still what the table displays.
+
+## Correlation — Phase 1: canonical events + entity resolution
+
+The same physical host is monitored by more than one tool under more than one
+name — Zabbix's `APP01`, Dynatrace's `app-prod-01`, NNMi's `APP01_TE`. Phase 1
+gives every one of those a shared, deterministic identity, as the foundation
+a later correlation/incident phase builds on. **No AI/ML, no fuzzy matching —
+every match is one of a fixed, ordered list of exact-match methods.**
+
+- `app/models.py` — `Alert` grew the full canonical-event schema (resolved
+  entity, preserved original severity/description, metric/trace/application
+  context — most of the last group is schema-ready but unpopulated until a
+  later phase produces that data; see the field comments). Four new tables —
+  `CanonicalEntity`, `EntityIP`, `EntityAlias`, `EntityManualMapping` — hold
+  the resolved identities themselves.
+- `app/entity_resolution.py` — the matching algorithm, checked strongest
+  evidence first: an explicit admin mapping, then a CMDB id, then an exact
+  IP, FQDN, hostname, a registered alias, and finally "this exact source row
+  resolved to something before, keep that". A bare hostname is never trusted
+  ahead of a stronger signal — two unrelated hosts sharing a name across
+  environments is common enough that the priority order itself is the
+  safeguard. If the evidence points at two *different* existing entities
+  (e.g. two entities both already claim the same IP — a real data-quality
+  condition), resolution returns a `conflict` rather than guessing.
+- `app/canonical_event.py` — one small adapter per source
+  (Zabbix/Dynatrace/NNMi/SiteScope) mapping that platform's own payload onto
+  the handful of canonical fields it doesn't already carry (an event-type
+  label, tags, a problem category where the source actually has one). Source
+  parsing quirks stay here, not in the resolver.
+- Wired into the existing collector pipeline, not a parallel one: entity
+  resolution runs inside `app.normalizer.upsert_hosts` (and the SiteScope
+  push path's own upsert), batched — a whole poll's worth of new/changed
+  hosts resolves in a handful of queries, not one per host, and a
+  steady-state poll where nothing's identity changed costs none at all.
+  Alerts inherit their host's resolved entity, IP, and owner at write time.
+
+Read the result via:
+
+```bash
+GET /api/v1/events                 # the canonical Alert rows, full schema
+GET /api/v1/entities                # resolved entities (filter: entity_type, q)
+GET /api/v1/entities/{id}           # one entity: aliases, IPs, every source row
+GET /api/v1/entity-mappings         # source-identifier -> entity, manual + automatic
+POST /api/v1/entity-mappings        # declare an explicit mapping (e.g. an
+                                     # identifier no shared IP/hostname/FQDN ties
+                                     # to anything, so it needs a stated answer)
+```
+
+Correlating alerts into incidents, walking the topology graph, and root-cause
+ranking are explicitly out of scope for this phase — they build on this
+identity layer rather than reinventing it.
 
 ## Deploy to a server later
 

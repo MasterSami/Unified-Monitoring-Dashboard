@@ -9,11 +9,14 @@ are read from a redacted file on disk during a laptop demo.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.entity_resolution import resolve_hosts_batch
 from app.models import Alert, Host, HostStatus, SourcePlatform
+from app.normalizer import _apply_canonical_fields, _lookup_hosts_for_alerts
 from app.sitescope import (
     DerivedHost,
     NormalizedEvent,
@@ -82,10 +85,35 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
         {(ev.source_instance, ev.external_id) for ev in events},
     )
     updated = len(batch)
+    now = datetime.now(timezone.utc)
 
-    for ev in events:
+    # Same canonical-event enrichment the poll platforms get, via
+    # app.normalizer's shared helpers — see its docstring for why this isn't
+    # duplicated here. Events reference their host only by hostname (no
+    # host_external_id in this pipeline), same as NNMi's alerts.
+    items = [
+        {
+            "external_id": ev.external_id,
+            "host_hostname": ev.host_hostname,
+            "host_external_id": None,
+            "severity_label": ev.severity_label,
+            "title": ev.title,
+            "raw_payload": ev.raw_payload,
+            "monitor_name": ev.monitor_name,
+        }
+        for ev in events
+    ]
+    # ingest_lines() always calls this with events from a single instance
+    # (parse_line stamps every line with the one instance it was called
+    # with), so one lookup call covers the whole batch.
+    by_external_id, by_hostname = _lookup_hosts_for_alerts(
+        db, SourcePlatform.sitescope, events[0].source_instance, items
+    )
+
+    for ev, item in zip(events, items):
         key = (ev.source_instance, ev.external_id)
         row = batch.get(key)
+        is_new = row is None
         if row is None:
             row = Alert(
                 source_platform=SourcePlatform.sitescope,
@@ -106,13 +134,16 @@ def upsert_events(db: Session, events: list[NormalizedEvent]) -> tuple[int, int]
         row.metric_missing = ev.metric_missing
         row.monitor_name = ev.monitor_name
         row.raw_payload = ev.raw_payload
+        _apply_canonical_fields(
+            row, {**item, "source_instance": ev.source_instance},
+            SourcePlatform.sitescope, by_external_id, by_hostname,
+            is_new=is_new, resolved=ev.resolved, now=now,
+        )
     return inserted, updated
 
 
 def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
     """Upsert derived SiteScope hosts (idempotent, no reconciliation)."""
-    from datetime import datetime, timezone
-
     inserted = 0
     if not hosts:
         return 0
@@ -120,6 +151,8 @@ def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
         db, Host, Host.source_instance, Host.external_id,
         {(instance, h.external_id) for h in hosts},
     )
+    needs_resolution: list[dict] = []
+    rows_by_external_id: dict[str, Host] = {}
     for h in hosts:
         row = existing.get((instance, h.external_id))
         if row is None:
@@ -131,6 +164,7 @@ def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
             db.add(row)
             existing[(instance, h.external_id)] = row
             inserted += 1
+        rows_by_external_id[h.external_id] = row
         row.hostname = h.hostname
         row.ip = h.ip
         try:
@@ -140,6 +174,27 @@ def upsert_hosts(db: Session, instance: str, hosts: list[DerivedHost]) -> int:
         row.group_name = h.group_name
         row.last_seen = h.last_seen or datetime.now(timezone.utc)
         row.raw_payload = h.raw_payload
+
+        # Entity resolution (Correlation Phase 1) — same skip-if-unchanged,
+        # batched-not-per-host approach as app.normalizer.upsert_hosts.
+        if row.entity_id is None or row.ip != h.ip or row.hostname != h.hostname:
+            needs_resolution.append({
+                "external_id": h.external_id,
+                "hostname": row.hostname,
+                "ip": row.ip,
+                "prior_entity_id": row.entity_id,
+            })
+
+    if needs_resolution:
+        results = resolve_hosts_batch(
+            db, platform=SourcePlatform.sitescope, instance=instance,
+            items=needs_resolution,
+        )
+        for external_id, result in results.items():
+            row = rows_by_external_id[external_id]
+            row.entity_id = result.entity_id
+            row.resolution_method = result.method.value
+            row.resolution_confidence = result.confidence
     return inserted
 
 
