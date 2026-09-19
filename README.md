@@ -1009,6 +1009,42 @@ everything downstream of "AI Assistance" in the diagram above are
 explicitly out of scope here — this phase is the data and the interface,
 never the AI.
 
+## Correlation engine performance fix (large real deployments)
+
+Reported symptom: on a real, large monitored estate (many Zabbix instances,
+thousands of topology relationships), `POST /api/v1/correlation/run` could
+run for hours instead of finishing a single batch. Root cause was in
+`app/correlation_engine.py`, not the Incidents/Dependencies pages — those
+were correctly showing "no data" because the batch behind them had never
+completed:
+
+- `compute_signals` queried each event's occurrences (`Alert` rows) three
+  times per pair (once each for trace, business-transaction, and
+  multi-source matching) instead of once — now fetched once per event and
+  reused.
+- `correlate_pair` re-queried every `CorrelationRule` and every
+  `CorrelationWeight` from scratch for *every single pair* it evaluated.
+  `run_correlation_for_event`/`run_correlation_batch` now fetch both once
+  per run and pass the same snapshot into every pair
+  (`correlate_pair(..., rules=..., weights=...)`; still fetched internally
+  when omitted, so `/api/v1/correlation/evaluate`'s single-pair behavior is
+  unchanged).
+- `find_candidate_events`'s time-window query filtered by time but never by
+  count — on a busy real estate, "every event within 30 minutes" could
+  itself be thousands of rows per event. Each of its three candidate
+  sources (same-entity, topology-neighbor, time-window) is now capped at
+  `_MAX_CANDIDATES_PER_SOURCE` (300, ordered by recency), so one run is
+  always bounded regardless of how noisy the estate is; anything left out
+  is picked up by the next run (`run_correlation_batch` is already designed
+  to be safely re-run — see Phase 6's hardening note above).
+
+Verified with a synthetic stress test (200 entities, a 199-edge topology
+fan-in, 3000 events all inside the default 1800s window — the same shape
+of problem a large real deployment hits): the pre-fix code did not finish
+a single 200-event batch within 90 seconds; the fixed code finishes the
+same batch (65,336 pairs evaluated) in well under a minute. Full test
+suite still passes with zero regressions.
+
 ## Deploy to a server later
 
 The application is deployment-ready; two changes move it from POC to server.

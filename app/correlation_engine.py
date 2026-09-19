@@ -184,6 +184,13 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
     """
     hits: list[SignalHit] = []
     entity_a, entity_b = _entity(db, a.entity_id), _entity(db, b.entity_id)
+    #: Fetched once and reused below instead of once per signal (trace,
+    #: business transaction, multi-source each used to re-query these) —
+    #: same Alert rows each time within one compute_signals call, so
+    #: querying them three times per event was pure overhead, not a
+    #: correctness need. Matters at real-world scale: run_correlation_batch
+    #: can evaluate thousands of pairs per run.
+    occ_a, occ_b = _occurrences(db, a), _occurrences(db, b)
 
     if a.entity_id is not None and a.entity_id == b.entity_id:
         hits.append(SignalHit(
@@ -213,8 +220,8 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
                     SIGNAL_PRIORITY_TIER[signal], entity_a.id,
                 ))
 
-    trace_a = {o.trace_id for o in _occurrences(db, a) if o.trace_id}
-    trace_b = {o.trace_id for o in _occurrences(db, b) if o.trace_id}
+    trace_a = {o.trace_id for o in occ_a if o.trace_id}
+    trace_b = {o.trace_id for o in occ_b if o.trace_id}
     common_trace = trace_a & trace_b
     if common_trace:
         hits.append(SignalHit(
@@ -222,8 +229,8 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
             SIGNAL_PRIORITY_TIER[CorrelationSignal.same_trace],
         ))
 
-    bt_a = {o.business_service for o in _occurrences(db, a) if o.business_service}
-    bt_b = {o.business_service for o in _occurrences(db, b) if o.business_service}
+    bt_a = {o.business_service for o in occ_a if o.business_service}
+    bt_b = {o.business_service for o in occ_b if o.business_service}
     common_bt = bt_a & bt_b
     if common_bt:
         hits.append(SignalHit(
@@ -231,8 +238,8 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
             SIGNAL_PRIORITY_TIER[CorrelationSignal.same_business_transaction],
         ))
 
-    sources_a = {o.source_platform.value for o in _occurrences(db, a)}
-    sources_b = {o.source_platform.value for o in _occurrences(db, b)}
+    sources_a = {o.source_platform.value for o in occ_a}
+    sources_b = {o.source_platform.value for o in occ_b}
     if len(sources_a) > 1 and len(sources_b) > 1:
         hits.append(SignalHit(
             CorrelationSignal.multi_source,
@@ -443,9 +450,21 @@ def _persist_correlation(
     return correlation
 
 
-def correlate_pair(db: Session, event_a_id: int, event_b_id: int) -> CorrelationOutcome:
+def correlate_pair(
+    db: Session, event_a_id: int, event_b_id: int,
+    *, rules: list[CorrelationRule] | None = None, weights: dict[CorrelationSignal, float] | None = None,
+) -> CorrelationOutcome:
     """Evaluate whether two LogicalEvents should be correlated, and persist
     the result if so. Always explainable — see :class:`CorrelationOutcome`.
+
+    ``rules``/``weights`` let a caller evaluating many pairs in one run
+    (:func:`run_correlation_for_event`, :func:`run_correlation_batch`) fetch
+    them once and pass the same snapshot into every pair instead of this
+    function re-querying both tables per pair — at real-world scale (a busy
+    monitored estate, thousands of candidate pairs per batch) that per-pair
+    re-fetch was the dominant cost. Omit either (as every existing caller,
+    including ``/correlation/evaluate``, still does for a single pair) and
+    it is fetched fresh here exactly as before.
     """
     if event_a_id == event_b_id:
         return CorrelationOutcome(correlated=False, reason="an event cannot correlate with itself")
@@ -456,11 +475,14 @@ def correlate_pair(db: Session, event_a_id: int, event_b_id: int) -> Correlation
 
     base_hits = compute_signals(db, a, b)
     delta = time_delta_seconds(a, b)
-    weights = get_weights(db)
+    if weights is None:
+        weights = get_weights(db)
+    if rules is None:
+        rules = list_rules(db, enabled_only=True)
 
     best_rule: CorrelationRule | None = None
     best_hits: list[SignalHit] = []
-    for rule in list_rules(db, enabled_only=True):
+    for rule in rules:
         matched = evaluate_rule(db, rule, a, b, base_hits, delta)
         if matched is None:
             continue
@@ -497,20 +519,36 @@ def correlate_pair(db: Session, event_a_id: int, event_b_id: int) -> Correlation
     )
 
 
+#: Hard cap per candidate source (same-entity / topology-neighbor / time-
+#: window) inside find_candidate_events. On a small or moderate estate this
+#: never binds — it only matters once a single entity or a single 30-minute
+#: window genuinely holds more than this many events, which "never a
+#: full-table scan" didn't actually prevent before: the window query in
+#: particular filtered by time, not by count, so a noisy real-world estate
+#: (many monitored instances firing within the same window) could still
+#: hand back thousands of rows to evaluate pairwise. Ordered by recency
+#: before capping so the events most likely to still matter are the ones
+#: kept; anything left out is picked up by a later batch run instead
+#: (run_correlation_batch is explicitly re-runnable/idempotent).
+_MAX_CANDIDATES_PER_SOURCE = 300
+
+
 def find_candidate_events(db: Session, event: LogicalEvent, *, window_seconds: int = 1800) -> list[LogicalEvent]:
     """A bounded set of OTHER active LogicalEvents worth evaluating ``event``
     against — never a full-table scan. Candidates are: events on the same
     entity, events one hop away in the dependency graph, and events active
     within ``window_seconds`` (the widest allowed rule window by default).
+    Each source is capped at :data:`_MAX_CANDIDATES_PER_SOURCE`.
     """
     if event.entity_id is None:
         return []
     candidate_ids: set[int] = set()
 
     same_entity = db.scalars(
-        select(LogicalEvent.id).where(
-            LogicalEvent.entity_id == event.entity_id, LogicalEvent.id != event.id,
-        )
+        select(LogicalEvent.id)
+        .where(LogicalEvent.entity_id == event.entity_id, LogicalEvent.id != event.id)
+        .order_by(LogicalEvent.last_seen.desc().nullslast())
+        .limit(_MAX_CANDIDATES_PER_SOURCE)
     ).all()
     candidate_ids.update(same_entity)
 
@@ -528,7 +566,10 @@ def find_candidate_events(db: Session, event: LogicalEvent, *, window_seconds: i
     neighbor_ids.discard(event.entity_id)
     if neighbor_ids:
         neighbor_events = db.scalars(
-            select(LogicalEvent.id).where(LogicalEvent.entity_id.in_(neighbor_ids))
+            select(LogicalEvent.id)
+            .where(LogicalEvent.entity_id.in_(neighbor_ids))
+            .order_by(LogicalEvent.last_seen.desc().nullslast())
+            .limit(_MAX_CANDIDATES_PER_SOURCE)
         ).all()
         candidate_ids.update(neighbor_events)
 
@@ -537,12 +578,15 @@ def find_candidate_events(db: Session, event: LogicalEvent, *, window_seconds: i
         from datetime import timedelta
 
         window_events = db.scalars(
-            select(LogicalEvent.id).where(
+            select(LogicalEvent.id)
+            .where(
                 LogicalEvent.id != event.id,
                 LogicalEvent.last_seen.is_not(None),
                 LogicalEvent.last_seen >= lo - timedelta(seconds=window_seconds),
                 LogicalEvent.last_seen <= lo + timedelta(seconds=window_seconds),
             )
+            .order_by(LogicalEvent.last_seen.desc())
+            .limit(_MAX_CANDIDATES_PER_SOURCE)
         ).all()
         candidate_ids.update(window_events)
 
@@ -551,7 +595,10 @@ def find_candidate_events(db: Session, event: LogicalEvent, *, window_seconds: i
     return list(db.scalars(select(LogicalEvent).where(LogicalEvent.id.in_(candidate_ids))).all())
 
 
-def run_correlation_for_event(db: Session, event_id: int) -> list[CorrelationOutcome]:
+def run_correlation_for_event(
+    db: Session, event_id: int,
+    *, rules: list[CorrelationRule] | None = None, weights: dict[CorrelationSignal, float] | None = None,
+) -> list[CorrelationOutcome]:
     """Evaluate one LogicalEvent against every candidate worth checking.
     Returns every outcome (correlated or not), most useful for tests/API
     explainability; callers that only care about persisted correlations can
@@ -565,14 +612,22 @@ def run_correlation_for_event(db: Session, event_id: int) -> list[CorrelationOut
     run over the same pair is safe to repeat), and rolling back here would
     also discard earlier pairs THIS run already correlated successfully but
     the caller has not committed yet.
+
+    ``rules``/``weights``: see :func:`correlate_pair`. Fetched once here
+    (if not already supplied by a batch caller) and reused for every
+    candidate pair below, instead of once per pair.
     """
     event = db.get(LogicalEvent, event_id)
     if event is None:
         return []
+    if weights is None:
+        weights = get_weights(db)
+    if rules is None:
+        rules = list_rules(db, enabled_only=True)
     outcomes = []
     for candidate in find_candidate_events(db, event):
         try:
-            outcomes.append(correlate_pair(db, event.id, candidate.id))
+            outcomes.append(correlate_pair(db, event.id, candidate.id, rules=rules, weights=weights))
         except Exception:  # noqa: BLE001 — contained by design, see docstring
             logger.exception(
                 "correlate_pair failed for event pair (%s, %s)", event.id, candidate.id,
@@ -587,6 +642,11 @@ def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, li
     summary, not the full per-pair detail — use run_correlation_for_event
     for that. Records ``correlation_duration_seconds`` (the task's
     ``average_processing_time`` metric) for the whole batch.
+
+    Rules and weights are fetched once for the whole batch (a consistent
+    snapshot for every pair this run touches) rather than once per pair —
+    at real-world scale, with many events each pulling in many candidates,
+    the per-pair re-fetch this replaced was itself a major cost.
     """
     started = time.perf_counter()
     if event_ids is None:
@@ -598,10 +658,12 @@ def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, li
                 .limit(limit)
             ).all()
         )
+    rules = list_rules(db, enabled_only=True)
+    weights = get_weights(db)
     evaluated = 0
     correlated = 0
     for eid in event_ids:
-        for outcome in run_correlation_for_event(db, eid):
+        for outcome in run_correlation_for_event(db, eid, rules=rules, weights=weights):
             evaluated += 1
             if outcome.correlated:
                 correlated += 1
