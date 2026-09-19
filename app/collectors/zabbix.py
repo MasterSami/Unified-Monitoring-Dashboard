@@ -497,7 +497,7 @@ class ZabbixCollector(BaseCollector):
             )
         return alerts
 
-    def collect_resolved_alerts(self) -> list[dict]:
+    def collect_resolved_alerts(self, since: datetime | None = None) -> list[dict]:
         """Resolved problems from event history (last ALERT_HISTORY_DAYS days).
 
         ``event.get`` problem events (source 0 / object 0, value 1) that carry a
@@ -505,18 +505,26 @@ class ZabbixCollector(BaseCollector):
         resolved inside the window, regardless of when the dashboard was
         deployed. ``match_external_id`` carries the trigger id so episodes
         already recorded by live reconciliation aren't duplicated.
+
+        With ``since`` (the previous successful backfill), only events whose
+        clock falls after ``since`` minus a safety overlap are fetched: a
+        problem that resolved since then either started in that span or is
+        already stored from an earlier pass.
         """
         if self.settings.mock_mode:
             return []
         days = max(1, int(self.settings.alert_history_days))
         time_from = int(datetime.now(timezone.utc).timestamp()) - days * 86400
+        if since is not None:
+            overlap = 2 * 3600
+            time_from = max(time_from, int(since.timestamp()) - overlap)
 
         # Busy instances can have far more than one page of events in the
         # window, and a single limited call sorted newest-first silently drops
         # the older ones. Page backwards through the window (newest -> oldest)
         # by moving time_till to the oldest clock seen, until exhausted.
         page_size = 5000
-        max_events = 60000  # hard bound per run; the window re-scans next run
+        max_events = 60000  # hard bound per run (only the first, full-window pass can reach it)
         alerts: list[dict] = []
         seen_ids: set[str] = set()
         time_till: int | None = None
@@ -578,8 +586,8 @@ class ZabbixCollector(BaseCollector):
         if scanned >= max_events:
             self.logger.warning(
                 "resolved-alert backfill hit the %d-event cap for the %dd window; "
-                "older events will be picked up on subsequent runs",
-                max_events, days,
+                "history older than the newest %d events is not imported",
+                max_events, days, max_events,
             )
         return alerts
 

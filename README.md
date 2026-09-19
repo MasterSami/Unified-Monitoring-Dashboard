@@ -1045,42 +1045,81 @@ a single 200-event batch within 90 seconds; the fixed code finishes the
 same batch (65,336 pairs evaluated) in well under a minute. Full test
 suite still passes with zero regressions.
 
-## Scheduler concurrency fix ("database is locked")
+## Pipeline review: collect -> topology -> correlate -> incidents at real scale
 
-A follow-on to the fix above: once `correlation/run` stopped hanging for
-hours, real deployments hit a second, separate problem — collectors,
-topology sync, correlation/incidents, and sitescope/digitalview loads
-started throwing `sqlite3.OperationalError: database is locked`, sometimes
-repeatedly, sometimes even while SQLAlchemy tried to roll back the failed
-transaction.
+A full pass over the pipeline after running it against a real estate (8
+Zabbix/Dynatrace/NNMi instances, ~10k open alerts, ~60k resolved history
+rows per Zabbix, ~12k topology relationships). The symptoms were
+`sqlite3.OperationalError: database is locked` across collectors, topology,
+correlation and the SiteScope/Digital View loads; collectors then showing
+as failed; a sluggish UI while a sweep ran; and Incidents/Dependencies tabs
+that stayed empty unless someone called the right API endpoints by hand,
+in the right order. Root causes, in order of impact:
 
-Root cause was in `app/scheduler.py`: every scheduled job already carried
-`max_instances=1`, but that only stops ONE job id from overlapping
-*itself*. A manual trigger (e.g. clicking "Refresh now") runs under its
-own, different job id (`manual_run_all` vs. the automatic
-`poll_all_collectors`), so nothing stopped it from running at the same
-time as an automatic run already in flight — and nothing stopped the
-independent collector/topology/correlation/sitescope/digitalview jobs
-from overlapping *each other* either. On a large real estate a single
-collector sweep can take minutes, so this was a real, recurring gap, not
-a one-off: two genuinely concurrent writers on SQLite's single-writer
-database file is exactly what "database is locked" means.
+1. **A collector held SQLite's one write lock across a network call.**
+   `BaseCollector.run` upserted hosts + alerts (opening a write
+   transaction), THEN fetched the resolved-alert history from Zabbix (most
+   of a minute on a busy instance), THEN wrote it, with one commit at the
+   end. Every other job timed out against that. Now every network call
+   happens first with no transaction open, and the whole result is written
+   in one short transaction under `app.db.write_lock` — the process-wide
+   serializer every bulk write phase (collector writes, a topology snapshot
+   replace, the correlation/incident batch, file loads) takes. Slow network
+   phases run in parallel; only the seconds of writing are serialized. (An
+   earlier attempt locked the *entire* job — network included — which
+   serialized everything and starved the collectors; that is gone.)
+2. **Every poll reloaded an instance's entire alert table**, resolved
+   history included, to reconcile the open ones. `upsert_alerts` now loads
+   only the instance's open rows plus any id reported this run (a resolved
+   episode re-raised under the same id is still reopened in place).
+3. **The hourly history backfill re-fetched and re-wrote the full 30-day
+   window** (60k rows) every time. It is incremental now — after the first
+   full pass each run asks for `since - 2h` — and `upsert_resolved_alerts`
+   leaves rows that are already stored as resolved untouched (a closed
+   episode never changes), only updating rows that were still open.
+4. **N+1 queries** in the logical-event recompute (one SELECT per touched
+   event) and in the topology relationship sync (a fresh resolution
+   context per node, a SELECT per edge) are batched.
+5. **A manual "Refresh now" during a sweep started a second full sweep**
+   (different APScheduler job id, so `max_instances=1` never applied).
+   `CollectorService.run_all` now skips itself while one is in flight.
+6. **Nothing populated `EntityRelationship` automatically** — the
+   dependency sync existed only behind `POST /api/v1/topology/sync`, so the
+   Dependencies tab and the `known_dependency` correlation signal were
+   empty until someone found that endpoint. The topology job now runs the
+   sync right after collecting.
+7. **No correlation rules exist on a fresh install**, so nothing ever
+   correlated and the Incidents tab could never fill. `DEFAULT_RULES` (same
+   trace / known dependency / same entity, each with a bounded window) are
+   seeded once on a database that has no rules at all; any edited, disabled
+   or custom rule set is left exactly as the operator made it.
+8. **The correlation batch re-picked the same "newest 200" every run.**
+   `LogicalEvent.correlated_at` records when an event was last evaluated;
+   the batch takes never-evaluated events first, then the least recently
+   evaluated, under a time budget (60 s) with periodic commits — so every
+   open event is reached in rounds and no run holds the write lock for
+   minutes. Incident formation covers every correlation the run touched,
+   not only the newest.
+9. **Startup order.** The sweep chains straight into correlation +
+   incident formation when it finishes (the interval job stays as a safety
+   net for pushed events), so on a cold start the Incidents tab fills from
+   the first poll with no API call by hand.
+10. **CSV exports died mid-stream** (`identity map is no longer valid`):
+    the streaming body ran after FastAPI had closed the request session.
+    Exports now stream from a session the response owns.
+11. **Each candidate pair re-queried the same event's occurrences, host
+    and relationships.** `compute_signals` takes a per-batch
+    `SignalCache`, so those read-only lookups happen once per event/entity
+    per run instead of once per pair: the 65,000-pair stress batch went
+    from 66 s to 5.5 s on the same machine.
 
-Fix: a single `threading.Lock` (`_write_lock`) that every write-heavy job
-body (collector runs, topology sync, correlation/incidents, sitescope,
-digitalview) now acquires before touching the database, regardless of
-which job id triggered it. At most one of these jobs is ever actually
-writing at a time; everything else just waits its turn (typically
-seconds) instead of colliding. Scoped to the jobs actually implicated —
-capacity bootstrap and the nightly forecast refit, which run far less
-often, were left untouched.
-
-Verified with a concurrency stress test: every configured collector
-instance fired from its own thread at the same instant (the same shape as
-an automatic run colliding with a manual "Refresh now") produced zero
-errors, with instrumentation confirming the lock held the number of
-truly-concurrent writers to exactly 1 throughout. Full test suite still
-passes with zero regressions.
+Verified three ways: the full suite (480 tests, zero failures, including
+the two export tests that failed before); a cold-boot smoke in mock mode
+that starts the app exactly as `uvicorn` does and calls **no** pipeline
+endpoint — Incidents and Dependencies were populated 1.3 s after startup,
+every collector `success`, worst UI latency 111 ms while the sweep ran;
+and a concurrency stress firing every collector from its own thread at
+once — zero errors, never more than one writer inside the lock.
 
 ## Deploy to a server later
 

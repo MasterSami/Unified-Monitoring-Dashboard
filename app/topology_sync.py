@@ -33,9 +33,16 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.dependency_graph import record_relationship
-from app.entity_resolution import resolve_host_entity
-from app.models import EntityType, RelationshipType, SourcePlatform, TopologyEdge, TopologyNode, TopologySource
+from app.entity_resolution import resolve_hosts_batch
+from app.models import (
+    EntityRelationship,
+    EntityType,
+    RelationshipType,
+    SourcePlatform,
+    TopologyEdge,
+    TopologyNode,
+    TopologySource,
+)
 
 logger = logging.getLogger("topology_sync")
 
@@ -56,43 +63,66 @@ DEFAULT_CONFIDENCE: dict[TopologySource, float] = {
 _DYNATRACE_EDGE_KINDS = ("path",)
 
 
-def _resolve_topology_node(
+def _resolve_nodes_batch(
     db: Session,
-    node: TopologyNode,
+    nodes: list[TopologyNode],
     *,
     platform: SourcePlatform,
     entity_type: EntityType,
-    cache: dict[tuple[str, str], int],
-) -> int | None:
-    """Resolve one TopologyNode to a CanonicalEntity id, cached per sync run.
+) -> dict[tuple[str, str], int | None]:
+    """Resolve every distinct TopologyNode to a CanonicalEntity id, one
+    prefetched batch per source instance.
 
     Reuses app.entity_resolution's generic resolver (Phase 1) — it is not
     host-specific despite the name; only its priority chain (manual mapping
     > CMDB > IP > FQDN > hostname > alias > prior resolution) matters here,
     and a topology node has no IP, so it resolves by hostname/alias, same as
-    any host with no IP would.
+    any host with no IP would. Resolving node-by-node (each call rebuilding
+    its own lookup context) cost half a dozen queries per node — tens of
+    thousands per sync on a real estate; the batch resolver prefetches once.
     """
-    key = (node.source_instance, node.external_id)
-    if key in cache:
-        return cache[key]
-    result = resolve_host_entity(
-        db, platform=platform, instance=node.source_instance,
-        external_id=node.external_id, hostname=node.name or node.external_id,
-        entity_type=entity_type,
-    )
-    cache[key] = result.entity_id
-    return result.entity_id
+    by_instance: dict[str, dict[str, TopologyNode]] = {}
+    for n in nodes:
+        by_instance.setdefault(n.source_instance, {}).setdefault(n.external_id, n)
+    out: dict[tuple[str, str], int | None] = {}
+    for instance, group in by_instance.items():
+        items = [
+            {
+                "external_id": n.external_id,
+                "hostname": n.name or n.external_id,
+                "entity_type": entity_type,
+            }
+            for n in group.values()
+        ]
+        for external_id, result in resolve_hosts_batch(
+            db, platform=platform, instance=instance, items=items,
+        ).items():
+            out[(instance, external_id)] = result.entity_id
+    return out
 
 
-def sync_dynatrace_relationships(db: Session) -> int:
-    """Turn Dynatrace's collected service call graph into CALLS relationships.
-
-    Returns the number of relationships created or updated.
+def _sync_edges(
+    db: Session,
+    *,
+    platform: SourcePlatform,
+    edge_kinds: tuple[str, ...],
+    entity_type: EntityType,
+    source: TopologySource,
+    relationship_type: RelationshipType,
+    reference_prefix: str,
+    evidence,
+) -> int:
+    """Shared body of the two automated sources: load the platform's edges
+    and nodes, resolve the referenced nodes in one batch, then upsert one
+    relationship per edge against a single prefetched map of what this
+    source already recorded — the same (source, source_reference, from, to,
+    type) key ``app.dependency_graph.record_relationship`` uses, without
+    its one-SELECT-per-edge cost.
     """
     edges = db.scalars(
         select(TopologyEdge).where(
-            TopologyEdge.source_platform == SourcePlatform.dynatrace,
-            TopologyEdge.kind.in_(_DYNATRACE_EDGE_KINDS),
+            TopologyEdge.source_platform == platform,
+            TopologyEdge.kind.in_(edge_kinds),
         )
     ).all()
     if not edges:
@@ -101,38 +131,75 @@ def sync_dynatrace_relationships(db: Session) -> int:
     nodes_by_key: dict[tuple[str, str], TopologyNode] = {
         (n.source_instance, n.external_id): n
         for n in db.scalars(
-            select(TopologyNode).where(TopologyNode.source_platform == SourcePlatform.dynatrace)
+            select(TopologyNode).where(TopologyNode.source_platform == platform)
         ).all()
     }
-    cache: dict[tuple[str, str], int] = {}
+    referenced: list[TopologyNode] = []
+    for edge in edges:
+        for ext in (edge.from_external_id, edge.to_external_id):
+            node = nodes_by_key.get((edge.source_instance, ext))
+            if node is not None:
+                referenced.append(node)
+    entity_ids = _resolve_nodes_batch(db, referenced, platform=platform, entity_type=entity_type)
+
+    existing: dict[tuple[str, int, int, RelationshipType], EntityRelationship] = {
+        (r.source_reference, r.from_entity_id, r.to_entity_id, r.relationship_type): r
+        for r in db.scalars(
+            select(EntityRelationship).where(EntityRelationship.source == source)
+        ).all()
+    }
+    confidence = DEFAULT_CONFIDENCE[source]
     written = 0
     for edge in edges:
         from_node = nodes_by_key.get((edge.source_instance, edge.from_external_id))
         to_node = nodes_by_key.get((edge.source_instance, edge.to_external_id))
         if from_node is None or to_node is None:
             continue  # edge references a node this sync can't see — skip, don't guess
-        from_id = _resolve_topology_node(
-            db, from_node, platform=SourcePlatform.dynatrace,
-            entity_type=EntityType.service, cache=cache,
-        )
-        to_id = _resolve_topology_node(
-            db, to_node, platform=SourcePlatform.dynatrace,
-            entity_type=EntityType.service, cache=cache,
-        )
+        from_id = entity_ids.get((edge.source_instance, from_node.external_id))
+        to_id = entity_ids.get((edge.source_instance, to_node.external_id))
         if from_id is None or to_id is None or from_id == to_id:
             continue
-        record_relationship(
-            db,
-            source=TopologySource.dynatrace,
-            relationship_type=RelationshipType.calls,
-            from_entity_id=from_id,
-            to_entity_id=to_id,
-            source_reference=f"dynatrace:{edge.source_instance}:{edge.external_id}",
-            evidence=f"Dynatrace: {from_node.name} calls {to_node.name}"
-                     + (f" ({edge.label})" if edge.label else ""),
-            confidence=DEFAULT_CONFIDENCE[TopologySource.dynatrace],
-        )
+        reference = f"{reference_prefix}:{edge.source_instance}:{edge.external_id}"
+        text = evidence(from_node, to_node, edge)
+        key = (reference, from_id, to_id, relationship_type)
+        row = existing.get(key)
+        if row is not None:
+            row.evidence = text
+            row.confidence = confidence
+        else:
+            row = EntityRelationship(
+                source=source,
+                source_reference=reference,
+                relationship_type=relationship_type,
+                from_entity_id=from_id,
+                to_entity_id=to_id,
+                evidence=text,
+                confidence=confidence,
+            )
+            db.add(row)
+            existing[key] = row
         written += 1
+    db.flush()
+    return written
+
+
+def sync_dynatrace_relationships(db: Session) -> int:
+    """Turn Dynatrace's collected service call graph into CALLS relationships.
+
+    Returns the number of relationships created or updated.
+    """
+    written = _sync_edges(
+        db,
+        platform=SourcePlatform.dynatrace,
+        edge_kinds=_DYNATRACE_EDGE_KINDS,
+        entity_type=EntityType.service,
+        source=TopologySource.dynatrace,
+        relationship_type=RelationshipType.calls,
+        reference_prefix="dynatrace",
+        evidence=lambda f, t, e: (
+            f"Dynatrace: {f.name} calls {t.name}" + (f" ({e.label})" if e.label else "")
+        ),
+    )
     logger.info("dynatrace topology sync: %d relationships", written)
     return written
 
@@ -143,49 +210,16 @@ def sync_nnmi_relationships(db: Session) -> int:
 
     Returns the number of relationships created or updated.
     """
-    edges = db.scalars(
-        select(TopologyEdge).where(
-            TopologyEdge.source_platform == SourcePlatform.nnmi,
-            TopologyEdge.kind == "l2",
-        )
-    ).all()
-    if not edges:
-        return 0
-
-    nodes_by_key: dict[tuple[str, str], TopologyNode] = {
-        (n.source_instance, n.external_id): n
-        for n in db.scalars(
-            select(TopologyNode).where(TopologyNode.source_platform == SourcePlatform.nnmi)
-        ).all()
-    }
-    cache: dict[tuple[str, str], int] = {}
-    written = 0
-    for edge in edges:
-        from_node = nodes_by_key.get((edge.source_instance, edge.from_external_id))
-        to_node = nodes_by_key.get((edge.source_instance, edge.to_external_id))
-        if from_node is None or to_node is None:
-            continue
-        from_id = _resolve_topology_node(
-            db, from_node, platform=SourcePlatform.nnmi,
-            entity_type=EntityType.network_device, cache=cache,
-        )
-        to_id = _resolve_topology_node(
-            db, to_node, platform=SourcePlatform.nnmi,
-            entity_type=EntityType.network_device, cache=cache,
-        )
-        if from_id is None or to_id is None or from_id == to_id:
-            continue
-        record_relationship(
-            db,
-            source=TopologySource.monitoring,
-            relationship_type=RelationshipType.connects_to,
-            from_entity_id=from_id,
-            to_entity_id=to_id,
-            source_reference=f"nnmi:{edge.source_instance}:{edge.external_id}",
-            evidence=f"NNMi L2 connection: {from_node.name} - {to_node.name}",
-            confidence=DEFAULT_CONFIDENCE[TopologySource.monitoring],
-        )
-        written += 1
+    written = _sync_edges(
+        db,
+        platform=SourcePlatform.nnmi,
+        edge_kinds=("l2",),
+        entity_type=EntityType.network_device,
+        source=TopologySource.monitoring,
+        relationship_type=RelationshipType.connects_to,
+        reference_prefix="nnmi",
+        evidence=lambda f, t, e: f"NNMi L2 connection: {f.name} - {t.name}",
+    )
     logger.info("NNMi topology sync: %d relationships", written)
     return written
 

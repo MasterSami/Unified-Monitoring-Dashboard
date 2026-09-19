@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.collectors import BaseCollector, build_collectors
 from app.config import Settings, get_settings
-from app.db import SessionLocal
+from app.db import SessionLocal, write_lock
 from app.models import CollectorRun, RunStatus
 from app.schemas import CollectorStatus
 from app.servers import load_servers
@@ -29,26 +29,14 @@ _JOB_ID = "poll_all_collectors"
 _TOPOLOGY_JOB_ID = "poll_topology"
 _CORRELATION_JOB_ID = "correlate_and_form_incidents"
 
-#: Serializes every write-heavy job body below (collectors, topology,
-#: correlation/incidents, sitescope, digitalview). APScheduler's per-job
-#: ``max_instances=1`` only stops ONE job id from overlapping itself — a
-#: manual trigger (see ``_dispatch``) runs under its own, different job id
-#: (``manual_run_all`` vs. the automatic ``poll_all_collectors``), so
-#: nothing previously stopped it from executing at the same time as an
-#: automatic run already in flight. On a large real estate a single
-#: collector sweep can take minutes, so that gap was real: a "Refresh now"
-#: click (or the correlation/topology/sitescope jobs' own independent
-#: timers) landing mid-sweep produced two genuinely concurrent writers on
-#: SQLite's single-writer database file — surfacing as repeated
-#: ``database is locked`` errors across collectors, topology sync,
-#: correlation, and sitescope/digitalview loads. Acquiring this lock
-#: before any of those jobs touch the database means at most one is ever
-#: actually writing at a time; everything else just waits its turn
-#: (typically seconds, at most the duration of one instance's collection)
-#: instead of colliding. Deliberately scoped to the write-heavy jobs
-#: implicated by that failure — not capacity bootstrap/forecast, which
-#: run far less often and were not part of the observed collision.
-_write_lock = threading.Lock()
+#: How much of each scheduled correlation run is spent taking new events
+#: (what was started is finished), and how many events it stamps per commit.
+#: A bounded slice per run, walking the whole open set in rounds — see
+#: app.correlation_engine.run_correlation_batch — beats one unbounded pass
+#: that on a large estate would hold the write lock for minutes.
+_CORRELATION_TIME_BUDGET_SECONDS = 60.0
+_CORRELATION_BATCH_LIMIT = 2000
+_CORRELATION_CHECKPOINT_EVERY = 25
 
 
 class CollectorService:
@@ -58,6 +46,14 @@ class CollectorService:
         self.settings = settings
         #: instance name -> collector
         self.collectors: dict[str, BaseCollector] = build_collectors(settings)
+        #: Held for the duration of one run_all(). APScheduler's per-job
+        #: ``max_instances=1`` only stops the SAME job id overlapping itself;
+        #: a manual "Refresh now" runs under its own id, so without this it
+        #: started a second full sweep of every instance next to the one the
+        #: interval job was already walking — twice the network load and,
+        #: before the write phases were serialized, the source of every
+        #: ``database is locked`` in the collectors' own log.
+        self._run_all_lock = threading.Lock()
 
     def get(self, instance: str) -> BaseCollector | None:
         """Return the collector for an instance name, if configured."""
@@ -69,23 +65,42 @@ class CollectorService:
         if collector is None:
             logger.warning("unknown instance requested: %s", instance)
             return False
-        with _write_lock:
-            db: Session = SessionLocal()
-            try:
-                collector.run(db)
-            finally:
-                db.close()
+        # No lock here: BaseCollector.run() does all its network I/O first
+        # and takes app.db.write_lock only for its short write phase.
+        db: Session = SessionLocal()
+        try:
+            collector.run(db)
+        finally:
+            db.close()
         return True
 
     def run_all(self) -> None:
-        """Run every configured collector once. Failures are contained."""
-        logger.info("polling %d instance(s): %s", len(self.collectors), list(self.collectors))
-        for instance in list(self.collectors):
-            self.run_one(instance)
-        # Hosts exist now, which is what the capacity bootstrap needs. It
-        # decides for itself whether there is anything to do and runs in its
-        # own job, so a long backfill never holds up the next poll.
-        maybe_bootstrap_capacity()
+        """Run every configured collector once, then correlate what landed.
+        Failures are contained. A trigger arriving while a sweep is already
+        in progress is skipped (the sweep in flight will deliver the same
+        fresh data), not queued behind it.
+        """
+        if not self._run_all_lock.acquire(blocking=False):
+            logger.info("collector poll already in progress; skipping this trigger")
+            return
+        try:
+            logger.info("polling %d instance(s): %s", len(self.collectors), list(self.collectors))
+            for instance in list(self.collectors):
+                self.run_one(instance)
+            # Hosts exist now, which is what the capacity bootstrap needs. It
+            # decides for itself whether there is anything to do and runs in
+            # its own job, so a long backfill never holds up the next poll.
+            maybe_bootstrap_capacity()
+            # Freshly polled events are exactly what there is to correlate, so
+            # the incident pipeline follows every sweep directly — on the very
+            # first sweep after startup this is what fills the Incidents tab
+            # without anyone calling an API by hand. The interval job below
+            # remains as a safety net for events that arrive between sweeps
+            # (SiteScope pushes, trace ingest).
+            if self.settings.enable_incidents:
+                _run_correlation_and_incidents_job()
+        finally:
+            self._run_all_lock.release()
 
     def has_data(self) -> bool:
         """Return True if any collector run has ever been recorded."""
@@ -263,7 +278,7 @@ def _load_sitescope_file(instance: str, path: str) -> None:
         )
         return
 
-    with _write_lock:
+    with write_lock:
         db: Session = SessionLocal()
         try:
             started = datetime.now(timezone.utc)
@@ -366,7 +381,7 @@ def _run_digitalview_job(force: bool = False) -> None:
         return  # same export as last time; nothing to re-read
     _digitalview_stamp = stamp
 
-    with _write_lock:
+    with write_lock:
         db: Session = SessionLocal()
         try:
             started = datetime.now(timezone.utc)
@@ -509,16 +524,43 @@ def run_forecast_now() -> None:
     _run_forecast_job()
 
 
+def _collect_topology_and_sync() -> None:
+    """Rebuild every instance's topology graph, then derive the dependency
+    relationships from it.
+
+    ``run_topology`` fetches each instance over the network with no
+    transaction open and takes ``app.db.write_lock`` only per snapshot
+    replace. The relationship sync (``app.topology_sync.sync_all``) is what
+    the Dependency Graph page and the correlation engine's
+    ``known_dependency`` signal actually read — it used to exist only
+    behind the manual ``POST /api/v1/topology/sync``, so a fresh install
+    showed an empty Dependencies tab and never correlated across topology
+    until someone found that endpoint.
+    """
+    from app.topology_sync import sync_all
+
+    run_topology(get_settings())
+    with write_lock:
+        db: Session = SessionLocal()
+        try:
+            result = sync_all(db)
+            db.commit()
+            logger.info("topology relationship sync: %s", result)
+        except Exception:  # noqa: BLE001 — must never stop the scheduler
+            db.rollback()
+            logger.exception("topology relationship sync failed; the next topology run will retry")
+        finally:
+            db.close()
+
+
 def _run_topology_job() -> None:
-    """Scheduler entry point: rebuild every instance's topology graph."""
-    with _write_lock:
-        run_topology(get_settings())
+    """Scheduler entry point: rebuild topology, then sync relationships."""
+    _collect_topology_and_sync()
 
 
 def run_topology_now() -> None:
-    """Rebuild topology synchronously (used by the manual API trigger)."""
-    with _write_lock:
-        run_topology(get_settings())
+    """Rebuild topology + relationships synchronously (manual API trigger)."""
+    _collect_topology_and_sync()
 
 
 def _run_correlation_and_incidents_job() -> None:
@@ -536,13 +578,29 @@ def _run_correlation_and_incidents_job() -> None:
     """
     from app.correlation_engine import run_correlation_batch
     from app.incident_engine import run_incident_formation
+    from app.models import Correlation, CorrelationStatus
 
-    with _write_lock:
+    with write_lock:
         db: Session = SessionLocal()
         try:
-            correlation_result = run_correlation_batch(db)
+            correlation_result = run_correlation_batch(
+                db,
+                limit=_CORRELATION_BATCH_LIMIT,
+                time_budget_seconds=_CORRELATION_TIME_BUDGET_SECONDS,
+                checkpoint_every=_CORRELATION_CHECKPOINT_EVERY,
+            )
             db.commit()
-            incident_result = run_incident_formation(db)
+            # Every correlation this run created or grew, plus the most
+            # recent ones (the default scope) — so an OLD correlation that
+            # just gained a member is re-formed too, not only the newest N.
+            touched = set(correlation_result.pop("correlation_ids", []))
+            recent = db.scalars(
+                select(Correlation.id)
+                .where(Correlation.status != CorrelationStatus.split)
+                .order_by(Correlation.id.desc())
+                .limit(200)
+            ).all()
+            incident_result = run_incident_formation(db, sorted(touched | set(recent)))
             db.commit()
             logger.info(
                 "correlation/incident background job: %s ; %s", correlation_result, incident_result,
@@ -568,9 +626,10 @@ def _dispatch(job_id: str, func, **kwargs) -> bool:
     second click under the SAME ``job_id`` is absorbed rather than doubled.
     That alone does not stop this manual job from running at the same time
     as a DIFFERENT job (the automatic interval job has its own id, e.g.
-    ``poll_all_collectors`` vs. this call's ``manual_run_all``) — see
-    ``_write_lock`` for what actually prevents that pair, and every other
-    pair of write-heavy jobs, from colliding on the database.
+    ``poll_all_collectors`` vs. this call's ``manual_run_all``) —
+    ``CollectorService.run_all`` skips itself when a sweep is already in
+    flight, and every bulk write phase takes ``app.db.write_lock``, which is
+    what actually keeps any two jobs from colliding on the database.
 
     Returns False when there is no scheduler (tests, or before startup), so the
     caller can fall back to running inline.
@@ -660,7 +719,10 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
             max_instances=1,
             coalesce=True,
             replace_existing=True,
-            next_run_time=datetime.now() + timedelta(minutes=1),
+            # The first startup sweep chains into this job itself (see
+            # CollectorService.run_all), so the interval copy need not race
+            # the collectors a minute in — it starts one interval later.
+            next_run_time=datetime.now() + timedelta(minutes=corr_minutes),
         )
         logger.info("correlation/incident background job enabled; running every %d minute(s)", corr_minutes)
 

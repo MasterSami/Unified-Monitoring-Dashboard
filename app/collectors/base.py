@@ -124,13 +124,20 @@ class BaseCollector(abc.ABC):
     def collect_alerts(self) -> list[dict]:
         """Return normalized alert dicts. Must raise on unrecoverable failure."""
 
-    def collect_resolved_alerts(self) -> list[dict]:
+    def collect_resolved_alerts(self, since: datetime | None = None) -> list[dict]:
         """Return RESOLVED alerts from the source tool's history (best-effort).
 
         Default: none. Collectors that can query historical/closed alerts
         (Zabbix events, Dynatrace closed problems) override this so the Alerts
         "Resolved" view holds real history, not just what happened to resolve
         while the dashboard was running. Failures here must never break a run.
+
+        ``since`` is when this collector last backfilled successfully (None on
+        the first run of the process). Overrides use it to scan only what can
+        have changed since — the first backfill walks the whole configured
+        window, every later one just the last hour or so, which on a busy
+        instance is the difference between re-fetching and re-writing tens of
+        thousands of rows every hour and a few hundred.
         """
         return []
 
@@ -142,66 +149,90 @@ class BaseCollector(abc.ABC):
         Never raises: any exception is caught, logged, and persisted on the
         :class:`CollectorRun` row so one instance's failure cannot affect
         others or the web UI.
+
+        Two strictly separated phases. First every network call (hosts,
+        alerts, and — when due — resolved history) runs with NO database
+        transaction open. Only then is the whole result written, under
+        :data:`app.db.write_lock`, in one short transaction. The previous
+        shape (upsert hosts + alerts, THEN fetch history, THEN upsert it,
+        one commit at the end) held SQLite's single write lock across a
+        network round trip that on a busy Zabbix takes most of a minute —
+        long enough for every other job (topology, correlation, the SiteScope
+        load, a second collector) to time out with ``database is locked``.
         """
         self.notes = None
         started = datetime.now(timezone.utc)
+
+        # --- Phase 1: talk to the monitoring tool (no DB) -------------------
         try:
             self.logger.info("starting collection")
             hosts = self.collect_hosts()
             alerts = self.collect_alerts()
-
-            host_count = upsert_hosts(db, self.platform, hosts, self.instance)
-            alert_count = upsert_alerts(db, self.platform, alerts, self.instance)
-
-            # Resolved-alert history backfill — best-effort, never fails a run,
-            # and throttled so it doesn't re-scan history every poll cycle
-            # (that's the expensive, write-heavy part).
-            if self._should_backfill_history():
-                try:
-                    resolved = self.collect_resolved_alerts()
-                    if resolved:
-                        from app.normalizer import upsert_resolved_alerts
-
-                        added = upsert_resolved_alerts(
-                            db, self.platform, resolved, self.instance
-                        )
-                        if added:
-                            self.logger.info(
-                                "backfilled %d resolved alerts from history", added
-                            )
-                    self._last_history_backfill = datetime.now(timezone.utc)
-                except Exception as exc:  # noqa: BLE001 — history is optional
-                    self.logger.warning("resolved-alert backfill failed: %s", exc)
-
-            run = CollectorRun(
-                platform=self.name,
-                instance=self.instance,
-                started_at=started,
-                finished_at=datetime.now(timezone.utc),
-                status=RunStatus.success,
-                items_collected=host_count + alert_count,
-                hosts_collected=host_count,
-                alerts_collected=alert_count,
-                error_message=self.notes,
-            )
-            db.add(run)
-            db.commit()
-            self.logger.info(
-                "collection complete: %d hosts, %d alerts", host_count, alert_count
-            )
         except Exception as exc:  # noqa: BLE001 — contained by design
-            db.rollback()
-            run = CollectorRun(
-                platform=self.name,
-                instance=self.instance,
-                started_at=started,
-                finished_at=datetime.now(timezone.utc),
-                status=RunStatus.failed,
-                items_collected=0,
-                error_message=str(exc)[:2048],
-            )
+            self.logger.exception("collection failed: %s", exc)
+            return self._record_failed_run(db, started, exc)
+
+        resolved: list[dict] = []
+        backfill_due = self._should_backfill_history()
+        if backfill_due:
+            try:
+                resolved = self.collect_resolved_alerts(since=self._last_history_backfill)
+            except Exception as exc:  # noqa: BLE001 — history is optional
+                backfill_due = False
+                self.logger.warning("resolved-alert backfill failed: %s", exc)
+
+        # --- Phase 2: write everything, briefly, under the shared lock ------
+        from app.db import write_lock
+
+        with write_lock:
+            try:
+                host_count = upsert_hosts(db, self.platform, hosts, self.instance)
+                alert_count = upsert_alerts(db, self.platform, alerts, self.instance)
+                if resolved:
+                    from app.normalizer import upsert_resolved_alerts
+
+                    added = upsert_resolved_alerts(db, self.platform, resolved, self.instance)
+                    if added:
+                        self.logger.info("backfilled %d resolved alerts from history", added)
+                run = CollectorRun(
+                    platform=self.name,
+                    instance=self.instance,
+                    started_at=started,
+                    finished_at=datetime.now(timezone.utc),
+                    status=RunStatus.success,
+                    items_collected=host_count + alert_count,
+                    hosts_collected=host_count,
+                    alerts_collected=alert_count,
+                    error_message=self.notes,
+                )
+                db.add(run)
+                db.commit()
+            except Exception as exc:  # noqa: BLE001 — contained by design
+                db.rollback()
+                self.logger.exception("collection failed: %s", exc)
+                return self._record_failed_run(db, started, exc)
+
+        if backfill_due:
+            # Only advance the window once the history actually landed — a
+            # failed write must make the next due run re-scan the same span.
+            self._last_history_backfill = datetime.now(timezone.utc)
+        self.logger.info("collection complete: %d hosts, %d alerts", host_count, alert_count)
+        return run
+
+    def _record_failed_run(self, db: Session, started: datetime, exc: Exception) -> CollectorRun:
+        run = CollectorRun(
+            platform=self.name,
+            instance=self.instance,
+            started_at=started,
+            finished_at=datetime.now(timezone.utc),
+            status=RunStatus.failed,
+            items_collected=0,
+            error_message=str(exc)[:2048],
+        )
+        try:
             db.add(run)
             db.commit()
-            self.logger.exception("collection failed: %s", exc)
-
+        except Exception:  # noqa: BLE001 — recording the failure must not raise either
+            db.rollback()
+            self.logger.exception("could not record the failed run")
         return run

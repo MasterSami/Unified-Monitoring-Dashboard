@@ -435,15 +435,33 @@ def upsert_alerts(
     seen_external_ids: set[str] = set()
     touched_rows: list[Alert] = []
 
+    # Only the instance's OPEN rows need reconciling, plus any row whose
+    # external_id this run reports again (a resolved episode the source has
+    # re-raised under the same id is reopened in place, as before). Loading
+    # every row for the instance — including the resolved history, which on
+    # a busy Zabbix is tens of thousands of rows — was the single biggest
+    # cost of a poll, paid every five minutes for nothing.
     existing = {
         a.external_id: a
         for a in db.scalars(
             select(Alert).where(
                 Alert.source_platform == platform,
                 Alert.source_instance == instance,
+                Alert.resolved.is_(False),
             )
         ).all()
     }
+    reported_ids = [str(item["external_id"]) for item in alerts]
+    missing = [eid for eid in set(reported_ids) if eid not in existing]
+    for i in range(0, len(missing), 500):
+        for a in db.scalars(
+            select(Alert).where(
+                Alert.source_platform == platform,
+                Alert.source_instance == instance,
+                Alert.external_id.in_(missing[i : i + 500]),
+            )
+        ).all():
+            existing[a.external_id] = a
     by_external_id, by_hostname = _lookup_hosts_for_alerts(db, platform, instance, alerts)
 
     for item in alerts:
@@ -563,6 +581,14 @@ def upsert_resolved_alerts(
             db.add(row)
             existing[external_id] = row
             inserted += 1
+        elif row.resolved:
+            # Already stored as resolved history: a closed episode never
+            # changes again, so re-writing every field (and re-running the
+            # logical-event recompute) for each of the tens of thousands of
+            # rows a full-window scan returns is pure cost. Only a row that
+            # was still OPEN when history caught up with it (the Dynatrace
+            # case below) needs updating in place.
+            continue
         sev = int(item.get("severity_int", 1))
         row.severity_int = sev
         row.severity_label = item.get("severity_label") or severity_label(sev)

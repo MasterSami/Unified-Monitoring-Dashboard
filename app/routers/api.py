@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import secrets
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -22,7 +22,7 @@ from app.audit import record_audit
 from app.config import Settings, get_settings
 from app.correlation_engine import correlate_pair, run_correlation_batch, run_correlation_for_event
 from app.correlation_rules import create_rule, get_weights, list_rules, set_weight
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
 from app.incident_engine import build_timeline, merge_incidents, run_incident_formation, split_incident
@@ -890,6 +890,7 @@ def run_correlation(
         }
     result = run_correlation_batch(db)
     db.commit()
+    result.pop("correlation_ids", None)  # bookkeeping for the scheduler, not API payload
     return result
 
 
@@ -1374,7 +1375,9 @@ def list_servers(settings: Settings = Depends(get_settings)) -> list[ServerRefOu
 
 
 def _csv_response(
-    filename: str, header: list[str], rows: Iterable[Sequence[object]]
+    filename: str,
+    header: list[str],
+    rows: Iterable[Sequence[object]] | Callable[[Session], Iterable[Sequence[object]]],
 ) -> StreamingResponse:
     """Stream rows out as a downloadable CSV.
 
@@ -1383,20 +1386,33 @@ def _csv_response(
     ``iter([whole_string])`` — a StreamingResponse in name only, which meant the
     export lived in memory three times over (ORM rows, list of lists, and the
     joined string) before the first byte reached the client.
+
+    Pass a callable taking a Session when the rows come from a query: the
+    body is produced AFTER the request handler has returned, by which point
+    FastAPI has already closed the request-scoped ``get_db`` session, so a
+    generator bound to that session dies mid-stream ("identity map is no
+    longer valid"). The callable is invoked against a session this response
+    owns and closes itself when the stream ends.
     """
 
     def chunks():
-        buf = io.StringIO()
-        writer = csv.writer(buf)
-        writer.writerow(header)
-        for row in rows:
-            writer.writerow(row)
-            if buf.tell() > 64_000:
+        own_session = SessionLocal() if callable(rows) else None
+        try:
+            source = rows(own_session) if own_session is not None else rows
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(header)
+            for row in source:
+                writer.writerow(row)
+                if buf.tell() > 64_000:
+                    yield buf.getvalue()
+                    buf.seek(0)
+                    buf.truncate(0)
+            if buf.tell():
                 yield buf.getvalue()
-                buf.seek(0)
-                buf.truncate(0)
-        if buf.tell():
-            yield buf.getvalue()
+        finally:
+            if own_session is not None:
+                own_session.close()
 
     return StreamingResponse(
         chunks(),
@@ -1438,20 +1454,23 @@ def export_hosts_csv(
             | func.lower(func.coalesce(Host.source_instance, "")).like(like)
         )
     stmt = stmt.order_by(Host.hostname.asc())
+
     # Generator + unbuffered iteration: rows are written to the response as the
     # cursor yields them, so the whole export never sits in memory at once.
-    rows = (
-        [
-            h.hostname,
-            h.ip or "",
-            h.source_platform.value,
-            h.source_instance,
-            h.status.value,
-            h.group_name or "",
-            h.last_seen.isoformat() if h.last_seen else "",
-        ]
-        for h in db.scalars(stmt)
-    )
+    def rows(session: Session):
+        return (
+            [
+                h.hostname,
+                h.ip or "",
+                h.source_platform.value,
+                h.source_instance,
+                h.status.value,
+                h.group_name or "",
+                h.last_seen.isoformat() if h.last_seen else "",
+            ]
+            for h in session.scalars(stmt)
+        )
+
     return _csv_response(
         "hosts.csv",
         ["hostname", "ip", "platform", "instance", "status", "group", "last_seen"],
@@ -1480,22 +1499,24 @@ def export_capacity_csv(
     stmt = _hosts_stmt(q, platform, status, instance, group).order_by(
         Host.hostname.asc()
     )
-    rows = (
-        [
-            h.hostname,
-            h.ip or "",
-            h.source_platform.value,
-            h.source_instance,
-            h.group_name or "",
-            "" if h.cpu_pct is None else h.cpu_pct,
-            "" if h.mem_pct is None else h.mem_pct,
-            "" if h.disk_pct is None else h.disk_pct,
-            (h.metrics or {}).get("cores", ""),
-            (h.metrics or {}).get("mem_total_gb", ""),
-            h.status.value,
-        ]
-        for h in db.scalars(stmt)
-    )
+    def rows(session: Session):
+        return (
+            [
+                h.hostname,
+                h.ip or "",
+                h.source_platform.value,
+                h.source_instance,
+                h.group_name or "",
+                "" if h.cpu_pct is None else h.cpu_pct,
+                "" if h.mem_pct is None else h.mem_pct,
+                "" if h.disk_pct is None else h.disk_pct,
+                (h.metrics or {}).get("cores", ""),
+                (h.metrics or {}).get("mem_total_gb", ""),
+                h.status.value,
+            ]
+            for h in session.scalars(stmt)
+        )
+
     return _csv_response(
         "capacity.csv",
         [
@@ -1537,19 +1558,21 @@ def export_alerts_csv(
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()
     )
-    rows = (
-        [
-            a.severity_int,
-            a.severity_label,
-            a.title,
-            a.source_platform.value,
-            a.source_instance,
-            a.host_hostname or "",
-            a.started_at.isoformat() if a.started_at else "",
-            "resolved" if a.resolved else "active",
-        ]
-        for a in db.scalars(stmt)
-    )
+    def rows(session: Session):
+        return (
+            [
+                a.severity_int,
+                a.severity_label,
+                a.title,
+                a.source_platform.value,
+                a.source_instance,
+                a.host_hostname or "",
+                a.started_at.isoformat() if a.started_at else "",
+                "resolved" if a.resolved else "active",
+            ]
+            for a in session.scalars(stmt)
+        )
+
     return _csv_response(
         "alerts.csv",
         [

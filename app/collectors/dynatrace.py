@@ -8,7 +8,7 @@ alerts feed is marked unavailable and collection continues.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.collectors.base import BaseCollector, CollectorError
 from app.collectors import mock_data
@@ -512,20 +512,29 @@ class DynatraceCollector(BaseCollector):
                 )
         return alerts
 
-    def collect_resolved_alerts(self) -> list[dict]:
+    def collect_resolved_alerts(self, since: datetime | None = None) -> list[dict]:
         """Closed problems from the last ALERT_HISTORY_DAYS days (Problems v2).
 
         Same problemId as the live path, so a problem that was previously active
         is updated in place (marked resolved) rather than duplicated. A 403
         (no problems.read) degrades to an empty list, like collect_alerts.
+
+        With ``since`` (the previous successful backfill) the window starts a
+        couple of hours before it instead of the full configured span.
         """
         if self.settings.mock_mode:
             return []
         days = max(1, int(self.settings.alert_history_days))
         url = f"{self._base}/api/v2/problems"
+        window_from: str = f"now-{days}d"
+        if since is not None:
+            window_start = datetime.now(timezone.utc) - timedelta(days=days)
+            incremental_start = since - timedelta(hours=2)
+            if incremental_start > window_start:
+                window_from = str(int(incremental_start.timestamp() * 1000))
         params: dict[str, str] = {
             "problemSelector": 'status("CLOSED")',
-            "from": f"now-{days}d",
+            "from": window_from,
             "pageSize": "500",
         }
         alerts: list[dict] = []

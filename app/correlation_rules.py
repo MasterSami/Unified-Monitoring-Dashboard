@@ -119,6 +119,41 @@ def priority_tier_for_conditions(merged: dict) -> int:
     return min(tiers) if tiers else 5
 
 
+#: Seeded once, on a database that has no rules at all, so a fresh install
+#: forms incidents from real data without someone first learning the rule
+#: API. Each passes validate_rule_conditions on its own merits (one strong
+#: signal + a bounded window); operators can edit or disable them like any
+#: other rule and they are never re-seeded over a non-empty table.
+DEFAULT_RULES: list[dict] = [
+    {
+        "rule_id": "SAMIX-SAME-TRACE",
+        "name": "Same distributed trace",
+        "conditions": [{"signals": ["same_trace"]}, {"time_window_seconds": 600}],
+    },
+    {
+        "rule_id": "SAMIX-KNOWN-DEPENDENCY",
+        "name": "Related through a known dependency (topology)",
+        "conditions": [{"signals": ["known_dependency"]}, {"time_window_seconds": 1800}],
+    },
+    {
+        "rule_id": "SAMIX-SAME-ENTITY",
+        "name": "Multiple problems on the same entity",
+        "conditions": [{"signals": ["same_entity"]}, {"time_window_seconds": 1800}],
+    },
+]
+
+
+def ensure_default_rules(db: Session) -> int:
+    """Create :data:`DEFAULT_RULES` if — and only if — no rule exists yet.
+    Returns how many were created (0 on every later call)."""
+    if db.scalar(select(CorrelationRule.id).limit(1)) is not None:
+        return 0
+    for spec in DEFAULT_RULES:
+        create_rule(db, **spec)
+    db.flush()
+    return len(DEFAULT_RULES)
+
+
 def create_rule(
     db: Session,
     *,

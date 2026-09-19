@@ -553,7 +553,15 @@ def _replace_graph(
 
 
 def run_topology(settings: Settings) -> None:
-    """Collect topology for every configured NNMi / Dynatrace instance."""
+    """Collect topology for every configured NNMi / Dynatrace instance.
+
+    Each instance is fetched over the network with no transaction open, and
+    only the snapshot replace itself runs under :data:`app.db.write_lock` —
+    the fetch is the slow part (Dynatrace pages through thousands of
+    entities) and must never hold SQLite's single write lock.
+    """
+    from app.db import write_lock
+
     db = SessionLocal()
     try:
         for cfg in load_servers(settings):
@@ -566,7 +574,8 @@ def run_topology(settings: Settings) -> None:
                     platform = SourcePlatform.dynatrace
                 else:
                     continue
-                _replace_graph(db, platform, cfg.name, nodes, edges)
+                with write_lock:
+                    _replace_graph(db, platform, cfg.name, nodes, edges)
                 logger.info(
                     "topology %s: %d nodes, %d edges", cfg.name, len(nodes), len(edges)
                 )

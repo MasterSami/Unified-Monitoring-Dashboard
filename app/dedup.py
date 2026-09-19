@@ -111,13 +111,18 @@ def record_occurrences_batch(db: Session, alerts: list[Alert]) -> None:
 def _recompute_logical_events(db: Session, logical_event_ids: set[int]) -> None:
     if not logical_event_ids:
         return
-    rows = db.scalars(
-        select(LogicalEvent).where(LogicalEvent.id.in_(logical_event_ids))
-    ).all()
+    ids = sorted(logical_event_ids)
+    rows: list[LogicalEvent] = []
+    occurrences_by_event: dict[int, list[Alert]] = {}
+    # Chunked IN() loads (SQLite's bound-parameter cap) instead of one SELECT
+    # per touched logical event: a history backfill touches thousands at once.
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        rows.extend(db.scalars(select(LogicalEvent).where(LogicalEvent.id.in_(chunk))).all())
+        for o in db.scalars(select(Alert).where(Alert.logical_event_id.in_(chunk))).all():
+            occurrences_by_event.setdefault(o.logical_event_id, []).append(o)
     for le in rows:
-        occurrences = list(
-            db.scalars(select(Alert).where(Alert.logical_event_id == le.id)).all()
-        )
+        occurrences = occurrences_by_event.get(le.id, [])
         if not occurrences:
             # Its only occurrence(s) moved to a different fingerprint —
             # nothing left to group. Not "resolved" (nothing happened to a

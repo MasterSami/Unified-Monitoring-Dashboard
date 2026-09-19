@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.correlation_rules import (
@@ -128,11 +128,52 @@ def _occurrences(db: Session, event: LogicalEvent) -> list[Alert]:
     return list(db.scalars(select(Alert).where(Alert.logical_event_id == event.id)).all())
 
 
+#: Per-batch memo for the read-only lookups compute_signals repeats for the
+#: same event/entity across every candidate pair: an event's occurrences,
+#: an entity's host, and the relationships touching an entity. Keyed
+#: ("occ", event_id) / ("host", entity_id) / ("rels", entity_id). None of
+#: these change while one batch runs (the batch writes correlations, never
+#: alerts or topology), so sharing one dict across the whole batch is safe
+#: and turns ~4 queries per pair into ~1 on the pairs that matter.
+SignalCache = dict
+
+
+def _cached_occurrences(db: Session, event: LogicalEvent, cache: SignalCache | None) -> list[Alert]:
+    if cache is None:
+        return _occurrences(db, event)
+    key = ("occ", event.id)
+    if key not in cache:
+        cache[key] = _occurrences(db, event)
+    return cache[key]
+
+
+def _cached_relationships(
+    db: Session, entity_id: int, cache: SignalCache | None,
+) -> list[EntityRelationship]:
+    """Every EntityRelationship with ``entity_id`` on either end, id order."""
+    def load() -> list[EntityRelationship]:
+        return list(db.scalars(
+            select(EntityRelationship)
+            .where(or_(
+                EntityRelationship.from_entity_id == entity_id,
+                EntityRelationship.to_entity_id == entity_id,
+            ))
+            .order_by(EntityRelationship.id.asc())
+        ).all())
+
+    if cache is None:
+        return load()
+    key = ("rels", entity_id)
+    if key not in cache:
+        cache[key] = load()
+    return cache[key]
+
+
 def _entity(db: Session, entity_id: int | None) -> CanonicalEntity | None:
     return db.get(CanonicalEntity, entity_id) if entity_id is not None else None
 
 
-def _host_of(db: Session, entity: CanonicalEntity | None) -> int | None:
+def _host_of(db: Session, entity: CanonicalEntity | None, cache: SignalCache | None = None) -> int | None:
     """The host entity_id underneath ``entity`` — itself if it already is a
     host, else the far end of a direct HOSTED_ON edge, else None.
     """
@@ -140,13 +181,19 @@ def _host_of(db: Session, entity: CanonicalEntity | None) -> int | None:
         return None
     if entity.entity_type == EntityType.host:
         return entity.id
+    key = ("host", entity.id)
+    if cache is not None and key in cache:
+        return cache[key]
     rel = db.scalars(
         select(EntityRelationship).where(
             EntityRelationship.from_entity_id == entity.id,
             EntityRelationship.relationship_type == RelationshipType.hosted_on,
         )
     ).first()
-    return rel.to_entity_id if rel else None
+    host_id = rel.to_entity_id if rel else None
+    if cache is not None:
+        cache[key] = host_id
+    return host_id
 
 
 def event_type_tag(db: Session, event: LogicalEvent) -> str:
@@ -174,13 +221,19 @@ def time_delta_seconds(a: LogicalEvent, b: LogicalEvent) -> float | None:
     return abs((aware(ta) - aware(tb)).total_seconds())
 
 
-def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[SignalHit]:
+def compute_signals(
+    db: Session, a: LogicalEvent, b: LogicalEvent, cache: SignalCache | None = None,
+) -> list[SignalHit]:
     """Every non-temporal signal that holds between ``a`` and ``b``.
 
     temporal_relationship is deliberately excluded here — whether it
     "counts" depends on a specific rule's own time_window_seconds (the task:
     "the time window must be rule-specific"), so it is resolved per-rule in
     :func:`evaluate_rule`, not once per pair.
+
+    ``cache`` (see :data:`SignalCache`) lets a batch reuse the occurrence,
+    host and relationship lookups across every pair sharing an event or
+    entity; omitted, each call queries for itself exactly as before.
     """
     hits: list[SignalHit] = []
     entity_a, entity_b = _entity(db, a.entity_id), _entity(db, b.entity_id)
@@ -190,7 +243,7 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
     #: querying them three times per event was pure overhead, not a
     #: correctness need. Matters at real-world scale: run_correlation_batch
     #: can evaluate thousands of pairs per run.
-    occ_a, occ_b = _occurrences(db, a), _occurrences(db, b)
+    occ_a, occ_b = _cached_occurrences(db, a, cache), _cached_occurrences(db, b, cache)
 
     if a.entity_id is not None and a.entity_id == b.entity_id:
         hits.append(SignalHit(
@@ -198,7 +251,7 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
             "phase1", SIGNAL_PRIORITY_TIER[CorrelationSignal.same_entity], a.entity_id,
         ))
     else:
-        host_a, host_b = _host_of(db, entity_a), _host_of(db, entity_b)
+        host_a, host_b = _host_of(db, entity_a, cache), _host_of(db, entity_b, cache)
         if host_a is not None and host_a == host_b:
             host_entity = _entity(db, host_a)
             hits.append(SignalHit(
@@ -248,16 +301,10 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
         ))
 
     if a.entity_id is not None and b.entity_id is not None and a.entity_id != b.entity_id:
-        rels = db.scalars(
-            select(EntityRelationship).where(
-                or_(
-                    and_(EntityRelationship.from_entity_id == a.entity_id,
-                         EntityRelationship.to_entity_id == b.entity_id),
-                    and_(EntityRelationship.from_entity_id == b.entity_id,
-                         EntityRelationship.to_entity_id == a.entity_id),
-                )
-            )
-        ).all()
+        rels = [
+            rel for rel in _cached_relationships(db, a.entity_id, cache)
+            if {rel.from_entity_id, rel.to_entity_id} == {a.entity_id, b.entity_id}
+        ]
         for rel in rels:
             tier = 2 if rel.source in _EXPLICIT_TOPOLOGY_SOURCES else 3
             hits.append(SignalHit(
@@ -453,6 +500,7 @@ def _persist_correlation(
 def correlate_pair(
     db: Session, event_a_id: int, event_b_id: int,
     *, rules: list[CorrelationRule] | None = None, weights: dict[CorrelationSignal, float] | None = None,
+    cache: SignalCache | None = None,
 ) -> CorrelationOutcome:
     """Evaluate whether two LogicalEvents should be correlated, and persist
     the result if so. Always explainable — see :class:`CorrelationOutcome`.
@@ -473,7 +521,7 @@ def correlate_pair(
     if a is None or b is None:
         return CorrelationOutcome(correlated=False, reason="one or both events not found")
 
-    base_hits = compute_signals(db, a, b)
+    base_hits = compute_signals(db, a, b, cache)
     delta = time_delta_seconds(a, b)
     if weights is None:
         weights = get_weights(db)
@@ -598,6 +646,7 @@ def find_candidate_events(db: Session, event: LogicalEvent, *, window_seconds: i
 def run_correlation_for_event(
     db: Session, event_id: int,
     *, rules: list[CorrelationRule] | None = None, weights: dict[CorrelationSignal, float] | None = None,
+    cache: SignalCache | None = None,
 ) -> list[CorrelationOutcome]:
     """Evaluate one LogicalEvent against every candidate worth checking.
     Returns every outcome (correlated or not), most useful for tests/API
@@ -624,10 +673,14 @@ def run_correlation_for_event(
         weights = get_weights(db)
     if rules is None:
         rules = list_rules(db, enabled_only=True)
+    if cache is None:
+        cache = {}
     outcomes = []
     for candidate in find_candidate_events(db, event):
         try:
-            outcomes.append(correlate_pair(db, event.id, candidate.id, rules=rules, weights=weights))
+            outcomes.append(correlate_pair(
+                db, event.id, candidate.id, rules=rules, weights=weights, cache=cache,
+            ))
         except Exception:  # noqa: BLE001 — contained by design, see docstring
             logger.exception(
                 "correlate_pair failed for event pair (%s, %s)", event.id, candidate.id,
@@ -636,12 +689,31 @@ def run_correlation_for_event(
     return outcomes
 
 
-def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, limit: int = 200) -> dict:
-    """Run correlation for a batch of events (default: the most recently
-    touched non-resolved LogicalEvents, capped at ``limit``). Returns a
-    summary, not the full per-pair detail — use run_correlation_for_event
-    for that. Records ``correlation_duration_seconds`` (the task's
-    ``average_processing_time`` metric) for the whole batch.
+def run_correlation_batch(
+    db: Session,
+    event_ids: list[int] | None = None,
+    *,
+    limit: int = 200,
+    time_budget_seconds: float | None = None,
+    checkpoint_every: int | None = None,
+) -> dict:
+    """Run correlation for a batch of events. Returns a summary, not the
+    full per-pair detail — use run_correlation_for_event for that. Records
+    ``correlation_duration_seconds`` (the task's ``average_processing_time``
+    metric) for the whole batch.
+
+    Default scope (``event_ids`` omitted): up to ``limit`` non-resolved
+    LogicalEvents, never-evaluated ones first, then the least recently
+    evaluated (``LogicalEvent.correlated_at``), newest activity first within
+    each. Every processed event is stamped, so successive runs walk through
+    the ENTIRE open set in rounds — the old "newest 200 by last_seen"
+    scope re-picked the same 200 every run on a busy estate and never
+    reached the rest.
+
+    ``time_budget_seconds`` stops taking new events once exceeded (what was
+    started is finished), so a scheduled run stays bounded on any estate;
+    ``checkpoint_every`` commits after that many events so a long run never
+    holds one open write transaction for its whole duration.
 
     Rules and weights are fetched once for the whole batch (a consistent
     snapshot for every pair this run touches) rather than once per pair —
@@ -654,22 +726,47 @@ def run_correlation_batch(db: Session, event_ids: list[int] | None = None, *, li
             db.scalars(
                 select(LogicalEvent.id)
                 .where(LogicalEvent.status != LogicalEventStatus.resolved)
-                .order_by(LogicalEvent.last_seen.desc().nullslast())
+                .order_by(
+                    LogicalEvent.correlated_at.asc().nullsfirst(),
+                    LogicalEvent.last_seen.desc().nullslast(),
+                )
                 .limit(limit)
             ).all()
         )
     rules = list_rules(db, enabled_only=True)
     weights = get_weights(db)
+    cache: SignalCache = {}
     evaluated = 0
     correlated = 0
+    processed = 0
+    correlation_ids: set[int] = set()
     for eid in event_ids:
-        for outcome in run_correlation_for_event(db, eid, rules=rules, weights=weights):
+        if (
+            time_budget_seconds is not None
+            and processed
+            and time.perf_counter() - started > time_budget_seconds
+        ):
+            break
+        for outcome in run_correlation_for_event(db, eid, rules=rules, weights=weights, cache=cache):
             evaluated += 1
             if outcome.correlated:
                 correlated += 1
+                if outcome.correlation_id is not None:
+                    correlation_ids.add(outcome.correlation_id)
+        event = db.get(LogicalEvent, eid)
+        if event is not None:
+            event.correlated_at = datetime.now(timezone.utc)
+        processed += 1
+        if checkpoint_every and processed % checkpoint_every == 0:
+            db.commit()
     record_duration(db, "correlation_duration_seconds", time.perf_counter() - started)
     logger.info(
         "correlation batch: %d event(s), %d pair(s) evaluated, %d correlated",
-        len(event_ids), evaluated, correlated,
+        processed, evaluated, correlated,
     )
-    return {"events_processed": len(event_ids), "pairs_evaluated": evaluated, "pairs_correlated": correlated}
+    return {
+        "events_processed": processed,
+        "pairs_evaluated": evaluated,
+        "pairs_correlated": correlated,
+        "correlation_ids": sorted(correlation_ids),
+    }

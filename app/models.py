@@ -888,6 +888,15 @@ class LogicalEvent(Base):
     title: Mapped[str] = mapped_column(String(512), default="")
     current_severity_int: Mapped[int] = mapped_column(Integer, default=1)
     current_severity_label: Mapped[str] = mapped_column(String(32), default="info")
+    #: When app.correlation_engine.run_correlation_batch last evaluated this
+    #: event against its candidates (None = never). The batch orders by this
+    #: (never-evaluated first, then least recently evaluated) so successive
+    #: runs cycle through every open event rather than re-picking the same
+    #: newest N forever on a busy estate. Bookkeeping only — never a
+    #: correlation decision input.
+    correlated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow

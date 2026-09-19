@@ -38,6 +38,21 @@ async def lifespan(app: FastAPI):
     )
     init_db()
 
+    # A brand-new database gets the default correlation rules so the first
+    # poll can already form incidents; a database that has any rule at all
+    # (edited, disabled, or custom) is left exactly as the operator set it.
+    from app.correlation_rules import ensure_default_rules
+    from app.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        seeded = ensure_default_rules(db)
+        db.commit()
+        if seeded:
+            logger.info("seeded %d default correlation rule(s)", seeded)
+    finally:
+        db.close()
+
     # Build collectors and start the scheduler. The scheduler fires an initial
     # run immediately (in the background) on every startup — so fresh data is
     # collected whether or not the DB already has rows — then repeats on the

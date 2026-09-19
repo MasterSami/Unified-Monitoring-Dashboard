@@ -6,6 +6,7 @@ same code runs against SQLite (POC) and PostgreSQL (server deploy).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -53,11 +54,28 @@ if _is_sqlite:
         cur = dbapi_conn.cursor()
         try:
             cur.execute("PRAGMA journal_mode=WAL")
-            cur.execute("PRAGMA busy_timeout=8000")  # ms
+            # Writers-vs-writer waits are short now that every bulk write
+            # phase (collectors, topology, correlation, file ingests) runs
+            # under ``write_lock`` and never spans a network fetch — so a
+            # generous timeout only ever covers the brief tail of one
+            # transaction committing, never a multi-minute stall.
+            cur.execute("PRAGMA busy_timeout=30000")  # ms
             cur.execute("PRAGMA synchronous=NORMAL")
             cur.execute("PRAGMA foreign_keys=ON")
         finally:
             cur.close()
+
+
+#: Process-wide serializer for BULK write phases (a collector's upserts, a
+#: topology snapshot replace, the correlation/incident batch, a SiteScope or
+#: Digital View file load). SQLite allows exactly one writer at a time; two
+#: multi-thousand-row transactions overlapping is what surfaces as
+#: ``database is locked``. Holding this lock ONLY while writing — never while
+#: talking to Zabbix/Dynatrace/NNMi — keeps the slow network parts of every
+#: job running in parallel and makes the serialized part seconds, not
+#: minutes. Small per-request writes (feedback, a manual mapping) do not take
+#: it; ``busy_timeout`` above comfortably covers those against a bulk phase.
+write_lock = threading.Lock()
 
 SessionLocal = sessionmaker(
     bind=engine,
@@ -176,6 +194,12 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         # real root cause (app/models.py IncidentFeedback).
         "confirmed_root_cause_entity_id": "INTEGER",
     },
+    "logical_events": {
+        # When the correlation batch last evaluated this event, so successive
+        # runs cycle through EVERY open event instead of re-picking the same
+        # newest 200 forever (app/correlation_engine.run_correlation_batch).
+        "correlated_at": "DATETIME",
+    },
 }
 
 
@@ -246,6 +270,10 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     ("ix_logical_events_entity_id", "logical_events", "(entity_id)"),
     ("ix_logical_events_status", "logical_events", "(status)"),
     ("ix_logical_events_last_seen", "logical_events", "(last_seen)"),
+    ("ix_logical_events_correlated_at", "logical_events", "(correlated_at)"),
+    # Collector reconciliation loads only an instance's OPEN alerts each poll
+    # (the resolved history can be 10x larger and never needs reconciling).
+    ("ix_alerts_instance_resolved", "alerts", "(source_platform, source_instance, resolved)"),
     # Correlation Phase 3: dependency graph traversal (app/dependency_graph.py)
     # walks from_entity_id (upstream) and to_entity_id (downstream) for one
     # entity at a time, filtered by relationship_type — this is the composite
