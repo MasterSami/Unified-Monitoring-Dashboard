@@ -1045,6 +1045,43 @@ a single 200-event batch within 90 seconds; the fixed code finishes the
 same batch (65,336 pairs evaluated) in well under a minute. Full test
 suite still passes with zero regressions.
 
+## Scheduler concurrency fix ("database is locked")
+
+A follow-on to the fix above: once `correlation/run` stopped hanging for
+hours, real deployments hit a second, separate problem — collectors,
+topology sync, correlation/incidents, and sitescope/digitalview loads
+started throwing `sqlite3.OperationalError: database is locked`, sometimes
+repeatedly, sometimes even while SQLAlchemy tried to roll back the failed
+transaction.
+
+Root cause was in `app/scheduler.py`: every scheduled job already carried
+`max_instances=1`, but that only stops ONE job id from overlapping
+*itself*. A manual trigger (e.g. clicking "Refresh now") runs under its
+own, different job id (`manual_run_all` vs. the automatic
+`poll_all_collectors`), so nothing stopped it from running at the same
+time as an automatic run already in flight — and nothing stopped the
+independent collector/topology/correlation/sitescope/digitalview jobs
+from overlapping *each other* either. On a large real estate a single
+collector sweep can take minutes, so this was a real, recurring gap, not
+a one-off: two genuinely concurrent writers on SQLite's single-writer
+database file is exactly what "database is locked" means.
+
+Fix: a single `threading.Lock` (`_write_lock`) that every write-heavy job
+body (collector runs, topology sync, correlation/incidents, sitescope,
+digitalview) now acquires before touching the database, regardless of
+which job id triggered it. At most one of these jobs is ever actually
+writing at a time; everything else just waits its turn (typically
+seconds) instead of colliding. Scoped to the jobs actually implicated —
+capacity bootstrap and the nightly forecast refit, which run far less
+often, were left untouched.
+
+Verified with a concurrency stress test: every configured collector
+instance fired from its own thread at the same instant (the same shape as
+an automatic run colliding with a manual "Refresh now") produced zero
+errors, with instrumentation confirming the lock held the number of
+truly-concurrent writers to exactly 1 throughout. Full test suite still
+passes with zero regressions.
+
 ## Deploy to a server later
 
 The application is deployment-ready; two changes move it from POC to server.

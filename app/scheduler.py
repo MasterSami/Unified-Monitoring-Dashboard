@@ -8,6 +8,7 @@ run one or all of them, and derives health from persisted
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -28,6 +29,27 @@ _JOB_ID = "poll_all_collectors"
 _TOPOLOGY_JOB_ID = "poll_topology"
 _CORRELATION_JOB_ID = "correlate_and_form_incidents"
 
+#: Serializes every write-heavy job body below (collectors, topology,
+#: correlation/incidents, sitescope, digitalview). APScheduler's per-job
+#: ``max_instances=1`` only stops ONE job id from overlapping itself — a
+#: manual trigger (see ``_dispatch``) runs under its own, different job id
+#: (``manual_run_all`` vs. the automatic ``poll_all_collectors``), so
+#: nothing previously stopped it from executing at the same time as an
+#: automatic run already in flight. On a large real estate a single
+#: collector sweep can take minutes, so that gap was real: a "Refresh now"
+#: click (or the correlation/topology/sitescope jobs' own independent
+#: timers) landing mid-sweep produced two genuinely concurrent writers on
+#: SQLite's single-writer database file — surfacing as repeated
+#: ``database is locked`` errors across collectors, topology sync,
+#: correlation, and sitescope/digitalview loads. Acquiring this lock
+#: before any of those jobs touch the database means at most one is ever
+#: actually writing at a time; everything else just waits its turn
+#: (typically seconds, at most the duration of one instance's collection)
+#: instead of colliding. Deliberately scoped to the write-heavy jobs
+#: implicated by that failure — not capacity bootstrap/forecast, which
+#: run far less often and were not part of the observed collision.
+_write_lock = threading.Lock()
+
 
 class CollectorService:
     """Owns collector instances and runs them against fresh DB sessions."""
@@ -47,11 +69,12 @@ class CollectorService:
         if collector is None:
             logger.warning("unknown instance requested: %s", instance)
             return False
-        db: Session = SessionLocal()
-        try:
-            collector.run(db)
-        finally:
-            db.close()
+        with _write_lock:
+            db: Session = SessionLocal()
+            try:
+                collector.run(db)
+            finally:
+                db.close()
         return True
 
     def run_all(self) -> None:
@@ -240,32 +263,33 @@ def _load_sitescope_file(instance: str, path: str) -> None:
         )
         return
 
-    db: Session = SessionLocal()
-    try:
-        started = datetime.now(timezone.utc)
-        counts = ingest_lines(db, instance, lines)
-        db.add(
-            CollectorRun(
-                platform="sitescope",
-                instance=instance,
-                started_at=started,
-                finished_at=datetime.now(timezone.utc),
-                status=RunStatus.success,
-                items_collected=counts.events,
-                hosts_collected=counts.hosts,
-                alerts_collected=counts.events,
+    with _write_lock:
+        db: Session = SessionLocal()
+        try:
+            started = datetime.now(timezone.utc)
+            counts = ingest_lines(db, instance, lines)
+            db.add(
+                CollectorRun(
+                    platform="sitescope",
+                    instance=instance,
+                    started_at=started,
+                    finished_at=datetime.now(timezone.utc),
+                    status=RunStatus.success,
+                    items_collected=counts.events,
+                    hosts_collected=counts.hosts,
+                    alerts_collected=counts.events,
+                )
             )
-        )
-        db.commit()
-        logger.info(
-            "sitescope: loaded %d line(s) for %s from %s -> %d event(s), %d host(s)",
-            len(lines), instance, path, counts.events, counts.hosts,
-        )
-    except Exception:  # pragma: no cover - must never crash the scheduler
-        db.rollback()
-        logger.exception("sitescope load failed for %s", instance)
-    finally:
-        db.close()
+            db.commit()
+            logger.info(
+                "sitescope: loaded %d line(s) for %s from %s -> %d event(s), %d host(s)",
+                len(lines), instance, path, counts.events, counts.hosts,
+            )
+        except Exception:  # pragma: no cover - must never crash the scheduler
+            db.rollback()
+            logger.exception("sitescope load failed for %s", instance)
+        finally:
+            db.close()
 
 
 def _run_sitescope_demo_job() -> None:
@@ -342,44 +366,45 @@ def _run_digitalview_job(force: bool = False) -> None:
         return  # same export as last time; nothing to re-read
     _digitalview_stamp = stamp
 
-    db: Session = SessionLocal()
-    try:
-        started = datetime.now(timezone.utc)
-        inventory = load_into_db(db, instance, path)
-        db.add(
-            CollectorRun(
-                platform="digitalview",
-                instance=instance,
-                started_at=started,
-                finished_at=datetime.now(timezone.utc),
-                status=RunStatus.success,
-                items_collected=inventory.count,
-                hosts_collected=inventory.count,
-                alerts_collected=0,
-                error_message=(
-                    "asset inventory (static export)"
-                    + (
-                        f", exported {inventory.exported_at:%Y-%m-%d}"
-                        if inventory.exported_at
-                        else ""
-                    )
-                ),
+    with _write_lock:
+        db: Session = SessionLocal()
+        try:
+            started = datetime.now(timezone.utc)
+            inventory = load_into_db(db, instance, path)
+            db.add(
+                CollectorRun(
+                    platform="digitalview",
+                    instance=instance,
+                    started_at=started,
+                    finished_at=datetime.now(timezone.utc),
+                    status=RunStatus.success,
+                    items_collected=inventory.count,
+                    hosts_collected=inventory.count,
+                    alerts_collected=0,
+                    error_message=(
+                        "asset inventory (static export)"
+                        + (
+                            f", exported {inventory.exported_at:%Y-%m-%d}"
+                            if inventory.exported_at
+                            else ""
+                        )
+                    ),
+                )
             )
-        )
-        db.commit()
-        logger.info(
-            "digitalview: loaded %d asset(s) for %s from %s",
-            inventory.count, instance, path,
-        )
-    except Exception as exc:  # noqa: BLE001 — must never crash the scheduler
-        db.rollback()
-        _digitalview_stamp = None  # let the next tick retry
-        logger.exception("digitalview asset load failed for %s", instance)
-        _record_digitalview_failure(
-            instance, f"could not read the workbook: {type(exc).__name__}: {exc}"
-        )
-    finally:
-        db.close()
+            db.commit()
+            logger.info(
+                "digitalview: loaded %d asset(s) for %s from %s",
+                inventory.count, instance, path,
+            )
+        except Exception as exc:  # noqa: BLE001 — must never crash the scheduler
+            db.rollback()
+            _digitalview_stamp = None  # let the next tick retry
+            logger.exception("digitalview asset load failed for %s", instance)
+            _record_digitalview_failure(
+                instance, f"could not read the workbook: {type(exc).__name__}: {exc}"
+            )
+        finally:
+            db.close()
 
 
 _FORECAST_JOB_ID = "capacity_forecast"
@@ -486,12 +511,14 @@ def run_forecast_now() -> None:
 
 def _run_topology_job() -> None:
     """Scheduler entry point: rebuild every instance's topology graph."""
-    run_topology(get_settings())
+    with _write_lock:
+        run_topology(get_settings())
 
 
 def run_topology_now() -> None:
     """Rebuild topology synchronously (used by the manual API trigger)."""
-    run_topology(get_settings())
+    with _write_lock:
+        run_topology(get_settings())
 
 
 def _run_correlation_and_incidents_job() -> None:
@@ -510,20 +537,21 @@ def _run_correlation_and_incidents_job() -> None:
     from app.correlation_engine import run_correlation_batch
     from app.incident_engine import run_incident_formation
 
-    db: Session = SessionLocal()
-    try:
-        correlation_result = run_correlation_batch(db)
-        db.commit()
-        incident_result = run_incident_formation(db)
-        db.commit()
-        logger.info(
-            "correlation/incident background job: %s ; %s", correlation_result, incident_result,
-        )
-    except Exception:  # noqa: BLE001 — must never stop the scheduler
-        db.rollback()
-        logger.exception("correlation/incident background job failed; the next interval will retry")
-    finally:
-        db.close()
+    with _write_lock:
+        db: Session = SessionLocal()
+        try:
+            correlation_result = run_correlation_batch(db)
+            db.commit()
+            incident_result = run_incident_formation(db)
+            db.commit()
+            logger.info(
+                "correlation/incident background job: %s ; %s", correlation_result, incident_result,
+            )
+        except Exception:  # noqa: BLE001 — must never stop the scheduler
+            db.rollback()
+            logger.exception("correlation/incident background job failed; the next interval will retry")
+        finally:
+            db.close()
 
 
 def _dispatch(job_id: str, func, **kwargs) -> bool:
@@ -535,9 +563,14 @@ def _dispatch(job_id: str, func, **kwargs) -> bool:
     morning, and nothing stopped a handful of users from doing it at once.
 
     Handing the work to APScheduler instead makes the request return
-    immediately and gives repeat clicks the right semantics for free: the
-    polling job already carries ``max_instances=1`` and ``coalesce=True``, so a
-    second click while a run is in flight is absorbed rather than doubled.
+    immediately and gives repeat clicks the right semantics for free: each
+    dispatched job carries ``max_instances=1`` and ``coalesce=True``, so a
+    second click under the SAME ``job_id`` is absorbed rather than doubled.
+    That alone does not stop this manual job from running at the same time
+    as a DIFFERENT job (the automatic interval job has its own id, e.g.
+    ``poll_all_collectors`` vs. this call's ``manual_run_all``) — see
+    ``_write_lock`` for what actually prevents that pair, and every other
+    pair of write-heavy jobs, from colliding on the database.
 
     Returns False when there is no scheduler (tests, or before startup), so the
     caller can fall back to running inline.
