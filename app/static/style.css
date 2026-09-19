@@ -2812,3 +2812,38 @@ td.mono {
   font-family: var(--mono);
   word-break: break-word;
 }
+
+.ic-resolution-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+.ic-resolution-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.ic-resolution-form textarea,
+.ic-resolution-form input,
+.ic-resolution-form select {
+  font: inherit;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+.ic-resolution-form button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.ic-resolution-current {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 12.5px;
+}

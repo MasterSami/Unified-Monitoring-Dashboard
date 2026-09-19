@@ -101,6 +101,13 @@ class SignalHit:
     source: str
     priority_tier: int
     related_entity_id: int | None = None
+    #: Structured from/to for this specific hit — Correlation Phase 7
+    #: (AI-readiness). For known_dependency this is the REAL
+    #: EntityRelationship direction; every other signal leaves these unset
+    #: and _persist_correlation falls back to the two compared events' own
+    #: entities (still an honest, structured fact — see its own note).
+    from_entity_id: int | None = None
+    to_entity_id: int | None = None
 
 
 @dataclass
@@ -250,6 +257,7 @@ def compute_signals(db: Session, a: LogicalEvent, b: LogicalEvent) -> list[Signa
                 CorrelationSignal.known_dependency,
                 f"{rel.relationship_type.value} ({rel.source.value})",
                 rel.source.value, tier, rel.id,
+                from_entity_id=rel.from_entity_id, to_entity_id=rel.to_entity_id,
             ))
 
     return hits
@@ -418,11 +426,18 @@ def _persist_correlation(
     db.flush()
 
     # Evidence is framed relative to `a` (the event this call anchors on) —
-    # every hit says why `a` correlates with `b`.
+    # every hit says why `a` correlates with `b`. from_entity_id/to_entity_id
+    # (Phase 7, AI-readiness) use the hit's own direction when it has one
+    # (known_dependency's real EntityRelationship direction), else fall back
+    # to the two compared events' own entities — still a structured,
+    # honest fact even when the signal itself has no inherent direction.
     for h in hits:
         db.add(CorrelationEvidence(
             correlation_id=correlation.id, signal=h.signal, value=h.value, source=h.source,
             related_event_id=b.id, related_entity_id=h.related_entity_id,
+            from_entity_id=h.from_entity_id if h.from_entity_id is not None else a.entity_id,
+            to_entity_id=h.to_entity_id if h.to_entity_id is not None else b.entity_id,
+            rule_id=rule.rule_id,
         ))
     db.flush()
     return correlation

@@ -113,6 +113,43 @@
       <div id="feedback-list" style="margin-top:14px;"></div>
     </div>
 
+    <!-- 11. Resolution -->
+    <div class="card card-pad">
+      <div class="card-head"><h3>Resolution</h3><span class="hint">How this incident actually turned out, for future reference - Correlation Phase 7</span></div>
+      <div id="resolution-auth-hint" class="ic-disclaimer" hidden>
+        <span>&#9888;</span>
+        <span>Sign in via the <a href="/runbook">Runbook</a> to record a resolution.</span>
+      </div>
+      <div id="resolution-current" style="margin-bottom:12px;"></div>
+      <form id="resolution-form" class="ic-resolution-form">
+        <label>
+          <span class="field-lbl">Confirmed root cause</span>
+          <select id="res-root-cause"></select>
+        </label>
+        <label id="res-root-cause-other-wrap" hidden>
+          <span class="field-lbl">Entity id</span>
+          <input type="number" id="res-root-cause-other" min="1" />
+        </label>
+        <label>
+          <span class="field-lbl">Resolution action</span>
+          <textarea id="res-action" rows="2" placeholder="What was actually done to fix it"></textarea>
+        </label>
+        <label>
+          <span class="field-lbl">Resolver</span>
+          <input type="text" id="res-resolver" placeholder="Defaults to the signed-in operator" />
+        </label>
+        <label>
+          <span class="field-lbl">Resolution time (UTC)</span>
+          <input type="datetime-local" id="res-time" />
+        </label>
+        <label>
+          <span class="field-lbl">Post-incident notes</span>
+          <textarea id="res-notes" rows="3"></textarea>
+        </label>
+        <button class="btn btn-accent" type="submit">Save resolution</button>
+      </form>
+    </div>
+
   </div>
 </div>
 {% endif %}
@@ -435,6 +472,68 @@
       });
     }
 
+    function renderResolutionCurrent(resolution) {
+      var el = document.getElementById("resolution-current");
+      if (!resolution) { el.innerHTML = '<div class="empty">No resolution recorded yet.</div>'; return; }
+      el.innerHTML =
+        '<div class="ic-resolution-current"><b>Recorded resolution</b><br/>' +
+        "Root cause entity: " + (resolution.confirmed_root_cause_entity_id != null ? "#" + resolution.confirmed_root_cause_entity_id : "-") + "<br/>" +
+        "Action: " + esc(resolution.resolution_action || "-") + "<br/>" +
+        "Resolver: " + esc(resolution.resolver || "-") + "<br/>" +
+        "Resolved at: " + fmtTime(resolution.resolution_time) + "<br/>" +
+        "Notes: " + esc(resolution.post_incident_notes || "-") + "</div>";
+    }
+
+    function populateRootCauseSelect(candidates) {
+      var sel = document.getElementById("res-root-cause");
+      sel.innerHTML = '<option value="">Not specified</option>' +
+        (candidates || []).map(function (c) {
+          return '<option value="' + c.entity_id + '">' + esc(c.canonical_name) + " (engine candidate)</option>";
+        }).join("") +
+        '<option value="__other__">Other / not listed - enter entity id</option>';
+      sel.addEventListener("change", function () {
+        document.getElementById("res-root-cause-other-wrap").hidden = sel.value !== "__other__";
+      });
+    }
+
+    function wireResolution(inc) {
+      var hint = document.getElementById("resolution-auth-hint");
+      hint.hidden = isOperator;
+      populateRootCauseSelect(inc.root_cause_candidates);
+      document.getElementById("resolution-form").addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var sel = document.getElementById("res-root-cause").value;
+        var entityId = sel === "__other__"
+          ? (document.getElementById("res-root-cause-other").value || null)
+          : (sel || null);
+        var timeVal = document.getElementById("res-time").value;
+        fetch("/api/v1/incidents/" + incidentId + "/resolution", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            confirmed_root_cause_entity_id: entityId ? parseInt(entityId, 10) : null,
+            resolution_action: document.getElementById("res-action").value || null,
+            resolver: document.getElementById("res-resolver").value || null,
+            resolution_time: timeVal ? new Date(timeVal).toISOString() : null,
+            post_incident_notes: document.getElementById("res-notes").value || null,
+          }),
+        }).then(function (r) {
+          if (r.status === 401 || r.status === 503) {
+            if (window.toast) window.toast("Sign in via the Runbook to record a resolution", false);
+            return null;
+          }
+          if (!r.ok) { throw new Error("failed"); }
+          return r.json();
+        }).then(function (row) {
+          if (!row) return;
+          if (window.toast) window.toast("Resolution saved", true);
+          renderResolutionCurrent(row);
+        }).catch(function () {
+          if (window.toast) window.toast("Could not save resolution", false);
+        });
+      });
+    }
+
     function load() {
       Promise.all([
         getJson("/api/v1/incidents/" + incidentId),
@@ -455,6 +554,10 @@
         renderTypes(inc.correlation_types || []);
         renderFeedback(feedback);
         wireFeedback();
+        wireResolution(inc);
+        getJson("/api/v1/incidents/" + incidentId + "/resolution")
+          .then(renderResolutionCurrent)
+          .catch(function () { renderResolutionCurrent(null); });
         renderEventDetails(inc.related_events || []);
 
         var eventIds = inc.related_events || [];

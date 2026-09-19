@@ -163,6 +163,19 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         # (app/models.py Incident, app/incident_engine.py).
         "sources": "JSON",
     },
+    "correlation_evidence": {
+        # Correlation Phase 7 (AI-readiness): structured from/to entity +
+        # which rule produced this row (app/models.py CorrelationEvidence,
+        # app/correlation_engine.py).
+        "from_entity_id": "INTEGER",
+        "to_entity_id": "INTEGER",
+        "rule_id": "VARCHAR(64)",
+    },
+    "incident_feedback": {
+        # Correlation Phase 7: which entity the operator confirms is the
+        # real root cause (app/models.py IncidentFeedback).
+        "confirmed_root_cause_entity_id": "INTEGER",
+    },
 }
 
 
@@ -254,6 +267,17 @@ _ADDED_INDEXES: list[tuple[str, str, str]] = [
     # filter, most-recently-touched first) and its business_service filter.
     ("ix_incidents_status_last_update", "incidents", "(status, last_update)"),
     ("ix_incidents_business_service", "incidents", "(business_service)"),
+    # Correlation Phase 7 (AI-readiness): a future similarity/pattern pass
+    # over historical evidence needs to query by entity pair or by which
+    # rule fired, cheaply, across the whole table — these are ADDED columns
+    # on an existing table, so index=True on the model alone (create_all
+    # only) does not create them; same as every other added-column index
+    # above. Named to match SQLAlchemy's own auto-generated index=True name
+    # (ix_<table>_<column>) so a fresh install's create_all and this
+    # CREATE INDEX IF NOT EXISTS agree instead of creating two indexes.
+    ("ix_correlation_evidence_from_entity_id", "correlation_evidence", "(from_entity_id)"),
+    ("ix_correlation_evidence_to_entity_id", "correlation_evidence", "(to_entity_id)"),
+    ("ix_correlation_evidence_rule_id", "correlation_evidence", "(rule_id)"),
 ]
 
 

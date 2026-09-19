@@ -384,6 +384,9 @@ class CorrelationEvidenceOut(BaseModel):
     timestamp: datetime
     related_event_id: int | None
     related_entity_id: int | None
+    from_entity_id: int | None = None
+    to_entity_id: int | None = None
+    rule_id: str | None = None
 
 
 class CorrelationDetailOut(CorrelationOut):
@@ -497,6 +500,9 @@ class IncidentEvidenceEntryOut(BaseModel):
     timestamp: datetime
     related_event_id: int | None
     related_entity_id: int | None
+    from_entity_id: int | None = None
+    to_entity_id: int | None = None
+    rule_id: str | None = None
 
 
 class IncidentDetailOut(IncidentOut):
@@ -562,6 +568,11 @@ class IncidentFeedbackIn(BaseModel):
 
     kind: str = Field(description="correlation_correct | correlation_incorrect | root_cause_correct | root_cause_incorrect")
     note: str | None = Field(default=None, max_length=1000)
+    #: Which entity the operator says is the real root cause - meaningful
+    #: alongside root_cause_correct (confirms a candidate) or
+    #: root_cause_incorrect (names the one the engine missed). Correlation
+    #: Phase 7 (AI-readiness): matches CanonicalEntity.id.
+    confirmed_root_cause_entity_id: int | None = None
 
 
 class IncidentFeedbackOut(BaseModel):
@@ -571,8 +582,60 @@ class IncidentFeedbackOut(BaseModel):
     incident_id: int
     kind: str
     note: str | None
+    confirmed_root_cause_entity_id: int | None = None
     actor: str
     created_at: datetime
+
+
+class IncidentResolutionIn(BaseModel):
+    """How an incident was actually closed out - Correlation Phase 7
+    (AI-readiness). Upserted: submitting again replaces the prior record.
+    """
+
+    confirmed_root_cause_entity_id: int | None = None
+    resolution_action: str | None = Field(default=None, max_length=2000)
+    resolution_time: datetime | None = None
+    resolver: str | None = Field(default=None, max_length=255)
+    post_incident_notes: str | None = Field(default=None, max_length=4000)
+
+
+class IncidentResolutionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    incident_id: int
+    confirmed_root_cause_entity_id: int | None
+    resolution_action: str | None
+    resolution_time: datetime | None
+    resolver: str | None
+    post_incident_notes: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IncidentHistoryOut(BaseModel):
+    """The complete structured record for one incident — Correlation
+    Phase 7 (AI-readiness). Sub-structures are kept as plain dicts/lists
+    rather than their own narrow schemas: this endpoint's job is making
+    sure the data is captured and assembled, not policing an external
+    contract's exact shape - see app.incident_history's own module note.
+    """
+
+    incident: dict
+    events: list[dict]
+    entities: list[dict]
+    topology: list[dict]
+    correlation_signals: list[dict]
+    rules_triggered: list[str]
+    root_cause_candidates: list[dict]
+    operator_confirmation: list[dict]
+    resolution: dict | None
+    resolution_time: datetime | None
+    business_impact: dict
+    affected_services: list[dict]
+    affected_apis: list[dict]
+    affected_databases: list[dict]
+    timeline: list[dict]
 
 
 class CorrelationMetricsOut(BaseModel):

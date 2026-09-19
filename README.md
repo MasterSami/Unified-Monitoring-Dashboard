@@ -235,8 +235,11 @@ nnmi:
 | `GET  /api/v1/incidents/{id}/correlation-graph` | Member + topology-adjacent entities, each tagged root_cause_candidate/symptom/healthy_dependency, plus their direct relationships. |
 | `POST /api/v1/incidents/merge`        | Merge 2+ named incidents into one survivor (never automatic). Requires Runbook login. |
 | `POST /api/v1/incidents/{id}/split`   | Carve given member events into a new incident. Requires Runbook login. |
-| `POST /api/v1/incidents/{id}/feedback` | Record an operator's correlation/root-cause verdict. Requires Runbook login. |
+| `POST /api/v1/incidents/{id}/feedback` | Record an operator's correlation/root-cause verdict (now with an optional `confirmed_root_cause_entity_id`). Requires Runbook login. |
 | `GET  /api/v1/incidents/{id}/feedback` | Every recorded feedback entry for this incident. |
+| `POST /api/v1/incidents/{id}/resolution` | Record/update how this incident was actually closed out. Requires Runbook login. |
+| `GET  /api/v1/incidents/{id}/resolution` | The recorded resolution, or 404 if none yet. |
+| `GET  /api/v1/incidents/{id}/history` | The complete structured historical record (Correlation Phase 7, AI-readiness). |
 | `GET  /api/v1/metrics/correlation`    | Correlation engine throughput/health metrics (Correlation Phase 6). |
 | `GET  /api/v1/servers`                | Configured instance name/platform/base URL - never credentials. |
 
@@ -907,6 +910,104 @@ all via the real API and real rendered pages — no synthetic-only shortcuts.
 Automatic learning from operator feedback, role-based/management-zone
 authorization beyond the single Runbook login, and a message-queue-backed
 worker are explicitly out of scope here, for the reasons given above.
+
+## Correlation — Phase 7: AI-readiness (architecture preparation only)
+
+**No AI/ML runs anywhere in this codebase.** No LLM, no ML model, no
+embeddings, no vector database, no RAG, no AI root-cause analysis, no
+generative summaries — this phase adds none of those. It makes sure the
+structured historical data a FUTURE AI-assistance layer would need is
+actually being preserved today, and defines the one interface that layer
+would implement against — nothing else changes, and nothing downstream of
+Phases 1-6 reads any of it back.
+
+```
+SAMI'X
+Deterministic Correlation Engine
+          |
+          |-- Rules
+          |-- Topology
+          |-- Dependencies
+          |-- Trace Evidence
+          `-- Entity Resolution
+                    |
+                    v
+              Correlated Incident
+                    |
+                    v
+              AI Assistance (not implemented)
+                    |
+                    |-- Similar Incidents
+                    |-- Pattern Discovery
+                    |-- RCA Suggestion
+                    `-- Explanation
+```
+
+The AI layer only ever CONSUMES what the deterministic engine already
+produced — it is never consulted to decide whether two events correlate,
+and its permanent absence today (`get_ai_provider()` returning `None`, the
+only implementation that exists) changes no deterministic result.
+
+- **Structured correlation evidence** — `CorrelationEvidence` (Phase 4)
+  grew `from_entity_id`/`to_entity_id` (the REAL `EntityRelationship`
+  direction for `known_dependency`; the two compared events' own entities
+  for every other signal — never left as prose-only) and `rule_id` (which
+  rule produced this exact row, preserved even after `Correlation.rule_id`
+  is later overwritten by a different rule on re-evaluation — the only
+  place "every rule that ever triggered" survives, per the task's own
+  example: `{"signal": "DATABASE_DEPENDENCY", "source": "TOPOLOGY",
+  "from_entity": "CustomerService", "to_entity": "CustomerDB"}`).
+- **Operator feedback** — `IncidentFeedback` (Phase 6) grew
+  `confirmed_root_cause_entity_id`: which entity the operator actually
+  confirms caused it, not just a correct/incorrect verdict. Still purely
+  observational — nothing reads it back into the engine.
+- **Resolution data** (`IncidentResolution`, new) — `confirmed_root_cause`,
+  `resolution_action`, `resolution_time`, `resolver`, and
+  `post_incident_notes`, one row per incident, upserted. This is the one
+  genuinely new fact this phase captures: what an incident actually turned
+  out to be and how it was fixed, closing the loop
+  `root_cause_candidates`/`IncidentFeedback` leave open (a candidate,
+  evidence, and a verdict — never a confirmed ground truth — until now). An
+  operator can name an entity the deterministic evidence never implicated
+  at all; that disagreement is itself useful signal.
+- **`app/ai_provider.py`** — `AIAnalysisProvider`, an `ABC` with the task's
+  own five methods (`find_similar_incidents`, `suggest_root_cause`,
+  `detect_patterns`, `suggest_correlation_rule`, `summarize_incident`), each
+  returning a small dataclass whose SHAPE is fixed but whose computation is
+  not — no subclass exists anywhere in this repository, so the class cannot
+  even be instantiated. `get_ai_provider()` always returns `None`. Grep for
+  `ai_provider` outside this module and its own test: `app.correlation_engine`
+  and `app.incident_engine` never import it.
+- **`app/incident_history.py`** — `export_incident_history()` assembles the
+  task's own list (section 1) into one export per incident: the incident
+  itself, its events (original occurrences + normalized LogicalEvents),
+  entities, topology edges among them, structured correlation signals,
+  every rule that ever triggered, root cause candidates, operator
+  confirmation, resolution, resolution time, business impact, affected
+  services/APIs/databases, and the chronological timeline — all read
+  straight off existing tables, nothing inferred or scored. This is the
+  contract a future `AIAnalysisProvider` implementation would consume.
+
+```bash
+GET /api/v1/incidents/{id}/history          # the complete structured record for one incident
+GET /api/v1/incidents/{id}/evidence         # now includes from_entity_id/to_entity_id/rule_id per row
+POST /api/v1/incidents/{id}/feedback        # now accepts confirmed_root_cause_entity_id
+POST /api/v1/incidents/{id}/resolution      # {"confirmed_root_cause_entity_id", "resolution_action", "resolver", ...}
+GET /api/v1/incidents/{id}/resolution       # the recorded resolution, or 404
+```
+
+Verified against the mock collectors end-to-end — real correlated
+incidents, real structured evidence (`from_entity_id`/`to_entity_id`/
+`rule_id` inspected directly, not just asserted to exist), a real feedback
++ resolution round trip through the Runbook-gated API, the history export's
+every field populated from real data, and confirmation via direct source
+inspection that neither `app.correlation_engine` nor `app.incident_engine`
+references `app.ai_provider` at all.
+
+An actual AI provider implementation, automatic learning from feedback, and
+everything downstream of "AI Assistance" in the diagram above are
+explicitly out of scope here — this phase is the data and the interface,
+never the AI.
 
 ## Deploy to a server later
 

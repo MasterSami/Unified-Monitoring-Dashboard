@@ -26,6 +26,7 @@ from app.db import get_db
 from app.dependency_graph import direct_relationships, find_path, record_relationship, traverse
 from app.entity_resolution import create_manual_mapping
 from app.incident_engine import build_timeline, merge_incidents, run_incident_formation, split_incident
+from app.incident_history import export_incident_history
 from app.metrics import get_correlation_metrics
 from app.models import (
     PLATFORM_ORDER,
@@ -45,6 +46,7 @@ from app.models import (
     HostStatus,
     Incident,
     IncidentFeedback,
+    IncidentResolution,
     LogicalEvent,
     LogicalEventStatus,
     RelationshipType,
@@ -105,9 +107,12 @@ from app.schemas import (
     IncidentFeedbackOut,
     IncidentGraphEdgeOut,
     IncidentGraphNodeOut,
+    IncidentHistoryOut,
     IncidentImpactOut,
     IncidentMergeIn,
     IncidentOut,
+    IncidentResolutionIn,
+    IncidentResolutionOut,
     IncidentSplitIn,
     IncidentTimelineEntryOut,
     IngestResult,
@@ -1088,6 +1093,7 @@ def _incident_evidence(db: Session, incident: Incident) -> list[IncidentEvidence
             correlation_id=row.correlation_id, signal=row.signal.value, value=row.value,
             source=row.source, timestamp=row.timestamp, related_event_id=row.related_event_id,
             related_entity_id=row.related_entity_id,
+            from_entity_id=row.from_entity_id, to_entity_id=row.to_entity_id, rule_id=row.rule_id,
         )
         for row in rows
     ]
@@ -1199,6 +1205,19 @@ def get_incident_correlation_graph(
     return IncidentCorrelationGraphOut(incident_id=incident.id, nodes=nodes, edges=edges)
 
 
+@router.get("/incidents/{incident_id}/history", response_model=IncidentHistoryOut)
+def get_incident_history(incident_id: int, db: Session = Depends(get_db)) -> IncidentHistoryOut:
+    """The complete structured historical record for this incident —
+    Correlation Phase 7 (AI-readiness, architecture preparation only). See
+    app.incident_history's own module note: this is read-only and exists to
+    be read by something else later, not consulted by the engine itself.
+    """
+    history = export_incident_history(db, incident_id)
+    if history is None:
+        raise HTTPException(status_code=404, detail="incident not found")
+    return IncidentHistoryOut(**history)
+
+
 @router.post("/incidents/merge", response_model=IncidentOut)
 def merge_incidents_endpoint(
     payload: IncidentMergeIn, request: Request,
@@ -1268,12 +1287,15 @@ def submit_incident_feedback(
             status_code=422,
             detail=f"kind must be one of {[k.value for k in FeedbackKind]}",
         ) from None
-    row = IncidentFeedback(incident_id=incident_id, kind=kind, note=payload.note, actor=actor)
+    row = IncidentFeedback(
+        incident_id=incident_id, kind=kind, note=payload.note, actor=actor,
+        confirmed_root_cause_entity_id=payload.confirmed_root_cause_entity_id,
+    )
     db.add(row)
     db.flush()
     record_audit(
         db, actor=actor, action="incident_feedback", target=f"incident:{incident_id}",
-        details={"kind": kind.value},
+        details={"kind": kind.value, "confirmed_root_cause_entity_id": payload.confirmed_root_cause_entity_id},
     )
     db.commit()
     return row
@@ -1289,6 +1311,45 @@ def list_incident_feedback(incident_id: int, db: Session = Depends(get_db)) -> l
             .order_by(IncidentFeedback.created_at.desc())
         ).all()
     )
+
+
+@router.post("/incidents/{incident_id}/resolution", response_model=IncidentResolutionOut, status_code=201)
+def upsert_incident_resolution(
+    incident_id: int, payload: IncidentResolutionIn, request: Request,
+    db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> IncidentResolution:
+    """Record how this incident was actually closed out (task section 4) —
+    Correlation Phase 7 (AI-readiness). One row per incident: submitting
+    again replaces the prior record rather than adding a second, ambiguous
+    one. Requires the Runbook operator login — see _require_operator.
+    """
+    actor = _require_operator(request, settings)
+    _get_incident_or_404(db, incident_id)
+    row = db.scalar(select(IncidentResolution).where(IncidentResolution.incident_id == incident_id))
+    if row is None:
+        row = IncidentResolution(incident_id=incident_id)
+        db.add(row)
+    row.confirmed_root_cause_entity_id = payload.confirmed_root_cause_entity_id
+    row.resolution_action = payload.resolution_action
+    row.resolution_time = payload.resolution_time
+    row.resolver = payload.resolver or actor
+    row.post_incident_notes = payload.post_incident_notes
+    db.flush()
+    record_audit(
+        db, actor=actor, action="incident_resolution", target=f"incident:{incident_id}",
+        details={"confirmed_root_cause_entity_id": payload.confirmed_root_cause_entity_id},
+    )
+    db.commit()
+    return row
+
+
+@router.get("/incidents/{incident_id}/resolution", response_model=IncidentResolutionOut)
+def get_incident_resolution(incident_id: int, db: Session = Depends(get_db)) -> IncidentResolution:
+    _get_incident_or_404(db, incident_id)
+    row = db.scalar(select(IncidentResolution).where(IncidentResolution.incident_id == incident_id))
+    if row is None:
+        raise HTTPException(status_code=404, detail="no resolution recorded for this incident")
+    return row
 
 
 @router.get("/metrics/correlation", response_model=CorrelationMetricsOut)

@@ -1077,6 +1077,24 @@ class CorrelationEvidence(Base):
     #: member to (a pairwise fact), and the entity involved, if any.
     related_event_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     related_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Structured form of the same fact ``value`` describes in prose —
+    #: Correlation Phase 7 (AI-readiness): a future pattern-discovery/
+    #: similarity pass over historical evidence needs
+    #: {signal, source, from_entity, to_entity} it can query directly,
+    #: not just a human sentence. For known_dependency this is the REAL
+    #: EntityRelationship direction (e.g. CustomerService -> CustomerDB, not
+    #: whichever event happened to be passed as `a`); for every other
+    #: signal it is the two compared events' own entities. Both null only
+    #: when neither event had a resolved entity at all.
+    from_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    to_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    #: The CorrelationRule.rule_id whose evaluation produced this evidence
+    #: row — kept even after the rule is edited/deleted, and even after
+    #: Correlation.rule_id is later overwritten by a different rule on
+    #: re-evaluation, so "every rule that ever triggered on this
+    #: correlation" stays reconstructable from history (task section 1:
+    #: "rules triggered"), not just the most recent one.
+    rule_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -1235,6 +1253,13 @@ class IncidentFeedback(Base):
     #: Free-text context ("actually caused by the switch, not the DB") —
     #: never required, since a bare verdict is still useful signal.
     note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    #: Which entity the operator says is the real root cause — set on
+    #: root_cause_correct (confirms a candidate) or root_cause_incorrect
+    #: (names the one the engine missed). Matches CanonicalEntity.id, not a
+    #: FK, same convention as elsewhere. Correlation Phase 7: this is the
+    #: single most useful label a future root-cause-recommendation model
+    #: would train against — see app.ai_provider's own note.
+    confirmed_root_cause_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     #: The Runbook-authenticated username that submitted this — see
     #: app.runbook_auth; feedback requires that same login (the only
     #: authorization this deployment has — see the module note on
@@ -1284,6 +1309,55 @@ class EngineMetric(Base):
     name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     value: Mapped[float] = mapped_column(Float, default=0.0)
     count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+# --- Correlation Phase 7: AI-readiness (architecture preparation only) -------
+#
+# No AI/ML runs anywhere in this codebase. This phase only makes sure the
+# structured history a FUTURE similarity/pattern-discovery/RCA-suggestion
+# layer would need is actually being preserved today — see app.ai_provider
+# (an unimplemented interface) and app.incident_history (the export that
+# assembles it). IncidentResolution is the one genuinely new fact this phase
+# captures that nothing before it did: what an incident actually turned out
+# to be and how it was fixed, which closes the loop CorrelationEvidence and
+# root_cause_candidates leave open (a candidate, evidence, and a human
+# verdict — never a confirmed causal ground truth — until now).
+
+
+class IncidentResolution(Base):
+    """How an Incident was actually closed out, as told by a human — the
+    ground truth (when someone bothered to record it) a future model would
+    train root-cause suggestions against. One row per incident, upserted
+    (a correction replaces the prior record rather than adding a second,
+    ambiguous one) — unlike IncidentFeedback, which is a log of verdicts and
+    deliberately keeps every one.
+    """
+
+    __tablename__ = "incident_resolutions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    #: What the human confirmed actually caused it — matches
+    #: CanonicalEntity.id, not a FK, same convention as elsewhere. Not
+    #: required to be one of the engine's own root_cause_candidates: an
+    #: operator can name an entity the deterministic evidence never
+    #: implicated at all, and that disagreement is itself valuable signal.
+    confirmed_root_cause_entity_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Free text: what was actually done to fix it ("restarted CustomerDB
+    #: connection pool", "failed over to DR").
+    resolution_action: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    #: When it was actually resolved (may differ from Incident.last_update,
+    #: which only reflects when SAMI'X last recomputed the row).
+    resolution_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: Who resolved it — free text (the Runbook-authenticated username that
+    #: submitted this record, by default; an operator may attribute it to
+    #: someone else, e.g. a DBA who isn't a SAMI'X user at all).
+    resolver: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    post_incident_notes: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
