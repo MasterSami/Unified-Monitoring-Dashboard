@@ -1808,8 +1808,8 @@ def export_agents_xlsx(
                 h.hostname, h.ip or "", h.source_platform.value,
                 h.source_instance or "", h.group_name or "", h.status.value,
                 h.last_seen, h.alert_count,          # type: ignore[attr-defined]
-                h.max_sev,                           # type: ignore[attr-defined]
                 _extract_tags(h),
+                h.max_sev,                           # type: ignore[attr-defined] (trailing, popped for coloring)
             ]
 
     filters = ", ".join(
