@@ -161,7 +161,7 @@ def test_agents_export_matches_the_on_screen_filters(client):
     ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
     hdr = [ws.cell(6, i + 1).value for i in range(ws.max_column)]
     assert hdr == ["Agent", "IP", "Platform", "Instance", "Service / Group",
-                    "Status", "Last Updated", "Alerts"]
+                    "Status", "Last Updated", "Alerts", "Tags"]
     names = {ws.cell(r, 1).value for r in range(7, ws.max_row + 1) if ws.cell(r, 1).value}
     assert names == {"ag-zbx-host", "ag-dt-host"}
 

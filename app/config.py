@@ -144,6 +144,15 @@ class Settings(BaseSettings):
     # are always on regardless — this flag only gates the page.
     enable_incidents: bool = False
 
+    # Show a fixed set of realistic demo incidents on the Incidents tab
+    # instead of the real Correlation/Incident tables — independent of
+    # MOCK_MODE, which controls the collectors (and therefore every OTHER
+    # tab: Agents, Alerts, Capacity, Topology). Nothing is written to the
+    # database and no other tab is touched; see app.mock_incidents. Handy
+    # for a walkthrough where the rest of the estate should show live data
+    # but Incidents needs a clean, presentable set every time.
+    enable_mock_mode_incident: bool = False
+
     # --- Runbook (admin script library) -------------------------------------
     # Feature flag for the Runbook tab — the team's library of operational
     # scripts, browsable and runnable from the UI. OFF by default; enable it

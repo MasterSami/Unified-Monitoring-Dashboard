@@ -28,6 +28,7 @@ from app.entity_resolution import create_manual_mapping
 from app.incident_engine import build_timeline, merge_incidents, run_incident_formation, split_incident
 from app.incident_history import export_incident_history
 from app.metrics import get_correlation_metrics
+from app import mock_incidents
 from app.models import (
     PLATFORM_ORDER,
     Alert,
@@ -1028,7 +1029,16 @@ def list_incidents(
     summary — the same accepted pattern the existing ``event_id`` filter
     already uses (see app.correlation_engine's linear-scan precedent for why
     that's fine at this table's expected scale).
+
+    When ``ENABLE_MOCK_MODE_INCIDENT`` is set, this tab alone shows a fixed
+    demo set (app.mock_incidents) — independent of ``MOCK_MODE``, which
+    drives collectors and therefore every other tab. No table is touched.
     """
+    if settings.enable_mock_mode_incident:
+        rows = mock_incidents.list_demo_incidents(status=status, severity_min=severity_min)
+        size, start = _page_window(limit, offset, settings)
+        return rows[start : start + size]  # type: ignore[return-value]
+
     stmt = select(Incident)
     if status:
         stmt = stmt.where(Incident.status == status)
@@ -1101,7 +1111,14 @@ def _incident_evidence(db: Session, incident: Incident) -> list[IncidentEvidence
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetailOut)
-def get_incident(incident_id: int, db: Session = Depends(get_db)) -> IncidentDetailOut:
+def get_incident(
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> IncidentDetailOut:
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_incident(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     incident = _get_incident_or_404(db, incident_id)
     timeline = build_timeline(db, _incident_members(db, incident))
     return IncidentDetailOut(
@@ -1112,19 +1129,40 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)) -> IncidentDet
 
 
 @router.get("/incidents/{incident_id}/timeline", response_model=list[IncidentTimelineEntryOut])
-def get_incident_timeline(incident_id: int, db: Session = Depends(get_db)) -> list[IncidentTimelineEntryOut]:
+def get_incident_timeline(
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> list[IncidentTimelineEntryOut]:
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_timeline(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     incident = _get_incident_or_404(db, incident_id)
     return [IncidentTimelineEntryOut(**e) for e in build_timeline(db, _incident_members(db, incident))]
 
 
 @router.get("/incidents/{incident_id}/evidence", response_model=list[IncidentEvidenceEntryOut])
-def get_incident_evidence(incident_id: int, db: Session = Depends(get_db)) -> list[IncidentEvidenceEntryOut]:
+def get_incident_evidence(
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> list[IncidentEvidenceEntryOut]:
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_evidence(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     incident = _get_incident_or_404(db, incident_id)
     return _incident_evidence(db, incident)
 
 
 @router.get("/incidents/{incident_id}/impact", response_model=IncidentImpactOut)
-def get_incident_impact(incident_id: int, db: Session = Depends(get_db)) -> IncidentImpactOut:
+def get_incident_impact(
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> IncidentImpactOut:
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_impact(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     incident = _get_incident_or_404(db, incident_id)
     affected = IncidentAffectedOut(**(incident.affected or {}))
     app_health: list[ApplicationHealthOut] = []
@@ -1144,7 +1182,7 @@ def get_incident_impact(incident_id: int, db: Session = Depends(get_db)) -> Inci
 
 @router.get("/incidents/{incident_id}/correlation-graph", response_model=IncidentCorrelationGraphOut)
 def get_incident_correlation_graph(
-    incident_id: int, db: Session = Depends(get_db),
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
 ) -> IncidentCorrelationGraphOut:
     """Every member entity of this incident, PLUS every entity in its wider
     ``affected`` blast radius (Correlation Phase 5's topology-reachable set —
@@ -1155,6 +1193,11 @@ def get_incident_correlation_graph(
     rows stored between whichever of those entities are shown; this is a
     small, drawable one-hop-per-edge graph, not a re-traversal.
     """
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_correlation_graph(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     incident = _get_incident_or_404(db, incident_id)
     members = _incident_members(db, incident)
     member_entity_ids = {m.entity_id for m in members if m.entity_id is not None}
@@ -1207,12 +1250,19 @@ def get_incident_correlation_graph(
 
 
 @router.get("/incidents/{incident_id}/history", response_model=IncidentHistoryOut)
-def get_incident_history(incident_id: int, db: Session = Depends(get_db)) -> IncidentHistoryOut:
+def get_incident_history(
+    incident_id: int, db: Session = Depends(get_db), settings: Settings = Depends(get_settings),
+) -> IncidentHistoryOut:
     """The complete structured historical record for this incident —
     Correlation Phase 7 (AI-readiness, architecture preparation only). See
     app.incident_history's own module note: this is read-only and exists to
     be read by something else later, not consulted by the engine itself.
     """
+    if settings.enable_mock_mode_incident:
+        demo = mock_incidents.get_demo_history(incident_id)
+        if demo is None:
+            raise HTTPException(status_code=404, detail="incident not found")
+        return demo
     history = export_incident_history(db, incident_id)
     if history is None:
         raise HTTPException(status_code=404, detail="incident not found")
