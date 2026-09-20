@@ -1747,22 +1747,28 @@ def _extract_tags(host: Host) -> str:
 
     Returns formatted string like "tag1:value1, tag2:value2" or empty string.
     """
-    if not host.raw_payload or host.source_platform.value != "zabbix":
+    try:
+        if host.source_platform.value != "zabbix":
+            return ""
+
+        if not host.raw_payload:
+            return ""
+
+        tags = host.raw_payload.get("tags") if isinstance(host.raw_payload, dict) else []
+        if not tags or not isinstance(tags, list):
+            return ""
+
+        formatted = []
+        for tag_item in tags:
+            if isinstance(tag_item, dict):
+                tag_name = tag_item.get("tag", "")
+                tag_value = tag_item.get("value", "")
+                if tag_name:
+                    formatted.append(f"{tag_name}:{tag_value}" if tag_value else tag_name)
+
+        return ", ".join(formatted)
+    except (AttributeError, TypeError, KeyError):
         return ""
-
-    tags = host.raw_payload.get("tags", [])
-    if not tags:
-        return ""
-
-    formatted = []
-    for tag_item in tags:
-        if isinstance(tag_item, dict):
-            tag_name = tag_item.get("tag", "")
-            tag_value = tag_item.get("value", "")
-            if tag_name:
-                formatted.append(f"{tag_name}:{tag_value}" if tag_value else tag_name)
-
-    return ", ".join(formatted)
 
 
 @router.get("/agents.xlsx")
