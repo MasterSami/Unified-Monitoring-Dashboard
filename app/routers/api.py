@@ -1742,6 +1742,29 @@ def export_capacity_xlsx(
     return _xlsx_response(fname, data)
 
 
+def _extract_tags(host: Host) -> str:
+    """Extract and format Zabbix tags from host raw_payload.
+
+    Returns formatted string like "tag1:value1, tag2:value2" or empty string.
+    """
+    if not host.raw_payload or host.source_platform.value != "zabbix":
+        return ""
+
+    tags = host.raw_payload.get("tags", [])
+    if not tags:
+        return ""
+
+    formatted = []
+    for tag_item in tags:
+        if isinstance(tag_item, dict):
+            tag_name = tag_item.get("tag", "")
+            tag_value = tag_item.get("value", "")
+            if tag_name:
+                formatted.append(f"{tag_name}:{tag_value}" if tag_value else tag_name)
+
+    return ", ".join(formatted)
+
+
 @router.get("/agents.xlsx")
 def export_agents_xlsx(
     platform: str | None = Query(default=None),
@@ -1757,7 +1780,8 @@ def export_agents_xlsx(
     Same columns and filters as the on-screen table — the whole matching set,
     not just the current page. The Alerts column carries each host's active
     alert count and is tinted by its highest severity, same convention as the
-    Alerts export's own severity column.
+    Alerts export's own severity column. For Zabbix hosts, includes tags from
+    the Zabbix instance.
     """
     _require_export(settings)
     from app.export_xlsx import build_workbook
@@ -1779,6 +1803,7 @@ def export_agents_xlsx(
                 h.source_instance or "", h.group_name or "", h.status.value,
                 h.last_seen, h.alert_count,          # type: ignore[attr-defined]
                 h.max_sev,                           # type: ignore[attr-defined]
+                _extract_tags(h),
             ]
 
     filters = ", ".join(
@@ -1792,7 +1817,7 @@ def export_agents_xlsx(
         period="current snapshot",
         filters_summary=filters,
         columns=["Agent", "IP", "Platform", "Instance", "Service / Group",
-                 "Status", "Last Updated", "Alerts"],
+                 "Status", "Last Updated", "Alerts", "Tags"],
         rows=rows(),
         severity_col=7,
     )
