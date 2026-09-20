@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forecasting &amp; Incidents — Deep Dive</title>
+<style>
+  /* ================= WE / Telecom Egypt palette — light ================= */
+  :root {
+    --bg: #faf7fe;
+    --bg-2: #f3ecfb;
+    --surface: #ffffff;
+    --ink: #241338;
+    --ink-soft: #4c3c62;
+    --muted: #857596;
+    --line: #ece2f7;
+    --brand: #6a2c91;        /* WE purple */
+    --brand-2: #9b3fd1;      /* lighter violet */
+    --magenta: #e2148c;      /* WE magenta pop */
+    --brand-ink: #5a1f81;
+    --wash: #f4ecfc;
+    --up: #1fa971;
+    --warn: #e08a17;
+    --crit: #db3b57;
+    --watch: #3f6fd1;
+    --grid: rgba(106,44,145,0.045);
+    --shadow-sm: 0 8px 22px -14px rgba(60,20,90,0.35);
+    --shadow: 0 26px 60px -30px rgba(74,24,110,0.40);
+    --grad: linear-gradient(100deg, var(--brand) 0%, var(--brand-2) 45%, var(--magenta) 100%);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-snap-type: y proximity; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  body {
+    margin: 0; overflow-x: hidden;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 100% 46px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 46px 100%,
+      radial-gradient(1100px 640px at 88% -8%, var(--bg-2), var(--bg));
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace; }
+
+  .blob { position: fixed; border-radius: 50%; filter: blur(70px); opacity: .34; z-index: -1; pointer-events: none; }
+  .blob.a { width: 460px; height: 460px; background: radial-gradient(circle, var(--brand-2), transparent 68%); top: -120px; right: -80px; }
+  .blob.b { width: 520px; height: 520px; background: radial-gradient(circle, var(--magenta), transparent 66%); bottom: -160px; left: -120px; opacity: .22; }
+  @media (prefers-reduced-motion: no-preference){
+    .blob.a { animation: float1 16s ease-in-out infinite; }
+    .blob.b { animation: float2 20s ease-in-out infinite; }
+    @keyframes float1 { 50% { transform: translate(-40px, 60px) scale(1.08); } }
+    @keyframes float2 { 50% { transform: translate(50px, -40px) scale(1.1); } }
+  }
+
+  .slide {
+    min-height: 100vh; min-height: 100svh;
+    scroll-snap-align: start;
+    display: flex; flex-direction: column; justify-content: center;
+    padding: clamp(30px, 6vw, 96px);
+    max-width: 1200px; margin: 0 auto; position: relative;
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12.5px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--brand-ink); margin: 0 0 22px; font-weight: 600;
+  }
+  .eyebrow .n { color: var(--magenta); }
+  .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--magenta);
+           box-shadow: 0 0 0 0 color-mix(in srgb, var(--magenta) 60%, transparent); }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulse { animation: pulse 2.4s ease-out infinite; }
+    @keyframes pulse { 0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--magenta) 55%,transparent);}
+      70%{box-shadow:0 0 0 12px transparent;} 100%{box-shadow:0 0 0 0 transparent;} }
+  }
+  h1 { font-size: clamp(40px, 7.6vw, 96px); line-height: 1.02; margin: 0 0 22px;
+       letter-spacing: -0.03em; font-weight: 850; text-wrap: balance; }
+  h2 { font-size: clamp(29px, 4.8vw, 54px); line-height: 1.08; margin: 0 0 20px;
+       letter-spacing: -0.02em; font-weight: 800; text-wrap: balance; }
+  .grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { font-size: clamp(17px, 2vw, 23px); color: var(--ink-soft); max-width: 60ch; margin: 0; }
+
+  .rise { opacity: 0; transform: translateY(20px); transition: opacity .7s cubic-bezier(.2,.7,.2,1), transform .7s cubic-bezier(.2,.7,.2,1); }
+  .rise.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .rise { opacity: 1; transform: none; transition: none; } }
+
+  .cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin-top: 34px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+          padding: 24px; box-shadow: var(--shadow-sm); position: relative; overflow: hidden;
+          transition: transform .3s cubic-bezier(.2,.7,.2,1), box-shadow .3s, border-color .3s; }
+  .card::before { content:""; position:absolute; inset-block-start:0; inset-inline:0; height:3px;
+                  background: var(--grad); transform: scaleX(0); transform-origin: left; transition: transform .35s; }
+  .card:hover { transform: translateY(-6px); box-shadow: var(--shadow); border-color: color-mix(in srgb, var(--brand) 30%, var(--line)); }
+  .card:hover::before { transform: scaleX(1); }
+  .card h3 { margin: 0 0 8px; font-size: 17.5px; font-weight: 740; color: var(--ink); }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .tag { display: inline-flex; align-items: center; gap: 8px; font-weight: 750; font-size: 14.5px;
+         font-family: ui-monospace, Menlo, monospace; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .d-crit{background:var(--crit)} .d-warn{background:var(--warn)} .d-watch{background:var(--watch)} .d-up{background:var(--up)}
+
+  ul.clean { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 14px; max-width: 62ch; }
+  ul.clean li { display: flex; gap: 13px; align-items: flex-start; font-size: 17px; color: var(--ink-soft); }
+  ul.clean li::before { content: "▹"; color: var(--magenta); font-weight: 800; margin-top: 1px; }
+
+  .stat-row { display: flex; flex-wrap: wrap; gap: 26px 48px; margin-top: 34px; }
+  .stat b { display: block; font-size: clamp(36px, 5.6vw, 62px); font-weight: 850; letter-spacing: -0.03em;
+            font-variant-numeric: tabular-nums; line-height: 1; background: var(--grad);
+            -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .stat span { color: var(--muted); font-size: 14px; margin-top: 8px; display: block; }
+
+  .flow { display: grid; gap: 14px; margin-top: 30px; }
+  .layer { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 20px 24px; box-shadow: var(--shadow-sm); }
+  .layer .lab { font-family: ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .16em;
+                text-transform: uppercase; color: var(--brand-ink); margin: 0 0 12px; font-weight: 600; }
+  .layer .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .layer .sub { margin: 8px 0 0; color: var(--muted); font-size: 13.5px; }
+  .chip { border: 1px solid color-mix(in srgb, var(--brand) 18%, var(--line)); border-radius: 999px; padding: 8px 15px;
+          font-size: 13.5px; font-weight: 650; background: var(--wash); color: var(--brand-ink); }
+  .arrow { text-align: center; color: var(--brand-2); font-size: 22px; line-height: 1; }
+
+  .note { margin-top: 30px; border-inline-start: 3px solid var(--magenta); padding: 8px 18px; color: var(--ink-soft);
+          background: color-mix(in srgb, var(--magenta) 7%, transparent); border-radius: 0 14px 14px 0; max-width: 70ch; font-size: 15px; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 30px; }
+  @media (max-width: 720px){ .two { grid-template-columns: 1fr; } }
+  .col { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 24px; box-shadow: var(--shadow-sm); }
+  .col h3 { margin: 0 0 16px; font-size: 14.5px; letter-spacing: .06em; text-transform: uppercase; font-family: ui-monospace, Menlo, monospace; }
+  .col.now h3 { color: var(--up); } .col.next h3 { color: var(--magenta); }
+  .col ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  .col li { display: flex; gap: 11px; font-size: 15px; color: var(--ink-soft); }
+  .col.now li::before { content: "✓"; color: var(--up); font-weight: 800; }
+  .col.next li::before { content: "→"; color: var(--magenta); font-weight: 800; }
+
+  .bands { display: grid; gap: 14px; margin-top: 30px; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); }
+  .band { border-radius: 16px; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); border-inline-start: 5px solid var(--line); }
+  .band.crit { border-inline-start-color: var(--crit); }
+  .band.warn { border-inline-start-color: var(--warn); }
+  .band.watch { border-inline-start-color: var(--watch); }
+  .band.ok { border-inline-start-color: var(--up); }
+  .band .d { font-family: ui-monospace, Menlo, monospace; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .band .v { font-size: 22px; font-weight: 800; }
+
+  .quotes { display: grid; gap: 14px; margin-top: 30px; max-width: 74ch; }
+  .quote { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px;
+           box-shadow: var(--shadow-sm); font-family: ui-monospace, Menlo, monospace; font-size: 15.5px; color: var(--ink); }
+  .quote .who { display:block; font-family: "Segoe UI", system-ui, sans-serif; color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+
+  .rail { position: fixed; inset-inline-start: 20px; top: 50%; transform: translateY(-50%); display: grid; gap: 12px; z-index: 30; }
+  .rail button { width: 10px; height: 10px; border-radius: 50%; background: var(--line); border: none; padding: 0; cursor: pointer;
+                 transition: .3s; }
+  .rail button:hover { background: var(--brand-2); transform: scale(1.3); }
+  .rail button.on { background: var(--grad); transform: scale(1.55); }
+  .count { position: fixed; inset-inline-end: 24px; bottom: 20px; font-family: ui-monospace, Menlo, monospace;
+           font-size: 12px; color: var(--muted); z-index: 30; }
+  .prog { position: fixed; inset-block-start: 0; inset-inline: 0; height: 4px; background: var(--grad); width: 0; z-index: 40; transition: width .15s linear; }
+  .hint { position: absolute; inset-block-end: 28px; inset-inline-start: clamp(30px,6vw,96px);
+          color: var(--muted); font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
+  @media (prefers-reduced-motion: no-preference){ .hint { animation: bob 1.8s ease-in-out infinite; } @keyframes bob{50%{transform:translateY(6px)}} }
+  .brand-mark { position: fixed; inset-block-start: 18px; inset-inline-end: 24px; z-index: 30;
+                display: inline-flex; align-items: center; gap: 9px; font-family: ui-monospace, Menlo, monospace;
+                font-size: 12px; letter-spacing: .1em; color: var(--muted); }
+  .we { font-weight: 850; letter-spacing: -0.02em; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; font-size: 15px; }
+
+  .nav { position: fixed; inset-inline-end: 22px; bottom: 52px; display: flex; gap: 10px; z-index: 30; }
+  .nav button { width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface);
+                color: var(--brand); font-size: 20px; cursor: pointer; box-shadow: var(--shadow-sm);
+                display: grid; place-items: center; transition: transform .2s, background .2s, color .2s; }
+  .nav button:hover { transform: translateY(-3px); background: var(--grad); color: #fff; border-color: transparent; }
+  .nav button:disabled { opacity: .4; cursor: default; transform: none; background: var(--surface); color: var(--brand); }
+  :focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 55%, transparent); outline-offset: 3px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<div class="blob a"></div>
+<div class="blob b"></div>
+<div class="prog" id="prog"></div>
+<nav class="rail" id="rail" aria-label="slides"></nav>
+<div class="count" id="count">01 / 12</div>
+<div class="brand-mark"><span class="we">WE</span> · Telecom Egypt</div>
+<div class="nav">
+  <button id="prev" aria-label="previous slide">↑</button>
+  <button id="next" aria-label="next slide">↓</button>
+</div>
+
+<!-- 1 · HERO -->
+<section class="slide" id="s1">
+  <p class="eyebrow rise"><span class="pulse"></span> Unified Monitoring Dashboard</p>
+  <h1 class="rise">Stop guessing.<br><span class="grad">See it coming instead.</span></h1>
+  <p class="lead rise">Two engines added to the dashboard this round: one predicts a full disk before it becomes a 3 AM page, the other turns a flood of separate alerts into one incident with a clear story. Both explainable, both built from plain math and simple rules — no black-box model to defend in a post-mortem.</p>
+  <div class="stat-row rise">
+    <div class="stat"><b data-count="3">0</b><span>correlation rules, all readable</span></div>
+    <div class="stat"><b data-count="12">0</b><span>x faster correlation runtime</span></div>
+    <div class="stat"><b data-count="0">0</b><span>machine-learning models in the loop</span></div>
+  </div>
+  <div class="hint">↓ scroll · or use → ← / space</div>
+</section>
+
+<!-- 2 · THE TWO PROBLEMS -->
+<section class="slide" id="s2">
+  <p class="eyebrow rise"><span class="n">01</span> · The Problem</p>
+  <h2 class="rise">Two very different headaches, same root cause</h2>
+  <p class="lead rise">A monitoring tool that only shows what's happening right now is doing half the job. It doesn't warn you before a disk runs out, and it doesn't tell you that the twelve alerts on your screen are actually one problem.</p>
+  <div class="cards rise">
+    <div class="card"><h3>Capacity sneaks up on you</h3><p>A disk fills slowly for weeks, nobody's watching the trend line, and it becomes an emergency the moment it crosses 100%.</p></div>
+    <div class="card"><h3>One incident, ten alerts</h3><p>A database goes down and every service that talks to it starts screaming too. The engineer on call now has ten tickets instead of one story.</p></div>
+  </div>
+  <div class="note rise">Both problems have the same fix in common: stop reacting to individual data points, and start reading them as a pattern.</div>
+</section>
+
+<!-- 3 · FORECASTING: THE IDEA -->
+<section class="slide" id="s3">
+  <p class="eyebrow rise"><span class="n">02</span> · Capacity Forecasting</p>
+  <h2 class="rise">A straight line through history — nothing fancier</h2>
+  <p class="lead rise">Every server's disk and memory usage is sampled regularly and kept as history. Once a day's worth of samples is collapsed into a single average point, we fit the simplest line that explains the trend, using ordinary least squares — the same method taught in a first statistics course, not a trained model.</p>
+  <ul class="clean rise">
+    <li>Fitted per volume, per host, over a rolling window of recent history</li>
+    <li>CPU is tracked but never forecast — it bounces around a workload, it doesn't accumulate toward "full"</li>
+    <li>The result is a slope in %/day, and a date: when does this line cross the danger zone</li>
+  </ul>
+</section>
+
+<!-- 4 · FORECASTING: GUARDRAILS -->
+<section class="slide" id="s4">
+  <p class="eyebrow rise"><span class="n">03</span> · Capacity Forecasting</p>
+  <h2 class="rise">The hard part isn't the math — it's knowing when to stay quiet</h2>
+  <p class="lead rise">A wrong forecast is worse than no forecast, because someone will act on it. Most of the engineering here went into recognizing the cases where a straight line would lie.</p>
+  <div class="cards rise">
+    <div class="card"><h3>Not enough history</h3><p>Too few points or too short a span, and the answer is "not yet" instead of a fabricated date.</p></div>
+    <div class="card"><h3>The disk got resized</h3><p>A volume grown from 100 GB to 500 GB looks like a cliff. Only the samples since the resize are used.</p></div>
+    <div class="card"><h3>The trend is scattered</h3><p>Low statistical fit keeps the slope as a hint but drops the date — a confident number from noisy data is the one output that actively misleads.</p></div>
+    <div class="card"><h3>Already almost full</h3><p>Dividing by a fraction of a percent produces a date that swings wildly between polls. Under half a point of headroom, the honest answer is simply "now."</p></div>
+  </div>
+</section>
+
+<!-- 5 · FORECASTING: CLASSIFICATION -->
+<section class="slide" id="s5">
+  <p class="eyebrow rise"><span class="n">04</span> · Capacity Forecasting</p>
+  <h2 class="rise">Four bands, one question: how many days do we actually have?</h2>
+  <p class="lead rise">Every fitted series lands in one of four buckets, so the Capacity view can be scanned in seconds instead of read row by row.</p>
+  <div class="bands rise">
+    <div class="band crit"><div class="d">Critical</div><div class="v">Under 14 days</div></div>
+    <div class="band warn"><div class="d">Warning</div><div class="v">Under 45 days</div></div>
+    <div class="band watch"><div class="d">Watch</div><div class="v">Under 90 days</div></div>
+    <div class="band ok"><div class="d">OK</div><div class="v">Flat, shrinking, or far out</div></div>
+  </div>
+  <div class="note rise">A volume already sitting above the 90% line is always Critical, even if it stopped growing — a full disk is a present-tense problem, not a forecast.</div>
+</section>
+
+<!-- 6 · FORECASTING: WHAT THE ENGINEER SEES -->
+<section class="slide" id="s6">
+  <p class="eyebrow rise"><span class="n">05</span> · Capacity Forecasting</p>
+  <h2 class="rise">What actually shows up on the page</h2>
+  <p class="lead rise">No charts to decode, no percentages to mentally convert — every row already says, in one line, what it means and how confident we are in it.</p>
+  <div class="quotes rise">
+    <div class="quote">"At current trend: 90% in ~23 days"<span class="who">a filesystem climbing steadily, high statistical fit</span></div>
+    <div class="quote">"Already 97.2%, full in ~6 days"<span class="who">already past the line — this is a report of the present, not a prediction</span></div>
+    <div class="quote">"Trend too scattered to date (R² 0.31)"<span class="who">rising, but not on a line worth scheduling against</span></div>
+    <div class="quote">"No forecast: only 2 daily point(s); needs 5"<span class="who">honest silence instead of a guess</span></div>
+  </div>
+</section>
+
+<!-- 7 · INCIDENTS: THE PROBLEM -->
+<section class="slide" id="s7">
+  <p class="eyebrow rise"><span class="n">06</span> · Incident Correlation</p>
+  <h2 class="rise">One root cause. Ten alerts. Ten pages.</h2>
+  <p class="lead rise">Zabbix, Dynatrace and NNMi each raise their own alert the moment something looks wrong to them — with no idea that three other tools just did the exact same thing for the exact same reason. The engineer on call has to manually piece the story back together, usually at the worst possible time.</p>
+  <ul class="clean rise">
+    <li>A database host goes down → every dependent service alerts within seconds</li>
+    <li>A single distributed request fails → every hop it touched raises its own alert</li>
+    <li>Nobody wants ten pings for one problem — but nobody wants a missed alert either</li>
+  </ul>
+</section>
+
+<!-- 8 · INCIDENTS: THE PIPELINE -->
+<section class="slide" id="s8">
+  <p class="eyebrow rise"><span class="n">07</span> · Incident Correlation</p>
+  <h2 class="rise">From raw alert to one incident, in four steps</h2>
+  <div class="flow rise">
+    <div class="layer">
+      <p class="lab">1 · Collect &amp; normalize</p>
+      <div class="row"><span class="chip">Zabbix · Dynatrace · NNMi</span><span class="chip">one shared alert shape</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer">
+      <p class="lab">2 · Deduplicate</p>
+      <div class="row"><span class="chip">fingerprint: entity + problem type</span><span class="chip">repeats collapse into one open event</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer">
+      <p class="lab">3 · Correlate</p>
+      <div class="row"><span class="chip">3 rules score every open pair</span><span class="chip">linked events form a group</span></div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="layer">
+      <p class="lab">4 · Form the incident</p>
+      <div class="row"><span class="chip">title, severity, affected entities</span><span class="chip">timeline + root-cause candidates</span></div>
+      <p class="sub">This is exactly what lands on the Incidents tab — nothing further to configure, it runs on every collection cycle.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 9 · INCIDENTS: THE THREE RULES -->
+<section class="slide" id="s9">
+  <p class="eyebrow rise"><span class="n">08</span> · Incident Correlation</p>
+  <h2 class="rise">Why two alerts get treated as one story</h2>
+  <p class="lead rise">Every rule is a plain, checkable statement — never a learned weight nobody can explain in a review.</p>
+  <div class="cards rise">
+    <div class="card"><h3>Same trace</h3><p>Both alerts came from the same distributed request as it hopped through several services — a Dynatrace trace ID ties them together directly.</p></div>
+    <div class="card"><h3>Known dependency</h3><p>The topology map already says one entity calls the other. A problem on the callee is a very plausible reason the caller is unhappy too.</p></div>
+    <div class="card"><h3>Same entity</h3><p>CPU, memory and disk alerts all firing on the same host at once are one host having a bad day, not three separate incidents.</p></div>
+  </div>
+</section>
+
+<!-- 10 · INCIDENTS: ROOT CAUSE -->
+<section class="slide" id="s10">
+  <p class="eyebrow rise"><span class="n">09</span> · Incident Correlation</p>
+  <h2 class="rise">Who actually started it — a graph question, not a guess</h2>
+  <p class="lead rise">Once an incident's members are known, we ask a very concrete question of the topology: inside this specific group, is there any member that nothing else here is downstream of? That member is a root-cause candidate.</p>
+  <ul class="clean rise">
+    <li>No scoring model, no confidence percentage pulled out of thin air</li>
+    <li>When two origins are genuinely tied — no dependency edge between them — both come back as candidates, plainly labeled as a tie</li>
+    <li>Every candidate carries its own evidence: earliest onset, which entities depend on it, what the correlation actually matched on</li>
+  </ul>
+  <div class="note rise">The house rule behind this whole design: never fabricate certainty. If the data doesn't distinguish between two causes, the incident says so instead of picking one to look decisive.</div>
+</section>
+
+<!-- 11 · BUILT FOR SCALE -->
+<section class="slide" id="s11">
+  <p class="eyebrow rise"><span class="n">10</span> · Under The Hood</p>
+  <h2 class="rise">Built to survive a Monday morning, not just a demo</h2>
+  <p class="lead rise">The first version worked on a handful of test alerts and then struggled once real traffic hit it. This round focused specifically on making it hold up at real scale.</p>
+  <div class="two rise">
+    <div class="col now">
+      <h3>Where it stood</h3>
+      <ul>
+        <li>Collector held the database lock across slow network calls</li>
+        <li>Correlation re-picked the same 200 events every run</li>
+        <li>Fresh installs sat with an empty Incidents tab</li>
+      </ul>
+    </div>
+    <div class="col next">
+      <h3>Where it stands now</h3>
+      <ul>
+        <li>Network calls run free; only the final write is ever locked</li>
+        <li>Every open event gets its turn, oldest-unreviewed first</li>
+        <li>Default rules seed themselves — Incidents populate on first boot</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note rise">A correlation batch of 65,000 candidate pairs dropped from 66 seconds to 5.5 — caching each batch's lookups instead of repeating them per pair.</div>
+</section>
+
+<!-- 12 · CLOSING -->
+<section class="slide" id="s12">
+  <p class="eyebrow rise"><span class="pulse"></span> Unified Monitoring Dashboard</p>
+  <h1 class="rise">Fewer surprises.<br><span class="grad">Faster answers.</span></h1>
+  <p class="lead rise">Capacity problems get caught weeks out instead of discovered at 3 AM. A flood of alerts turns into one incident with a plain-English story and a short list of likely causes — every step of it explainable, none of it a black box.</p>
+  <p class="lead rise" style="margin-top:22px; color:var(--muted)">Thank you · Questions?</p>
+</section>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const rail = document.getElementById('rail');
+  const count = document.getElementById('count');
+  const prog = document.getElementById('prog');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const pad = n => String(n).padStart(2,'0');
+  let current = 0;
+
+  slides.forEach((s,i)=>{
+    const b = document.createElement('button');
+    b.setAttribute('aria-label','go to slide '+(i+1));
+    b.addEventListener('click', ()=>goTo(i));
+    rail.appendChild(b);
+  });
+  const dots = Array.from(rail.children);
+
+  function goTo(i){
+    i = Math.max(0, Math.min(slides.length-1, i));
+    slides[i].scrollIntoView({behavior:'smooth', block:'start'});
+  }
+  nextBtn.addEventListener('click', ()=>goTo(current+1));
+  prevBtn.addEventListener('click', ()=>goTo(current-1));
+
+  addEventListener('keydown', e=>{
+    if(['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){ e.preventDefault(); goTo(current+1); }
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){ e.preventDefault(); goTo(current-1); }
+    else if(e.key==='Home'){ e.preventDefault(); goTo(0); }
+    else if(e.key==='End'){ e.preventDefault(); goTo(slides.length-1); }
+  });
+
+  function countUp(el){
+    const target = +el.dataset.count;
+    if(target === 0 || matchMedia('(prefers-reduced-motion: reduce)').matches){ el.textContent = target; return; }
+    let start = null;
+    const dur = 900;
+    function step(t){
+      if(!start) start = t;
+      const p = Math.min((t-start)/dur, 1);
+      el.textContent = Math.round(p*target);
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  let counted = false;
+
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{
+      if(e.isIntersecting){
+        e.target.querySelectorAll('.rise').forEach((el,i)=>{
+          setTimeout(()=>el.classList.add('in'), i*90);
+        });
+        const idx = slides.indexOf(e.target);
+        current = idx;
+        dots.forEach((d,i)=>d.classList.toggle('on', i===idx));
+        count.textContent = pad(idx+1)+' / '+pad(slides.length);
+        prevBtn.disabled = idx===0;
+        nextBtn.disabled = idx===slides.length-1;
+        if(idx===0 && !counted){ counted = true; e.target.querySelectorAll('.stat b').forEach(countUp); }
+      }
+    });
+  }, {threshold: 0.55});
+  slides.forEach(s=>io.observe(s));
+
+  addEventListener('scroll', ()=>{
+    const h = document.documentElement;
+    const p = h.scrollTop / (h.scrollHeight - h.clientHeight || 1);
+    prog.style.width = (p*100)+'%';
+  }, {passive:true});
+</script>
+</body>
+</html>
