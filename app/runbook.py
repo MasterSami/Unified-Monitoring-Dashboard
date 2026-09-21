@@ -38,9 +38,6 @@ from app.servers import load_servers
 
 logger = logging.getLogger("runbook")
 
-#: Author credit stamped onto every exported workbook.
-SCRIPT_AUTHOR = "Eng. Ahmed Hussien"
-
 #: Platform tabs offered by the Runbook filter.
 PLATFORMS = ("zabbix", "dynatrace", "nnmi")
 
@@ -87,7 +84,6 @@ class Script:
     runner: Callable[[list, dict[str, str]], list[list]] | None = None
     #: Extra caveats worth surfacing (version drift, cost, etc.).
     notes: tuple[str, ...] = ()
-    author: str = SCRIPT_AUTHOR
 
 
 # --- Small helpers ----------------------------------------------------------
@@ -167,6 +163,33 @@ def _require_dynatrace(collectors: list) -> list:
             "Set MOCK_MODE=false and configure servers.yaml to use the Runbook."
         )
     return dt
+
+
+def _require_nnmi(collectors: list) -> list:
+    """Narrow the given collectors to live NNMi ones, or explain why not."""
+    nnmi = [c for c in collectors if getattr(c, "name", "") == "nnmi"]
+    if not nnmi:
+        raise RunbookError(
+            "No NNMi instance selected. Pick one from the instance list, or "
+            "add an NNMi server to servers.yaml."
+        )
+    if getattr(nnmi[0].settings, "mock_mode", False):
+        raise RunbookError(
+            "MOCK_MODE is on, so there is no real NNMi to query. "
+            "Set MOCK_MODE=false and configure servers.yaml to use the Runbook."
+        )
+    return nnmi
+
+
+def _live(collectors: list, platform: str) -> list:
+    """Live (non-mock) collectors for one platform - never raises, unlike
+    the ``_require_*`` helpers, because the cross-platform scripts treat a
+    platform with nothing configured as "skip it", not "fail the whole run".
+    """
+    return [
+        c for c in collectors
+        if getattr(c, "name", "") == platform and not getattr(c.settings, "mock_mode", False)
+    ]
 
 
 def _host_query(collector, params: dict) -> list[dict]:
@@ -290,6 +313,85 @@ def run_ip_lookup(collectors: list, params: dict[str, str]) -> list[list]:
     for ip in ips:
         if ip not in found:
             rows.append([ip, "—", "", "", "", "NOT FOUND", "", ""])
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return rows
+
+
+def run_cross_platform_ip_lookup(collectors: list, params: dict[str, str]) -> list[list]:
+    """Answer 'where is this IP monitored?' across EVERY tool at once -
+    Zabbix, Dynatrace and NNMi - instead of just Zabbix. One search tells
+    you which platform(s) know about an address (and as what), rather than
+    running the Zabbix-only version three times by hand against three
+    different consoles.
+    """
+    ips = _split_list(params.get("ips", ""))
+    if not ips:
+        raise RunbookError("Enter at least one IP address.")
+    wanted = set(ips)
+
+    live = {p: _live(collectors, p) for p in ("zabbix", "dynatrace", "nnmi")}
+    if not any(live.values()):
+        raise RunbookError(
+            "No live instance found on Zabbix, Dynatrace or NNMi. Configure "
+            "servers.yaml and set MOCK_MODE=false to use the Runbook."
+        )
+
+    rows: list[list] = []
+
+    for c in live["zabbix"]:
+        # Filter server-side, same as the Zabbix-only IP Lookup.
+        for h in _host_query(c, {"filter": {"ip": ips}}):
+            matched = sorted({
+                str(i.get("ip")) for i in h.get("interfaces", []) if i.get("ip") in wanted
+            })
+            if not matched:
+                continue
+            rows.append([
+                ", ".join(matched), "Zabbix", c.instance,
+                h.get("name") or h.get("host", ""), _status(h), _groups(h),
+            ])
+
+    for c in live["dynatrace"]:
+        # No server-side IP filter on the v2 entities API worth relying on
+        # across tenants, so the host list is walked once per instance and
+        # matched here - the same shape every other Dynatrace Runbook
+        # script already uses (see run_dt_restart_required).
+        for e in c.read_paginated(
+            "/api/v2/entities",
+            {"entitySelector": 'type("HOST")', "fields": "properties", "pageSize": "500"},
+            "entities",
+        ):
+            props = e.get("properties") or {}
+            raw = props.get("ipAddress")
+            ip_list = raw if isinstance(raw, list) else ([raw] if raw else [])
+            matched = sorted({str(v) for v in ip_list if str(v) in wanted})
+            if not matched:
+                continue
+            state = str(props.get("state") or "").upper()
+            status = "Enabled" if state in ("RUNNING", "UP") else (state or "Unknown").title()
+            rows.append([
+                ", ".join(matched), "Dynatrace", c.instance,
+                e.get("displayName", ""), status, "",
+            ])
+
+    for c in live["nnmi"]:
+        for r in c.get_nodes():
+            ip = r.get("_ip")
+            if ip not in wanted:
+                continue
+            mgmt = (r.get("managementMode") or "").upper()
+            status = "Disabled" if mgmt in ("NOTMANAGED", "OUTOFSERVICE", "UNMANAGED") \
+                else (r.get("status") or "Unknown").title()
+            group = r.get("deviceCategory") or r.get("deviceFamily") or ""
+            rows.append([
+                ip, "NNMi", c.instance,
+                r.get("name") or r.get("longName") or r.get("id", ""), status, group,
+            ])
+
+    found = {ip for r in rows for ip in _split_list(r[0])}
+    for ip in ips:
+        if ip not in found:
+            rows.append([ip, "NOT FOUND", "", "", "", ""])
     rows.sort(key=lambda r: (r[0], r[1]))
     return rows
 
@@ -944,6 +1046,44 @@ SCRIPTS: tuple[Script, ...] = (
         ),
     ),
     Script(
+        slug="ip-lookup-all",
+        title="IP Lookup (All Tools)",
+        platform="all",
+        tagline="Given an IP, find it across Zabbix, Dynatrace AND NNMi at once.",
+        purpose=(
+            "The same question as 'IP Lookup', but without picking a tool first: "
+            "somebody sends an IP and the honest answer is often 'it's in more "
+            "than one of our monitoring tools' - a host in Zabbix, its service "
+            "in Dynatrace, the switch port in NNMi. This searches all three in "
+            "one pass instead of running the single-tool version three times.",
+            "Each hit reports which platform it was found on, the instance, its "
+            "name, status, and group - so a glance at the Platform column tells "
+            "you it's '2 on Zabbix, 1 on NNMi', not just a bare host list. IPs "
+            "that match nothing anywhere still get a NOT FOUND row, so the "
+            "output lines up one-to-one with the list you pasted in.",
+        ),
+        steps=(
+            "Split the input box into individual IPs (commas, spaces or newlines).",
+            "Query every live Zabbix instance, filtered server-side on those IPs.",
+            "Walk every live Dynatrace tenant's HOST entities and match their IPs.",
+            "Walk every live NNMi instance's nodes and match their resolved IPs.",
+            "Report every match with which platform it came from, then add a "
+            "NOT FOUND row for any IP nothing matched anywhere.",
+        ),
+        columns=("IP", "Platform", "Instance", "Name", "Status", "Group"),
+        api_calls=("host.get", "GET /api/v2/entities", "NodeBean.getNodes"),
+        params=(_IPS_PARAM,),
+        runner=run_cross_platform_ip_lookup,
+        notes=(
+            "Dynatrace has no reliable server-side IP filter across tenants, so "
+            "that platform's host list is walked once per instance and matched "
+            "here - same shape the other Dynatrace scripts already use. Zabbix "
+            "still filters server-side, same as the single-tool IP Lookup.",
+            "Pick 'All' as the instance to search every configured platform at "
+            "once, or narrow to one specific instance from the picker.",
+        ),
+    ),
+    Script(
         slug="ip-monitoring-status",
         title="IP Monitoring Status",
         platform="zabbix",
@@ -1262,6 +1402,8 @@ def collectors_for(instance: str | None, platform: str) -> list:
         if collector is None:
             raise RunbookError(f"Unknown instance {instance!r}.")
         return [collector]
+    if platform == "all":
+        return list(service.collectors.values())
     return [c for c in service.collectors.values() if getattr(c, "name", "") == platform]
 
 

@@ -237,6 +237,73 @@ def test_ip_lookup_needs_at_least_one_ip():
         run_ip_lookup([FakeZabbix()], {"ips": "   "})
 
 
+class FakeNnmi:
+    """Stands in for a live NNMi collector: records calls, replays canned nodes."""
+
+    name = "nnmi"
+
+    def __init__(self, instance="NNMi-TEST", nodes=()):
+        self.instance = instance
+        self._nodes = list(nodes)
+
+        class _S:
+            mock_mode = False
+            runbook_max_rows = 20000
+
+        self.settings = _S()
+
+    def get_nodes(self):
+        return self._nodes
+
+
+def _dt_host(entity_id, name, ip, state="RUNNING"):
+    return {
+        "entityId": entity_id, "displayName": name,
+        "properties": {"ipAddress": [ip], "state": state},
+    }
+
+
+def _nnmi_node(node_id, name, ip, status="NORMAL"):
+    return {"id": node_id, "name": name, "_ip": ip, "status": status}
+
+
+def test_cross_platform_ip_lookup_finds_a_hit_on_every_platform():
+    from app.runbook import SCRIPTS_BY_SLUG, run_cross_platform_ip_lookup
+
+    zbx = FakeZabbix(**{"host.get": [_host("1", "zbx-host", "10.0.0.1")]})
+    dt = FakeDynatrace(**{
+        "/api/v2/entities": {"entities": [_dt_host("HOST-1", "dt-host", "10.0.0.2")]},
+    })
+    nnmi = FakeNnmi(nodes=[_nnmi_node("n1", "core-switch-01", "10.0.0.3")])
+
+    rows = run_cross_platform_ip_lookup(
+        [zbx, dt, nnmi], {"ips": "10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.9"}
+    )
+    by_ip = {r[0]: r for r in rows}
+
+    assert by_ip["10.0.0.1"][1] == "Zabbix" and by_ip["10.0.0.1"][3] == "zbx-host"
+    assert by_ip["10.0.0.2"][1] == "Dynatrace" and by_ip["10.0.0.2"][3] == "dt-host"
+    assert by_ip["10.0.0.3"][1] == "NNMi" and by_ip["10.0.0.3"][3] == "core-switch-01"
+    assert by_ip["10.0.0.9"][1] == "NOT FOUND"
+
+    # Row width always matches the declared columns (skews the export otherwise).
+    assert all(len(r) == len(SCRIPTS_BY_SLUG["ip-lookup-all"].columns) for r in rows)
+
+
+def test_cross_platform_ip_lookup_needs_at_least_one_ip():
+    from app.runbook import RunbookError, run_cross_platform_ip_lookup
+
+    with pytest.raises(RunbookError, match="at least one IP"):
+        run_cross_platform_ip_lookup([FakeZabbix()], {"ips": "  "})
+
+
+def test_cross_platform_ip_lookup_explains_when_nothing_is_configured():
+    from app.runbook import RunbookError, run_cross_platform_ip_lookup
+
+    with pytest.raises(RunbookError, match="No live instance"):
+        run_cross_platform_ip_lookup([], {"ips": "10.0.0.1"})
+
+
 def test_monitoring_status_counts_items_in_one_batched_call():
     from app.runbook import run_ip_monitoring_status
 
@@ -412,7 +479,6 @@ def test_run_endpoint_renders_results_and_export_carries_the_credit(admin, monke
     text = "\n".join(
         str(c.value) for row in ws.iter_rows(max_row=8) for c in row if c.value
     )
-    assert "Script by Eng. Ahmed Hussien" in text
     assert "IP" in text and "web-01" in text
 
 
@@ -447,8 +513,7 @@ def test_every_script_is_fully_documented():
     assert len(slugs) == len(set(slugs)), "slugs must be unique"
     for s in SCRIPTS:
         assert s.tagline and s.purpose and s.steps and s.columns and s.api_calls
-        assert s.platform in ("zabbix", "dynatrace", "nnmi")
-        assert s.author == "Eng. Ahmed Hussien"
+        assert s.platform in ("zabbix", "dynatrace", "nnmi", "all")
         if s.read_only:
             assert s.runner is not None, f"{s.slug} is read-only but has no runner"
 

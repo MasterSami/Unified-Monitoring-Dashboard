@@ -363,7 +363,6 @@ def runbook_export(
         filters_summary=f"{script.platform} · instance: {instance}",
         columns=script.columns,
         rows=rows,
-        credit=f"Script by {script.author}",
     )
     return Response(
         content=data,

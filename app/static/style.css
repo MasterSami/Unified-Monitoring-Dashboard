@@ -605,6 +605,10 @@ a {
 .badge-nnmi {
   --dot: #00a982;
 }
+/* A script that queries every platform at once, not one specific tool. */
+.badge-all {
+  --dot: #8b5cf6;
+}
 .badge-sitescope {
   --dot: #f59e0b;
 }
@@ -1839,10 +1843,6 @@ td.mono {
   padding-top: 6px;
   font-size: 11px;
   color: var(--text-faint);
-}
-.rb-author {
-  margin-left: auto;
-  font-style: italic;
 }
 .rb-pill-read {
   background: color-mix(in srgb, var(--up) 14%, transparent);

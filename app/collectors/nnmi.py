@@ -288,48 +288,63 @@ class NnmiCollector(BaseCollector):
             self.logger.warning("IPAddress fetch failed (partial, skipped): %s", exc)
         return by_node
 
+    # --- Read-only escape hatch (Runbook) -----------------------------------
+
+    def get_nodes(self) -> list[dict]:
+        """Every NNMi node, each carrying its best-resolved IP under ``"_ip"``.
+
+        The same shape :meth:`ZabbixCollector.read_rpc` and Dynatrace's
+        ``read_api``/``read_paginated`` give their scripts: reuses this
+        collector's already-authenticated SOAP session rather than opening a
+        second one, and only ever reads (``getNodes`` + the IPAddressBean
+        fallback below — nothing here can change NNMi's configuration).
+        :meth:`collect_hosts` is built on top of this same call.
+        """
+        records = self._fetch_with_fallback(
+            "/NodeBeanService/NodeBean", _NODE_NS, "getNodes"
+        )
+        # node id -> record, for nodes with no address on the node record.
+        missing: dict[str, dict] = {}
+        for r in records:
+            r["_ip"] = self._node_ip(r)
+            if not r["_ip"] and r.get("id"):
+                missing[str(r["id"])] = r
+
+        # Only hit IPAddressBean when some nodes lacked a direct address (so
+        # instances whose nodes all carry activeAddr pay no extra call).
+        if missing:
+            ip_by_node = self._fetch_ip_by_node(set(missing))
+            for node_id, r in missing.items():
+                ip = ip_by_node.get(node_id)
+                if ip:
+                    r["_ip"] = ip
+        return records
+
     # --- Contract -----------------------------------------------------------
 
     def collect_hosts(self) -> list[dict]:
         if self.settings.mock_mode:
             return mock_data.mock_nnmi_hosts(self.instance)
 
-        records = self._fetch_with_fallback(
-            "/NodeBeanService/NodeBean", _NODE_NS, "getNodes"
-        )
         hosts: list[dict] = []
-        # node id -> host dict, for nodes with no address on the node record.
-        missing: dict[str, dict] = {}
-        for r in records:
+        for r in self.get_nodes():
             status_str = (r.get("status") or "UNKNOWN").upper()
             mgmt = (r.get("managementMode") or "").upper()
             if mgmt in ("NOTMANAGED", "OUTOFSERVICE", "UNMANAGED"):
                 status = HostStatus.disabled
             else:
                 status = _NNMI_STATUS.get(status_str, HostStatus.unknown)
-            host = {
+            hosts.append({
                 "external_id": r.get("id") or r.get("uuid") or r.get("name"),
                 "hostname": r.get("name") or r.get("longName") or r.get("id"),
-                "ip": self._node_ip(r),
+                "ip": r.get("_ip"),
                 "status": status,
                 "group_name": r.get("deviceCategory")
                 or r.get("deviceFamily")
                 or r.get("systemLocation"),
                 "last_seen": datetime.now(timezone.utc),
                 "raw_payload": r,
-            }
-            hosts.append(host)
-            if not host["ip"] and r.get("id"):
-                missing[str(r["id"])] = host
-
-        # Only hit IPAddressBean when some nodes lacked a direct address (so
-        # instances whose nodes all carry activeAddr pay no extra call).
-        if missing:
-            ip_by_node = self._fetch_ip_by_node(set(missing))
-            for node_id, host in missing.items():
-                ip = ip_by_node.get(node_id)
-                if ip:
-                    host["ip"] = ip
+            })
         return hosts
 
     def collect_alerts(self) -> list[dict]:
