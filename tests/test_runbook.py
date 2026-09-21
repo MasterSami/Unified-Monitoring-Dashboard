@@ -267,24 +267,45 @@ def _nnmi_node(node_id, name, ip, status="NORMAL"):
     return {"id": node_id, "name": name, "_ip": ip, "status": status}
 
 
-def test_cross_platform_ip_lookup_finds_a_hit_on_every_platform():
+def test_cross_platform_ip_lookup_finds_a_hit_on_every_platform(client):
+    from app.db import SessionLocal
+    from app.models import Host, HostStatus, SourcePlatform
     from app.runbook import SCRIPTS_BY_SLUG, run_cross_platform_ip_lookup
 
-    zbx = FakeZabbix(**{"host.get": [_host("1", "zbx-host", "10.0.0.1")]})
+    zbx = FakeZabbix(**{"host.get": [_host("1", "zbx-host", "10.77.0.1")]})
     dt = FakeDynatrace(**{
-        "/api/v2/entities": {"entities": [_dt_host("HOST-1", "dt-host", "10.0.0.2")]},
+        "/api/v2/entities": {"entities": [_dt_host("HOST-1", "dt-host", "10.77.0.2")]},
     })
-    nnmi = FakeNnmi(nodes=[_nnmi_node("n1", "core-switch-01", "10.0.0.3")])
+    nnmi = FakeNnmi(nodes=[_nnmi_node("n1", "core-switch-01", "10.77.0.3")])
+
+    db = SessionLocal()
+    try:
+        db.add(Host(
+            external_id="ss-1", source_platform=SourcePlatform.sitescope,
+            source_instance="SiteScope-TEST", hostname="ss-host", ip="10.77.0.4",
+            status=HostStatus.up, group_name="Prod",
+        ))
+        db.add(Host(
+            external_id="dv-1", source_platform=SourcePlatform.digitalview,
+            source_instance="DigitalView-TEST", hostname="dv-host", ip="10.77.0.5",
+            status=HostStatus.unknown, group_name="Core",
+        ))
+        db.commit()
+    finally:
+        db.close()
 
     rows = run_cross_platform_ip_lookup(
-        [zbx, dt, nnmi], {"ips": "10.0.0.1, 10.0.0.2, 10.0.0.3, 10.0.0.9"}
+        [zbx, dt, nnmi],
+        {"ips": "10.77.0.1, 10.77.0.2, 10.77.0.3, 10.77.0.4, 10.77.0.5, 10.77.0.9"},
     )
     by_ip = {r[0]: r for r in rows}
 
-    assert by_ip["10.0.0.1"][1] == "Zabbix" and by_ip["10.0.0.1"][3] == "zbx-host"
-    assert by_ip["10.0.0.2"][1] == "Dynatrace" and by_ip["10.0.0.2"][3] == "dt-host"
-    assert by_ip["10.0.0.3"][1] == "NNMi" and by_ip["10.0.0.3"][3] == "core-switch-01"
-    assert by_ip["10.0.0.9"][1] == "NOT FOUND"
+    assert by_ip["10.77.0.1"][1] == "Zabbix" and by_ip["10.77.0.1"][3] == "zbx-host"
+    assert by_ip["10.77.0.2"][1] == "Dynatrace" and by_ip["10.77.0.2"][3] == "dt-host"
+    assert by_ip["10.77.0.3"][1] == "NNMi" and by_ip["10.77.0.3"][3] == "core-switch-01"
+    assert by_ip["10.77.0.4"][1] == "SiteScope" and by_ip["10.77.0.4"][3] == "ss-host"
+    assert by_ip["10.77.0.5"][1] == "Digital View" and by_ip["10.77.0.5"][3] == "dv-host"
+    assert by_ip["10.77.0.9"][1] == "NOT FOUND"
 
     # Row width always matches the declared columns (skews the export otherwise).
     assert all(len(r) == len(SCRIPTS_BY_SLUG["ip-lookup-all"].columns) for r in rows)
@@ -297,11 +318,33 @@ def test_cross_platform_ip_lookup_needs_at_least_one_ip():
         run_cross_platform_ip_lookup([FakeZabbix()], {"ips": "  "})
 
 
-def test_cross_platform_ip_lookup_explains_when_nothing_is_configured():
+def test_cross_platform_ip_lookup_finds_inventory_only_hosts_with_no_live_collector(client):
+    """SiteScope/Digital View hits still show up even when nothing else is
+    configured - they're read from storage, not queried live."""
+    from app.db import SessionLocal
+    from app.models import Host, HostStatus, SourcePlatform
+    from app.runbook import run_cross_platform_ip_lookup
+
+    db = SessionLocal()
+    try:
+        db.add(Host(
+            external_id="dv-2", source_platform=SourcePlatform.digitalview,
+            source_instance="DigitalView-TEST", hostname="dv-only-host",
+            ip="10.77.0.6", status=HostStatus.unknown,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    rows = run_cross_platform_ip_lookup([], {"ips": "10.77.0.6"})
+    assert [r[1] for r in rows] == ["Digital View"]
+
+
+def test_cross_platform_ip_lookup_explains_when_nothing_is_configured(client):
     from app.runbook import RunbookError, run_cross_platform_ip_lookup
 
     with pytest.raises(RunbookError, match="No live instance"):
-        run_cross_platform_ip_lookup([], {"ips": "10.0.0.1"})
+        run_cross_platform_ip_lookup([], {"ips": "10.77.99.99"})
 
 
 def test_monitoring_status_counts_items_in_one_batched_call():

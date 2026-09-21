@@ -33,7 +33,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Sequence
 
+from sqlalchemy import select
+
 from app.config import Settings
+from app.db import SessionLocal
+from app.models import Host, SourcePlatform
 from app.servers import load_servers
 
 logger = logging.getLogger("runbook")
@@ -317,12 +321,54 @@ def run_ip_lookup(collectors: list, params: dict[str, str]) -> list[list]:
     return rows
 
 
+#: SiteScope and Digital View are never in ``collectors`` (they are not
+#: pull-based: SiteScope arrives by push through a forwarder, Digital View
+#: is loaded from an uploaded inventory workbook) but both already sit in
+#: the Host table, so the cross-platform lookup reads them straight from
+#: there rather than requiring either integration to be live first.
+_INVENTORY_PLATFORMS = (
+    (SourcePlatform.sitescope, "SiteScope"),
+    (SourcePlatform.digitalview, "Digital View"),
+)
+
+
+def _inventory_hosts(wanted: set[str]) -> list[list]:
+    """SiteScope + Digital View hosts whose IP is in ``wanted``, straight
+    from the Host table - whatever inventory already exists, live feed or
+    not. Never raises: an empty or not-yet-loaded inventory is just no rows.
+    """
+    db = SessionLocal()
+    try:
+        stored = db.scalars(
+            select(Host).where(Host.source_platform.in_(
+                [platform for platform, _label in _INVENTORY_PLATFORMS]
+            ))
+        ).all()
+    finally:
+        db.close()
+
+    labels = dict(_INVENTORY_PLATFORMS)
+    rows: list[list] = []
+    for h in stored:
+        if not h.ip or h.ip not in wanted:
+            continue
+        rows.append([
+            h.ip, labels[h.source_platform], h.source_instance or "",
+            h.hostname, h.status.value.title(), h.group_name or "",
+        ])
+    return rows
+
+
 def run_cross_platform_ip_lookup(collectors: list, params: dict[str, str]) -> list[list]:
     """Answer 'where is this IP monitored?' across EVERY tool at once -
-    Zabbix, Dynatrace and NNMi - instead of just Zabbix. One search tells
-    you which platform(s) know about an address (and as what), rather than
-    running the Zabbix-only version three times by hand against three
-    different consoles.
+    Zabbix, Dynatrace, NNMi, SiteScope and Digital View - instead of just
+    Zabbix. One search tells you which platform(s) know about an address
+    (and as what), rather than checking each tool by hand.
+
+    SiteScope and Digital View are read from whatever is already stored for
+    them (see :func:`_inventory_hosts`) rather than queried live - useful
+    even before either integration is fully wired up, since the inventory
+    that already exists still answers "is this IP anywhere in our records".
     """
     ips = _split_list(params.get("ips", ""))
     if not ips:
@@ -330,13 +376,15 @@ def run_cross_platform_ip_lookup(collectors: list, params: dict[str, str]) -> li
     wanted = set(ips)
 
     live = {p: _live(collectors, p) for p in ("zabbix", "dynatrace", "nnmi")}
-    if not any(live.values()):
+    inventory_rows = _inventory_hosts(wanted)
+    if not any(live.values()) and not inventory_rows:
         raise RunbookError(
-            "No live instance found on Zabbix, Dynatrace or NNMi. Configure "
+            "No live instance found on Zabbix, Dynatrace or NNMi, and no "
+            "SiteScope or Digital View inventory is loaded either. Configure "
             "servers.yaml and set MOCK_MODE=false to use the Runbook."
         )
 
-    rows: list[list] = []
+    rows: list[list] = list(inventory_rows)
 
     for c in live["zabbix"]:
         # Filter server-side, same as the Zabbix-only IP Lookup.
@@ -1049,13 +1097,20 @@ SCRIPTS: tuple[Script, ...] = (
         slug="ip-lookup-all",
         title="IP Lookup (All Tools)",
         platform="all",
-        tagline="Given an IP, find it across Zabbix, Dynatrace AND NNMi at once.",
+        tagline="Given an IP, find it across every tool we have - live or inventory-only.",
         purpose=(
             "The same question as 'IP Lookup', but without picking a tool first: "
             "somebody sends an IP and the honest answer is often 'it's in more "
-            "than one of our monitoring tools' - a host in Zabbix, its service "
-            "in Dynatrace, the switch port in NNMi. This searches all three in "
-            "one pass instead of running the single-tool version three times.",
+            "than one of our systems' - a host in Zabbix, its service in "
+            "Dynatrace, the switch port in NNMi, an inventory row in SiteScope "
+            "or Digital View. This searches all five in one pass instead of "
+            "checking each console by hand.",
+            "Zabbix, Dynatrace and NNMi are queried live. SiteScope and Digital "
+            "View are not pull-integrated yet - SiteScope arrives by push, "
+            "Digital View is loaded from an uploaded inventory workbook - so "
+            "those two are read from whatever is already stored for them "
+            "instead of queried live. Either way, if the inventory exists, it "
+            "shows up here even before an integration is fully wired up.",
             "Each hit reports which platform it was found on, the instance, its "
             "name, status, and group - so a glance at the Platform column tells "
             "you it's '2 on Zabbix, 1 on NNMi', not just a bare host list. IPs "
@@ -1067,11 +1122,14 @@ SCRIPTS: tuple[Script, ...] = (
             "Query every live Zabbix instance, filtered server-side on those IPs.",
             "Walk every live Dynatrace tenant's HOST entities and match their IPs.",
             "Walk every live NNMi instance's nodes and match their resolved IPs.",
+            "Read whatever SiteScope and Digital View hosts are already stored "
+            "and match their IPs too - no live query for either.",
             "Report every match with which platform it came from, then add a "
             "NOT FOUND row for any IP nothing matched anywhere.",
         ),
         columns=("IP", "Platform", "Instance", "Name", "Status", "Group"),
-        api_calls=("host.get", "GET /api/v2/entities", "NodeBean.getNodes"),
+        api_calls=("host.get", "GET /api/v2/entities", "NodeBean.getNodes",
+                    "Host table (SiteScope + Digital View, no live call)"),
         params=(_IPS_PARAM,),
         runner=run_cross_platform_ip_lookup,
         notes=(
@@ -1079,6 +1137,10 @@ SCRIPTS: tuple[Script, ...] = (
             "that platform's host list is walked once per instance and matched "
             "here - same shape the other Dynatrace scripts already use. Zabbix "
             "still filters server-side, same as the single-tool IP Lookup.",
+            "SiteScope and Digital View rows reflect whatever has already been "
+            "ingested (via the SiteScope forwarder, or the last Digital View "
+            "workbook upload) - not a live check. An IP missing from those two "
+            "may simply not have been loaded yet, not necessarily unmonitored.",
             "Pick 'All' as the instance to search every configured platform at "
             "once, or narrow to one specific instance from the picker.",
         ),
