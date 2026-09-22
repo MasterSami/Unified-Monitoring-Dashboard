@@ -49,13 +49,13 @@ Linux/WSL: use `python3 -m venv .venv`, `source .venv/bin/activate`, and `cp` in
 ## 2. Run it
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn app.main:app
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 Then open **http://127.0.0.1:8000**. Live-reload while editing code:
 
 ```powershell
-.venv\Scripts\python.exe -m uvicorn app.main:app --reload
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 You should see `collector.<platform>.<instance>: collection complete: N hosts, M alerts`

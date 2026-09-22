@@ -444,6 +444,52 @@ def run_cross_platform_ip_lookup(collectors: list, params: dict[str, str]) -> li
     return rows
 
 
+def run_common_hosts(collectors: list, params: dict[str, str]) -> list[list]:
+    """List hosts reported by more than one monitoring source.
+
+    The selected Runbook instance is the anchor. Every matching source row is
+    returned so the operator can compare status and details side by side.
+    Stored inventory is used intentionally: this includes Dynatrace, NNMi,
+    SiteScope, and DigitalView even when their collector is not being queried.
+    """
+    selected = (params.get("instance") or "").strip()
+    db = SessionLocal()
+    try:
+        hosts = list(db.scalars(
+            select(Host).order_by(Host.hostname, Host.source_platform, Host.source_instance)
+        ).all())
+    finally:
+        db.close()
+
+    placeholders = {"", "127.0.0.1", "0.0.0.0", "::1", "localhost"}
+    groups: dict[str, list[Host]] = {}
+    for host in hosts:
+        identity = (host.ip or "").strip().lower()
+        if identity in placeholders:
+            identity = (host.hostname or "").strip().lower()
+        if identity:
+            groups.setdefault(identity, []).append(host)
+
+    rows: list[list] = []
+    for identity, members in groups.items():
+        source_keys = {(h.source_platform.value, h.source_instance or "") for h in members}
+        if len(source_keys) < 2:
+            continue
+        if selected and selected != "all" and not any(h.source_instance == selected for h in members):
+            continue
+        for h in members:
+            rows.append([
+                identity, h.source_platform.value, h.source_instance or "",
+                h.hostname or "", h.ip or "",
+                h.status.value.title() if h.status else "Unknown",
+                h.last_seen.isoformat(sep=" ", timespec="seconds") if h.last_seen else "",
+                h.group_name or "", h.owner or "",
+                "Yes" if h.agent_deployed else "No" if h.agent_deployed is not None else "Unknown",
+            ])
+    rows.sort(key=lambda r: (r[0], r[1], r[2], r[3].lower()))
+    return rows
+
+
 def run_ip_monitoring_status(collectors: list, params: dict[str, str]) -> list[list]:
     """For a list of IPs: is it in Zabbix, is it enabled, and is it collecting?"""
     ips = _split_list(params.get("ips", ""))
@@ -976,6 +1022,37 @@ _IPS_PARAM = Param(
 )
 
 SCRIPTS: tuple[Script, ...] = (
+    Script(
+        slug="common-hosts",
+        title="Common Hosts Across Tools",
+        platform="all",
+        tagline="Choose an instance and compare every source that reports the same host.",
+        purpose=(
+            "Finds host identities reported by at least two monitoring sources, using "
+            "a real IP address first and a normalized hostname as a safe fallback.",
+            "Choose one instance to use it as the anchor; the result then shows every "
+            "matching Zabbix, Dynatrace, NNMi, SiteScope, or DigitalView record with "
+            "its status and operational details.",
+        ),
+        steps=(
+            "Group stored host inventory by IP, ignoring placeholder addresses such "
+            "as 127.0.0.1.",
+            "Keep only identities reported by two different source/instance pairs "
+            "and apply the selected instance as the anchor filter.",
+            "Show one row per source record with status, last seen, group, owner, "
+            "and whether a Dynatrace agent is deployed.",
+        ),
+        columns=("Common Identity", "Platform", "Instance", "Hostname", "IP",
+                 "Status", "Last Seen", "Group", "Owner", "Agent Deployed"),
+        api_calls=("Stored Host inventory",),
+        runner=run_common_hosts,
+        notes=(
+            "This is read-only and does not call the monitoring APIs again; it uses "
+            "the latest normalized inventory already collected by the dashboard.",
+            "If the report is empty, collect hosts from at least two tools first, and "
+            "make sure their IPs or hostnames resolve to the same identity.",
+        ),
+    ),
     Script(
         slug="unavailable-hosts",
         title="Unavailable Hosts",

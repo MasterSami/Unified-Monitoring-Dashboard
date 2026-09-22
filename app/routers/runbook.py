@@ -299,6 +299,10 @@ async def runbook_run(
     form = dict(await request.form())
     instance = str(form.get("instance", "all") or "all")
     params = _collect_params(script, form)
+    # Runners normally receive only declared script parameters. The common-hosts
+    # report also needs the instance picker value because it uses stored
+    # cross-source inventory rather than a single collector API.
+    params["instance"] = instance
 
     try:
         rows, elapsed = _run(script, instance, params, settings)
