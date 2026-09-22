@@ -92,6 +92,7 @@
           <th>Title</th>
           <th style="width:100px">Severity</th>
           <th style="width:90px">Status</th>
+          <th style="width:120px">V2 confidence</th>
           <th>Business Service</th>
           <th>Application</th>
           <th>Affected API</th>
@@ -103,7 +104,7 @@
         </tr>
       </thead>
       <tbody id="ic-tbody">
-        <tr><td colspan="12"><div class="empty">Loading…</div></td></tr>
+        <tr><td colspan="13"><div class="empty">Loading…</div></td></tr>
       </tbody>
     </table>
   </div>
@@ -208,6 +209,9 @@
         "<td>" + esc(inc.title) + "</td>" +
         "<td>" + severityPill(inc.severity_int, inc.severity_label) + "</td>" +
         "<td>" + statusPill(inc.status) + "</td>" +
+        '<td><span class="v2-list-confidence confidence-' + esc(inc.confidence_level || "medium") + '">' +
+          esc((inc.confidence_level || "medium").charAt(0).toUpperCase() + (inc.confidence_level || "medium").slice(1)) +
+          ' <small>' + Math.round(Number(inc.confidence_score || 0) * 100) + '</small></span></td>' +
         "<td>" + esc(inc.business_service || "-") + "</td>" +
         "<td>" + esc(firstPlusMore(inc.affected.applications, "canonical_name")) + "</td>" +
         "<td>" + esc(firstPlusMore(inc.affected.apis, "canonical_name")) + "</td>" +
@@ -221,14 +225,14 @@
     }
 
     function load() {
-      tbody.innerHTML = '<tr><td colspan="12"><div class="empty">Loading…</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13"><div class="empty">Loading…</div></td></tr>';
       fetch("/api/v1/incidents?" + buildQuery())
         .then(function (r) { return r.json(); })
         .then(function (incidents) {
           var hasNext = incidents.length > PAGE_SIZE;
           var shown = hasNext ? incidents.slice(0, PAGE_SIZE) : incidents;
           if (!shown.length) {
-            tbody.innerHTML = '<tr><td colspan="12"><div class="empty">No incidents match these filters.</div></td></tr>';
+            tbody.innerHTML = '<tr><td colspan="13"><div class="empty">No incidents match these filters.</div></td></tr>';
           } else {
             tbody.innerHTML = shown.map(rowHtml).join("");
             tbody.querySelectorAll(".ic-row").forEach(function (row) {
@@ -243,7 +247,7 @@
           document.getElementById("ic-count").textContent = shown.length + (hasNext ? "+" : "") + " shown";
         })
         .catch(function () {
-          tbody.innerHTML = '<tr><td colspan="12"><div class="empty">Failed to load incidents.</div></td></tr>';
+          tbody.innerHTML = '<tr><td colspan="13"><div class="empty">Failed to load incidents.</div></td></tr>';
         });
     }
 

@@ -88,3 +88,23 @@
 }
 [data-theme="dark"] .ic-confidence-badge.confidence-medium { color: #fbbf24; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.35); }
 [data-theme="dark"] .section-kicker.caution { color: #fbbf24; }
+.v2-list-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.v2-list-confidence small {
+  font-family: var(--mono);
+  font-size: 10px;
+  opacity: .75;
+}
+.v2-list-confidence.confidence-high { color: var(--up); border-color: color-mix(in srgb, var(--up) 35%, var(--border)); background: color-mix(in srgb, var(--up) 8%, var(--surface)); }
+.v2-list-confidence.confidence-medium { color: #a16207; border-color: #fde68a; background: #fefce8; }
+.v2-list-confidence.confidence-low { color: var(--down); border-color: color-mix(in srgb, var(--down) 30%, var(--border)); background: color-mix(in srgb, var(--down) 7%, var(--surface)); }
+[data-theme="dark"] .v2-list-confidence.confidence-medium { color: #fbbf24; border-color: rgba(245,158,11,.35); background: rgba(245,158,11,.12); }
