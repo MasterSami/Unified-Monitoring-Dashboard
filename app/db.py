@@ -180,6 +180,20 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         # Correlation Phase 6: the Incidents UI's "Sources" column/filter
         # (app/models.py Incident, app/incident_engine.py).
         "sources": "JSON",
+        # Correlation V2: confidence band and operator-facing explanation.
+        "confidence_level": "VARCHAR(16)",
+        "confidence_score": "FLOAT",
+        "confidence_reasons": "JSON",
+        "missing_evidence": "JSON",
+        "decision_version": "VARCHAR(16)",
+    },
+    "correlations": {
+        # Correlation V2: persisted decision metadata for audit and UX.
+        "decision_level": "VARCHAR(16)",
+        "decision_score": "FLOAT",
+        "decision_version": "VARCHAR(16)",
+        "positive_evidence": "JSON",
+        "missing_evidence": "JSON",
     },
     "correlation_evidence": {
         # Correlation Phase 7 (AI-readiness): structured from/to entity +

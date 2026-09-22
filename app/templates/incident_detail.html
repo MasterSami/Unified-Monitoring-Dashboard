@@ -40,6 +40,27 @@
       </div>
     </div>
 
+    <div class="card card-pad ic-confidence-card" id="v2-confidence-card">
+      <div class="ic-confidence-head">
+        <div>
+          <div class="eyebrow">Correlation V2</div>
+          <h3>Decision confidence</h3>
+          <p class="hint">A confidence band based on stored evidence, not a probability or an AI-generated guess.</p>
+        </div>
+        <div id="v2-confidence-badge" class="ic-confidence-badge">Loading</div>
+      </div>
+      <div class="ic-confidence-meter"><span id="v2-confidence-fill"></span></div>
+      <div class="ic-confidence-grid">
+        <div><span class="lbl">Decision score</span><strong id="v2-confidence-score">-</strong></div>
+        <div><span class="lbl">Decision version</span><strong id="v2-confidence-version">-</strong></div>
+        <div><span class="lbl">Evidence state</span><strong id="v2-confidence-state">-</strong></div>
+      </div>
+      <div class="ic-confidence-columns">
+        <div><span class="section-kicker positive">What supports this</span><ul id="v2-positive" class="ic-evidence"></ul></div>
+        <div><span class="section-kicker caution">What is still missing</span><ul id="v2-missing" class="ic-evidence ic-evidence-muted"></ul></div>
+      </div>
+    </div>
+
     <!-- 2. Root cause candidate -->
     <div class="card card-pad">
       <div class="card-head"><h3>Root Cause Candidate</h3><span class="hint">What is the likely origin</span></div>
@@ -222,6 +243,26 @@
       document.getElementById("s-business").textContent = inc.business_service || "Not attributed to one business service";
       document.getElementById("s-events").textContent = (inc.related_events || []).length;
       document.getElementById("s-types").textContent = (inc.correlation_types || []).join(", ") || "-";
+    }
+
+    function renderV2Confidence(inc) {
+      var level = inc.confidence_level || "medium";
+      var score = Math.max(0, Math.min(1, Number(inc.confidence_score || 0)));
+      var badge = document.getElementById("v2-confidence-badge");
+      badge.className = "ic-confidence-badge confidence-" + level;
+      badge.textContent = level.charAt(0).toUpperCase() + level.slice(1) + " confidence";
+      document.getElementById("v2-confidence-fill").style.width = Math.round(score * 100) + "%";
+      document.getElementById("v2-confidence-score").textContent = Math.round(score * 100) + "/100 (banded score)";
+      document.getElementById("v2-confidence-version").textContent = inc.decision_version || "v2";
+      document.getElementById("v2-confidence-state").textContent = (inc.missing_evidence || []).length ? "Review recommended" : "Evidence complete";
+      var positive = inc.confidence_reasons || [];
+      var missing = inc.missing_evidence || [];
+      document.getElementById("v2-positive").innerHTML = positive.length
+        ? positive.map(function (line) { return "<li>" + esc(line) + "</li>"; }).join("")
+        : "<li>No positive evidence recorded yet.</li>";
+      document.getElementById("v2-missing").innerHTML = missing.length
+        ? missing.map(function (line) { return "<li>" + esc(line) + "</li>"; }).join("")
+        : "<li>Nothing outstanding for this decision.</li>";
     }
 
     function renderRootCause(inc) {
@@ -546,6 +587,7 @@
         document.getElementById("ic-content").hidden = false;
 
         renderSummary(inc);
+        renderV2Confidence(inc);
         renderRootCause(inc);
         renderExplanation(inc.evidence, inc.root_cause_candidates);
         renderTimeline(inc.timeline);

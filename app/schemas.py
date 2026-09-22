@@ -477,6 +477,11 @@ class IncidentOut(BaseModel):
     root_cause_candidates: list[RootCauseCandidateOut] = Field(default_factory=list)
     member_roles: dict[str, str] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
+    confidence_level: str | None = "medium"
+    confidence_score: float | None = 0.0
+    confidence_reasons: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    decision_version: str = "v2"
     merged_into_id: int | None = None
     created_at: datetime
 

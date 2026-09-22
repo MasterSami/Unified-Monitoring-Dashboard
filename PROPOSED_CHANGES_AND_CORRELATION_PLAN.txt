@@ -1,0 +1,741 @@
+Unified Monitoring Dashboard
+Proposed Changes + Stronger Correlation Design
+================================================
+
+تاريخ المراجعة: 2026-09-22
+الفرع الذي تمت مراجعته: origin/claude/unified-monitoring-dashboard-6f9leu
+ملاحظة: الـ main branch الحالي يحتوي README فقط، بينما implementation الكامل موجود في branch التطوير.
+
+
+1) ملخص تنفيذي
+----------------
+التطبيق الحالي قوي جداً كـ monitoring وevent-correlation POC، ويحتوي على:
+- تجميع Zabbix وDynatrace وNNMi وSiteScope وDigitalView inventory.
+- توحيد hosts وalerts في data model مشترك.
+- Entity resolution وdeduplication.
+- Topology وdependency graph.
+- Correlation rules وevidence.
+- Incident formation وroot-cause candidates.
+- Capacity forecasting وRunbook وexports.
+
+لكن قبل اعتباره production-ready يجب تنفيذ مجموعة من التعديلات الأمنية والتشغيلية، وبعدها إعادة تصميم Correlation ليعتمد على evidence متعدد المراحل بدلاً من pairwise rules العامة فقط.
+
+
+2) كل التعديلات المقترحة على التطبيق
+--------------------------------------
+
+A. Security وAccess Control — أولوية Release Blocker
+
+1. حماية كل mutation endpoints بتسجيل دخول وصلاحيات واضحة:
+   - POST /api/v1/collectors/run
+   - POST /api/v1/collectors/{instance}/run
+   - POST /api/v1/collectors/{instance}/test-mail
+   - POST /api/v1/forecast/run
+   - POST /api/v1/topology/run
+   - POST /api/v1/traces
+   - كل عمليات incident feedback وresolution وmerge وsplit.
+
+2. إضافة RBAC:
+   - Viewer: قراءة dashboard وalerts.
+   - Operator: refresh، runbook read-only، feedback، resolution.
+   - Admin: mappings، topology changes، rule/weight changes، merge/split.
+   - Service account: ingest من مصدر محدد فقط.
+
+3. حماية trace ingest:
+   - Bearer token أو mTLS.
+   - تحديد source وinstance المسموحين لكل token.
+   - request size limit وevent count limit.
+   - rate limiting.
+   - idempotency key.
+   - audit record لكل ingest.
+
+4. منع إرسال test mail إلى recipient عشوائي:
+   - allowlist للنطاقات أو recipients.
+   - عدم السماح بتغيير recipient إلا للـ Admin.
+   - تسجيل audit event.
+
+5. تحسين password storage:
+   - استبدال SHA-256 المباشر بـ Argon2id أو bcrypt.
+   - حذف plaintext RUNBOOK_PASSWORD fallback.
+   - login throttling وprogressive delay.
+   - lockout أو alert بعد محاولات كثيرة.
+
+6. إضافة CSRF protection:
+   - CSRF token لكل form وPOST.
+   - Origin/Referer validation.
+   - Secure + HttpOnly + SameSite cookies.
+   - تفعيل secure cookies خلف HTTPS.
+
+7. حماية الـ dashboard والـ JSON API عامة:
+   - استخدام SSO/OIDC/Active Directory إذا كان متاحاً.
+   - إذا بقي التطبيق internal-only، يجب على الأقل وضعه خلف reverse proxy موثوق مع authentication.
+
+
+B. Data Integrity وCorrectness
+
+1. جعل كل ingestion idempotent فعلياً باستخدام:
+   platform + instance + deterministic source_event_id
+   مع database ON CONFLICT/upsert بدلاً من الاعتماد على check ثم insert.
+
+2. إصلاح test suite:
+   - استبدال id(object()) في test IDs بـ UUID أو counter مضمون.
+   - الهدف أن تصبح النتيجة 100% green.
+   - النتيجة الحالية أثناء المراجعة: 482 passed و2 failed بسبب duplicate Alert external_id داخل incident tests.
+
+3. إضافة اختبارات لـ:
+   - duplicate ingest.
+   - retry بعد network timeout.
+   - concurrent ingest.
+   - same source event arriving من أكثر من worker.
+   - resolved ثم reopened event.
+   - partial collection.
+   - clean database per test session.
+
+4. تعريف source freshness semantics:
+   - last complete snapshot.
+   - partial snapshot flag.
+   - stale-after threshold.
+   - distinction بين zero alerts وcollector failure وpartial data.
+
+5. عدم اعتبار غياب record من snapshot دليلاً على recovery إلا إذا كان المصدر أعلن أن الـ snapshot كامل.
+
+
+C. Production وDeployment
+
+1. فصل scheduler عن web process، أو إضافة distributed leader lease.
+   البدائل:
+   - worker مستقل.
+   - PostgreSQL advisory lock.
+   - Redis distributed lock.
+   - Celery/RQ/Arq.
+   - systemd/Kubernetes scheduled worker.
+
+2. عدم الاعتماد على process-local write_lock في بيئة متعددة workers/replicas.
+
+3. استخدام Alembic أو نظام migrations versioned بدلاً من create_all وALTER TABLE اليدوي.
+
+4. إضافة migration lock وmigration status command.
+
+5. إضافة readiness وliveness:
+   - /health/live
+   - /health/ready
+   - /health/dependencies
+   - database connectivity.
+   - scheduler status.
+   - collector freshness.
+
+6. إضافة observability:
+   - structured JSON logs.
+   - Prometheus metrics.
+   - OpenTelemetry traces.
+   - collection latency per instance.
+   - failed runs.
+   - ingest rejection count.
+   - correlation throughput.
+   - database lock count.
+   - stale source count.
+
+7. إضافة backup/restore وretention policy.
+
+8. معالجة branch/release:
+   - نقل implementation branch إلى main.
+   - إضافة CI pipeline.
+   - تشغيل tests من clean temporary DATABASE_URL.
+   - منع نشر main وهو README فقط.
+
+
+D. Database وScale
+
+1. raw_payloads حالياً مفيدة للتشخيص لكنها قد تكبر جداً.
+   المقترح:
+   - فصل payload archive عن operational tables.
+   - retention زمني.
+   - compression أو object storage.
+   - redaction للـ credentials/tokens/PII.
+   - عدم إرجاع raw payloads في API العادي.
+
+2. إضافة indexes حسب production query patterns.
+
+3. اختبارات PostgreSQL حقيقية، وليس SQLite فقط.
+
+4. تحسين linear scans داخل correlation/incident lookup عند زيادة عدد الحوادث.
+
+5. جعل runbook result cache خارج process memory إذا كان هناك أكثر من worker.
+
+
+E. UX وOperations
+
+1. عرض freshness لكل platform/instance.
+2. تمييز الحالات التالية في الـ UI:
+   - Healthy / no alerts.
+   - Collector failed.
+   - Partial snapshot.
+   - Stale data.
+   - Token scope unavailable.
+3. إضافة saved filters.
+4. إضافة ownership وassignment للـ incidents.
+5. إضافة SLA timers وacknowledgement.
+6. إضافة maintenance windows.
+7. إضافة notifications عبر Email/Teams/Slack/Webhook.
+8. إضافة audit UI يوضح من قام بـ:
+   - mapping.
+   - rule change.
+   - merge/split.
+   - incident feedback.
+   - resolution.
+   - test mail.
+
+
+F. AI لاحقاً
+
+الـ AI غير موجود فعلياً حالياً؛ الموجود هو AI-readiness architecture فقط.
+لا يجب إضافة AI قبل تثبيت جودة البيانات والتصنيف.
+بعد ذلك يمكن إضافة:
+- incident summary.
+- suggested root cause.
+- similar historical incidents.
+- suggested next action.
+- evidence-backed confidence.
+- human approval.
+- redaction قبل model calls.
+- budget وrate limits.
+
+
+3) السيناريو الحالي للـ Correlation
+------------------------------------
+
+الـ Correlation الحالي عبارة عن مراحل متتالية:
+
+المرحلة 1: Entity Resolution
+- يتم تحويل source identifiers إلى CanonicalEntity موحدة.
+- ترتيب المطابقة الحالي:
+  1. manual mapping.
+  2. CMDB exact match.
+  3. exact IP.
+  4. exact FQDN.
+  5. exact hostname.
+  6. alias.
+  7. prior source mapping.
+  8. إنشاء entity جديدة.
+- عند وجود أكثر من entity لها نفس IP أو hostname، النظام يرفض الاختيار ويعتبرها conflict.
+
+المرحلة 2: Deduplication
+- كل Alert يتحول إلى LogicalEvent حسب fingerprint.
+- الـ fingerprint مبني على entity + normalized problem type، ومعه تفاصيل إضافية حسب event.
+- نفس المشكلة التي يرسلها Zabbix وDynatrace على نفس entity يمكن أن تصبح LogicalEvent واحدة.
+- Alerts الأصلية لا يتم حذفها، بل تبقى occurrences منفصلة مع source وexternal_id وseverity.
+- يتم حساب status للـ LogicalEvent: open، updated، deduplicated، reopened، resolved.
+
+المرحلة 3: Candidate Generation
+لكل LogicalEvent نشط، النظام يبحث عن candidates من:
+- events على نفس entity.
+- events على entities مرتبطة بعلاقة topology مباشرة.
+- events ضمن time window عام، غالباً حتى 1800 ثانية.
+- كل source له cap قدره 300 candidate.
+
+المرحلة 4: Signal Computation
+النظام يحسب signals مثل:
+- same_trace.
+- same_entity.
+- same_host.
+- same_service.
+- same_application.
+- same_api.
+- same_database.
+- same_business_transaction.
+- known_dependency.
+- multi_source.
+- temporal_relationship.
+
+المرحلة 5: Rule Evaluation
+- القواعد configuration-driven.
+- كل rule تحتاج time_window_seconds من مجموعة نوافذ محددة.
+- rule لا يمكن أن تعتمد فقط على weak signals.
+- weak signals الحالية:
+  same timestamp، same host، same application، multi-source.
+- strong signal واحدة قد تكفي، مثل:
+  same_trace أو same_entity أو known_dependency.
+- القواعد مرتبة حسب priority tier.
+- أول rule تطابق تفوز.
+
+القواعد الافتراضية الحالية:
+1. Same distributed trace — 10 دقائق.
+2. Known dependency — 30 دقيقة.
+3. Same entity — 30 دقيقة.
+
+المرحلة 6: Score وCorrelation Persistence
+- يتم حساب score من weights ثابتة/قابلة للتعديل.
+- أفضل signal تحدد correlation type.
+- يتم تخزين Correlation row.
+- يتم تخزين كل hit كـ CorrelationEvidence.
+- correlation group يكبر عندما تأتي events جديدة مرتبطة بأحد أعضائه.
+
+المرحلة 7: Incident Formation
+- correlation التي تحتوي عضوين أو أكثر يمكن أن تتحول إلى Incident.
+- incident يعيد حساب:
+  severity.
+  title.
+  sources.
+  timeline.
+  affected entities.
+  root-cause candidates.
+  member roles.
+- root cause الحالي deterministic:
+  - entity التي لا يوجد entity أخرى داخل المجموعة upstream منها.
+  - ثم ترتيب بالـ earliest onset.
+- النظام يعرض candidates وليس root cause واحداً مؤكداً.
+
+
+4) نقاط قوة السيناريو الحالي
+-----------------------------
+
+- Explainability ممتازة: كل correlation لها signals وvalues وsources.
+- false-correlation protection جيدة ضد الربط بالوقت وحده.
+- deduplication منفصل من correlation، وهذا صحيح تصميمياً.
+- حفظ كل source occurrence وعدم حذف الأصل قرار جيد للتدقيق.
+- topology relationships لها source وconfidence وevidence.
+- root cause لا يتم تقديمه كحقيقة مؤكدة إذا لم يوجد دليل كافٍ.
+- correlation وincident status يتم إعادة حسابهما من البيانات بدلاً من hand-maintained counters.
+- يوجد isolation نسبي للأخطاء داخل batch.
+
+
+5) أين يمكن أن يفشل السيناريو الحالي؟
+--------------------------------------
+
+A. False Positives محتملة
+
+1. Same entity rule واسعة جداً:
+   أي مشكلتين مختلفتين على نفس entity وفي 30 دقيقة قد يتم ربطهما، حتى لو كانتا مستقلتين.
+
+2. Known dependency وحدها قد تكون ضعيفة إذا كانت العلاقة قديمة أو confidence منخفضة أو غير directionally صحيحة.
+
+3. Topology الحالية لا تملك دائماً:
+   - freshness.
+   - observed time.
+   - health of the relationship.
+   - change history.
+
+4. Multi-source لا يثبت أن مشكلتين سبب ونتيجة؛ قد تكون الأداتان تراقبان نفس الشيء بطريقة مستقلة.
+
+5. Event type normalization غير مكتملة لبعض المصادر:
+   - Zabbix وNNMi غالباً problem_type غير موجود.
+   - كثير من events قد تنتهي تحت UNKNOWN أو generic type.
+
+6. الوقت الحالي يعتمد غالباً على last_seen، وليس onset وrecovery وevent lifecycle الكامل.
+
+7. Rule priority وfirst-match قد تمنع الاستفادة من evidence إضافي؛ أقوى rule تفوز، لكن باقي الأدلة قد لا تؤثر في decision بالشكل الكافي.
+
+B. False Negatives محتملة
+
+1. إذا لم يوجد CanonicalEntity صحيحة، فلن يتم العثور على dependency أو same_entity.
+2. عدم وجود IP/FQDN/CMDB mapping يقلل القدرة على ربط نفس الجهاز بين الأدوات.
+3. topology sync الحالية تعتمد أساساً على Dynatrace service calls وNNMi L2؛ لا يوجد CMDB feed آلي.
+4. events التي ليس لها trace_id أو business_service أو normalized problem type تفقد signals قوية.
+5. candidate generation قد يفوّت event بعيداً عن direct neighbor أو window العامة.
+6. الأنظمة التي ترسل open/recovery بشكل غير متسق قد تنتج LogicalEvents غير دقيقة.
+
+
+6) السيناريو الأقوى المقترح
+----------------------------
+
+الهدف ليس جعل النظام يربط أكبر عدد من events، بل:
+- تقليل false positives أولاً.
+- الحفاظ على false negatives القابلة للمراجعة.
+- جعل كل decision قابلاً للتفسير.
+- الفصل بين deduplication وcausal correlation وincident grouping.
+
+التصميم المقترح:
+
+Stage 0: Data Quality Gate
+قبل أي correlation، يجب حساب جودة كل event:
+- identity_confidence.
+- source_reliability.
+- timestamp_quality.
+- lifecycle_quality.
+- topology freshness.
+- semantic completeness.
+- duplicate risk.
+
+أي event منخفض الجودة لا يشارك في automatic high-confidence correlation، بل يدخل review/weak candidate state.
+
+Stage 1: Strong Identity Correlation
+ابدأ فقط بأقوى الأدلة:
+- same trace_id + overlapping time.
+- same source event ID بعد normalization.
+- same canonical entity + same normalized problem class.
+- same API/service/database exact identity.
+- same business transaction + same failure signature.
+
+هذه المرحلة مناسبة للـ automatic deduplication أو high-confidence correlation.
+
+Stage 2: Causal Topology Correlation
+لا يكفي أن تكون العلاقة موجودة؛ يجب التحقق من:
+- direction: هل A depends_on B فعلاً؟
+- relationship type.
+- relationship source.
+- confidence.
+- freshness.
+- observed evidence.
+- هل B بدأ قبل A؟
+- هل A symptom type يتوافق مع failure في B؟
+
+مثال:
+- Database timeout بدأ 20 ثانية قبل API 500.
+- API يعتمد على database.
+- trace أو call path يؤكد أن API يستخدم database.
+- النتيجة: high-confidence causal link.
+
+أما إذا بدأ API قبل database أو العلاقة قديمة فقط، فتصبح النتيجة candidate وليس automatic root cause.
+
+Stage 3: Temporal Causal Window
+بدلاً من time proximity فقط، استخدم temporal features:
+- onset delta.
+- first_seen delta.
+- last_seen delta.
+- duration overlap.
+- recovery order.
+- repeated sequence across history.
+
+الوقت لا يصبح دليلاً وحده؛ يصبح multiplier أو شرطاً مساعداً مع dependency/identity evidence.
+
+Stage 4: Symptom Compatibility
+إضافة event taxonomy موحدة:
+- availability_down.
+- network_unreachable.
+- cpu_saturation.
+- memory_pressure.
+- disk_capacity.
+- database_timeout.
+- connection_refused.
+- http_5xx.
+- latency_high.
+- process_restart_required.
+- authentication_failure.
+- certificate_expiry.
+
+ثم تعريف compatibility matrix:
+- network_device_down → host_unreachable: compatible.
+- database_timeout → api_5xx: compatible.
+- cpu_high → api_5xx: weak/conditional.
+- disk_full → service_down: compatible إذا كان service hosted_on نفس host.
+- two unrelated http_5xx: not enough evidence.
+
+Stage 5: Evidence Graph
+بدلاً من تقييم pair فقط، ابنِ incident evidence graph:
+- nodes = LogicalEvents/entities.
+- edges = trace, dependency, same entity, topology, temporal, business context.
+- كل edge يحتوي:
+  - type.
+  - direction.
+  - source.
+  - confidence.
+  - freshness.
+  - evidence timestamp.
+  - supporting occurrences.
+
+بعدها يتم تقييم graph component لا pair فقط.
+
+Stage 6: Root Cause Ranking
+بدلاً من earliest onset + graph reachability فقط، احسب root-cause score من:
+- upstream coverage: كم symptom يفسره؟
+- temporal precedence.
+- dependency confidence.
+- source reliability.
+- symptom compatibility.
+- independent confirmation.
+- trace confirmation.
+- recovery order.
+- blast radius.
+- contradiction penalty.
+
+يجب عرض:
+- primary candidate.
+- alternative candidates.
+- confidence band.
+- evidence for.
+- evidence against.
+- missing evidence.
+
+لا تعرض root cause كـ certainty إلا إذا تعدى threshold واضحاً.
+
+Stage 7: Incident Lifecycle
+افصل بوضوح بين:
+- LogicalEvent: نفس المشكلة/condition.
+- Correlation: evidence أن events مرتبطة.
+- Incident: operational case يحتاج ownership/action.
+
+أضف حالات:
+- candidate.
+- high_confidence.
+- operator_confirmed.
+- operator_rejected.
+- resolved.
+- reopened.
+- merged.
+
+إذا كان correlation ضعيفاً، لا تحوله تلقائياً إلى incident مؤكد؛ أنشئ candidate cluster للمراجعة.
+
+
+7) نموذج قرار مقترح
+--------------------
+
+بدلاً من القرار الحالي:
+
+strong_signal موجودة + time window + rule match = correlated
+
+استخدم ثلاث مستويات:
+
+High confidence:
+- same_trace، أو
+- same_entity + same_problem_class، أو
+- dependency اتجاهي قوي + onset precedence + compatible symptoms، أو
+- أكثر من مصدر مستقل + same canonical entity + matching signature.
+
+Medium confidence:
+- topology dependency جيدة + temporal order + symptom compatibility، أو
+- same service/application + business transaction + partial trace evidence.
+
+Low confidence:
+- same host فقط.
+- same application فقط.
+- same timestamp.
+- multi-source فقط.
+- topology قديمة بدون onset support.
+
+السياسة:
+- High: automatic correlation وincident.
+- Medium: correlation مع review flag أو incident candidate.
+- Low: لا automatic merge؛ يظهر في review queue.
+
+
+8) Data model additions المقترحة
+---------------------------------
+
+إضافة حقول إلى LogicalEvent/Alert أو جداول منفصلة:
+
+EventIdentity:
+- identity_confidence.
+- resolution_method.
+- identity_conflict.
+- canonical_entity_version.
+
+EventSemantics:
+- normalized_problem_class.
+- symptom_class.
+- failure_domain.
+- resource_type.
+- metric_name.
+- threshold.
+- expected_state.
+- observed_state.
+
+EventTiming:
+- onset_at.
+- detected_at.
+- last_observed_at.
+- recovery_at.
+- duration_seconds.
+- timing_quality.
+
+EvidenceEdge:
+- from_event_id.
+- to_event_id.
+- edge_type.
+- direction.
+- confidence.
+- source.
+- source_reference.
+- observed_at.
+- valid_from.
+- valid_to.
+- evidence_json.
+
+CorrelationDecision:
+- decision_level: high/medium/low.
+- score.
+- threshold.
+- decision_version.
+- positive_evidence.
+- negative_evidence.
+- missing_evidence.
+- auto_or_operator.
+- operator_feedback.
+
+RelationshipHealth:
+- topology_last_observed_at.
+- topology_confidence.
+- topology_source_count.
+- contradiction_count.
+
+
+9) Roadmap تنفيذ عملية
+----------------------
+
+Phase 1: Baseline وMeasurement
+- لا نغير القرار الحالي مباشرة.
+- نسجل كل candidate pair وكل signals وكل rule result.
+- نضيف decision version.
+- نضيف labels من operator: true correlation / false correlation / uncertain.
+- نقيس precision وrecall وfalse-positive rate.
+
+Phase 2: Event Taxonomy
+- توحيد problem classes لكل platform.
+- تحسين Zabbix وNNMi adapters.
+- استخراج tags وmetrics وthresholds وresource types.
+- عدم ترك معظم events تحت generic UNKNOWN.
+
+Phase 3: Strong Evidence Rules
+- same trace exact.
+- same canonical entity + same normalized class.
+- exact API/service/database identity.
+- deterministic signature matching.
+- منع same_entity العامة من تحويل كل شيء إلى incident.
+
+Phase 4: Causal Dependency Engine
+- إضافة direction وfreshness وconfidence للعلاقات.
+- إضافة onset precedence.
+- إضافة symptom compatibility matrix.
+- إضافة contradiction handling.
+
+Phase 5: Evidence Graph وClusters
+- تحويل pairwise correlations إلى graph edges.
+- استخدام connected components مع confidence thresholds.
+- منع weak edges من دمج high-confidence clusters بدون evidence إضافي.
+- إتاحة review queue للـ medium/low clusters.
+
+Phase 6: Root Cause Ranking
+- حساب coverage وprecedence وcompatibility وblast radius.
+- عرض alternatives وevidence against.
+- threshold configurable per business service.
+
+Phase 7: Feedback وCalibration
+- operator confirmation/rejection.
+- حفظ feedback على مستوى edge وليس incident فقط.
+- calibration للـ thresholds حسب platform/service/problem class.
+- weekly accuracy report.
+
+Phase 8: AI مساعد وليس صاحب القرار
+- استخدام AI لشرح أو اقتراح فقط.
+- عدم السماح له بدمج incidents تلقائياً في البداية.
+- كل suggestion يجب أن يعرض evidence وconfidence.
+
+
+10) Metrics يجب اعتمادها
+-------------------------
+
+لا يمكن القول إن correlation أصبحت أفضل بدون قياس.
+
+الـ metrics الأساسية:
+- precision = correct correlations / all automatic correlations.
+- recall = correct correlations found / all known correct correlations.
+- false positive rate.
+- false negative rate.
+- time-to-correlate.
+- time-to-root-cause.
+- percentage of incidents with one clear candidate.
+- percentage requiring manual merge/split.
+- operator acceptance rate.
+- operator rejection rate.
+- evidence completeness.
+- stale topology rate.
+- identity conflict rate.
+
+أهداف أولية مقترحة:
+- High-confidence automatic correlation precision >= 95%.
+- False-positive rate للـ high-confidence أقل من 5%.
+- كل decision له evidence قابل للقراءة.
+- medium-confidence لا يتحول إلى incident مؤكد بدون review.
+- عدم حذف أو فقدان source occurrences.
+
+
+11) سيناريو عملي مستهدف
+-----------------------
+
+السيناريو:
+
+1. NNMi يكتشف CORE-SW-01 down.
+2. Zabbix يكتشف APP01 وAPP02 unreachable بعد 20 ثانية.
+3. Dynatrace يكتشف API 5xx بعد 35 ثانية.
+4. Trace يظهر أن API يعتمد على APP01.
+5. Topology تقول إن APP01 وAPP02 متصلان بـ CORE-SW-01.
+6. Entity resolution يربط كل source بالـ canonical entities الصحيحة.
+7. Event taxonomy تصنف:
+   - CORE-SW-01 = network_device_down.
+   - APP01/APP02 = host_unreachable.
+   - API = http_5xx.
+8. Evidence graph يبني:
+   CORE-SW-01 → APP01 → API
+   CORE-SW-01 → APP02
+9. Engine يتحقق من:
+   - direction.
+   - onset order.
+   - topology freshness.
+   - symptom compatibility.
+   - independent source confirmation.
+10. Incident يخرج:
+    Primary root cause: CORE-SW-01
+    Confidence: High
+    Evidence:
+    - NNMi direct outage.
+    - Zabbix reachability symptoms downstream.
+    - Dynatrace API symptoms downstream.
+    - topology edges observed recently.
+    Alternatives: none أو قائمة واضحة إذا كان هناك conflict.
+    Affected: APP01, APP02, API, business service.
+
+سيناريو لا يجب ربطه:
+
+1. Service A CPU high.
+2. Service B HTTP 500 في نفس الدقيقة.
+3. الاثنان على نفس host.
+4. لا trace مشترك.
+5. لا dependency.
+6. لا business transaction مشترك.
+
+النتيجة الصحيحة:
+- لا automatic correlation.
+- eventان منفصلان.
+- يظهران في review فقط إذا ظهرت أدلة إضافية.
+
+
+12) التوصية التنفيذية النهائية
+------------------------------
+
+لا أنصح بزيادة عدد rules الحالية فقط.
+الطريق الأقوى هو:
+
+1. Measurement قبل التغيير.
+2. Event taxonomy أفضل.
+3. Identity confidence وsource quality.
+4. Strong evidence gates.
+5. Directional fresh topology.
+6. Temporal precedence + symptom compatibility.
+7. Evidence graph بدل pairwise-only decision.
+8. Confidence bands وreview queue.
+9. Root-cause ranking مع evidence for/against.
+10. Operator feedback وthreshold calibration.
+
+أول milestone عملي يجب أن يكون:
+
+Correlation v2 - Strong Evidence Baseline
+- لا يغير كل الـ UI.
+- يضيف decision log.
+- يضيف taxonomy لبعض أهم event types.
+- يجعل same_entity rule أكثر تحفظاً.
+- يضيف topology freshness وdirection checks.
+- يضيف high/medium/low confidence.
+- يضيف operator accept/reject.
+- يقيس precision قبل وبعد.
+
+بعد نجاح هذا milestone فقط ننتقل إلى Evidence Graph وadvanced root-cause ranking.
+
+
+الخلاصة
+-------
+
+الـ correlation الحالي مبني بشكل سليم ومفسر، لكنه ما زال rule/pair oriented.
+الـ correlation الأقوى يجب أن يكون evidence/graph oriented:
+
+Identity → Semantics → Timing → Topology → Compatibility → Evidence Graph → Root Cause → Incident
+
+الهدف ليس أن يربط النظام كل الأحداث، بل أن يربط فقط الأحداث التي يستطيع شرح سبب ارتباطها، وأن يترك الحالات غير المؤكدة للمراجعة البشرية بدلاً من دمجها تلقائياً.

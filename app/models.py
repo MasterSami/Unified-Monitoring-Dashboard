@@ -1053,6 +1053,12 @@ class Correlation(Base):
     #: (see app.correlation_engine) is index 0 by convention, e.g. the
     #: network switch in a "switch down + N unreachable hosts" correlation.
     member_event_ids: Mapped[list] = mapped_column(JSON, default=list)
+    #: Correlation V2 decision metadata kept for operator auditability.
+    decision_level: Mapped[str] = mapped_column(String(16), default="medium", index=True)
+    decision_score: Mapped[float] = mapped_column(Float, default=0.0)
+    decision_version: Mapped[str] = mapped_column(String(16), default="v1")
+    positive_evidence: Mapped[list] = mapped_column(JSON, default=list)
+    missing_evidence: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
@@ -1212,6 +1218,12 @@ class Incident(Base):
     root_cause_candidates: Mapped[list] = mapped_column(JSON, default=list)
     #: {str(event_id): SymptomRole.value} for every member in related_events.
     member_roles: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: Correlation V2 confidence band and explanation shown to operators.
+    confidence_level: Mapped[str | None] = mapped_column(String(16), default="medium", nullable=True, index=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, default=0.0, nullable=True)
+    confidence_reasons: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
+    missing_evidence: Mapped[list | None] = mapped_column(JSON, default=list, nullable=True)
+    decision_version: Mapped[str | None] = mapped_column(String(16), default="v1", nullable=True)
     #: Distinct source_platform values among every member's occurrences,
     #: sorted — same convention as LogicalEvent.sources (Correlation Phase 6:
     #: the Incident list's "Sources" column and its filter).

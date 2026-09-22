@@ -49,6 +49,7 @@ from tests.conftest import RUNBOOK_PASSWORD, RUNBOOK_USER
 NOW = datetime(2026, 9, 21, 8, 0, 0, tzinfo=timezone.utc)
 
 _tag_counter = itertools.count(1)
+_occ_counter = itertools.count(1)
 
 
 def _tag(label: str) -> str:
@@ -63,7 +64,7 @@ def _entity(db, entity_type: EntityType, name: str) -> int:
 
 
 def _event(db, *, entity_id, problem_type, last_seen, status=LogicalEventStatus.open) -> LogicalEvent:
-    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{id(object())}"
+    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{next(_occ_counter)}"
     le = LogicalEvent(
         fingerprint=fp, entity_id=entity_id, normalized_problem_type=problem_type,
         status=status, occurrence_count=1, first_seen=last_seen, last_seen=last_seen,
@@ -76,7 +77,7 @@ def _event(db, *, entity_id, problem_type, last_seen, status=LogicalEventStatus.
 
 def _occurrence(db, *, logical_event: LogicalEvent, platform: SourcePlatform = SourcePlatform.zabbix) -> Alert:
     a = Alert(
-        source_platform=platform, source_instance="T1", external_id=f"occ-{id(object())}",
+        source_platform=platform, source_instance="T1", external_id=f"occ-{next(_occ_counter)}",
         severity_int=4, severity_label="High", title=logical_event.normalized_problem_type,
         started_at=logical_event.last_seen, resolved=False,
         entity_id=logical_event.entity_id, logical_event_id=logical_event.id,

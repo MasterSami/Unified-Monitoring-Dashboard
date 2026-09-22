@@ -122,6 +122,11 @@ class CorrelationOutcome:
     matched_rule_id: str | None = None
     correlation_id: int | None = None
     status: CorrelationStatus | None = None
+    decision_level: str = "low"
+    decision_score: float = 0.0
+    decision_version: str = "v2"
+    positive_evidence: list[str] = field(default_factory=list)
+    missing_evidence: list[str] = field(default_factory=list)
 
 
 def _occurrences(db: Session, event: LogicalEvent) -> list[Alert]:
@@ -409,6 +414,52 @@ def _score(weights: dict[CorrelationSignal, float], hits: list[SignalHit]) -> fl
     return sum(weights[sig] for sig in best_per_signal)
 
 
+def _v2_decision_metadata(hits: list[SignalHit], delta_seconds: float | None) -> tuple[str, float, list[str], list[str]]:
+    """Return an explainable confidence band for Correlation V2.
+
+    V2 does not replace the deterministic rule gate. It adds a conservative
+    operator-facing interpretation of the evidence that passed that gate. A
+    time window is never sufficient by itself; it only strengthens a causal or
+    identity signal. The values are confidence bands, not probabilities.
+    """
+    signals = {h.signal for h in hits}
+    reasons: list[str] = []
+    missing: list[str] = []
+    if CorrelationSignal.same_trace in signals:
+        reasons.append("Exact distributed trace connects the events")
+        score = 0.98
+        level = "high"
+    elif CorrelationSignal.known_dependency in signals:
+        explicit = any(h.signal == CorrelationSignal.known_dependency and h.priority_tier == 2 for h in hits)
+        score = 0.90 if explicit else 0.82
+        level = "high" if explicit and CorrelationSignal.temporal_relationship in signals else "medium"
+        reasons.append("A directional dependency links the affected entities")
+        if explicit:
+            reasons.append("Dependency is backed by an explicit, CMDB, or manual source")
+        else:
+            missing.append("Independent confirmation of the dependency")
+    elif CorrelationSignal.same_entity in signals:
+        score = 0.78
+        level = "medium"
+        reasons.append("Both events resolve to the same canonical entity")
+        missing.append("A causal dependency, trace, or compatible failure signature")
+    else:
+        score = 0.68
+        level = "medium"
+        reasons.append("A concrete identity or service-level signal matched")
+        missing.append("Directional topology or distributed-trace confirmation")
+
+    if CorrelationSignal.temporal_relationship in signals and delta_seconds is not None:
+        reasons.append(f"Onset activity is within the rule window ({delta_seconds:.0f}s apart)")
+    else:
+        missing.append("Reliable onset ordering")
+    if CorrelationSignal.multi_source in signals:
+        reasons.append("More than one monitoring source reported the condition")
+    else:
+        missing.append("Independent monitoring-source confirmation")
+    return level, score, reasons, sorted(set(missing))
+
+
 def _find_existing_correlation(db: Session, event_id: int) -> Correlation | None:
     rows = db.scalars(
         select(Correlation).where(Correlation.status != CorrelationStatus.split)
@@ -448,6 +499,10 @@ def _persist_correlation(
     hits: list[SignalHit],
     score: float,
     ctype: CorrelationType,
+    decision_level: str,
+    decision_score: float,
+    positive_evidence: list[str],
+    missing_evidence: list[str],
 ) -> Correlation:
     existing = _find_existing_correlation(db, a.id) or _find_existing_correlation(db, b.id)
     is_new = existing is None
@@ -458,6 +513,9 @@ def _persist_correlation(
         correlation = Correlation(
             correlation_type=ctype, status=CorrelationStatus.new, rule_id=rule.rule_id,
             score=score, member_event_ids=[a.id, b.id],
+            decision_level=decision_level, decision_score=decision_score,
+            decision_version="v2", positive_evidence=positive_evidence,
+            missing_evidence=missing_evidence,
         )
         db.add(correlation)
         db.flush()
@@ -470,6 +528,12 @@ def _persist_correlation(
         correlation.correlation_type = ctype
         correlation.rule_id = rule.rule_id
         correlation.score = max(correlation.score, score)
+        if decision_score >= (correlation.decision_score or 0.0):
+            correlation.decision_level = decision_level
+            correlation.decision_score = decision_score
+            correlation.decision_version = "v2"
+            correlation.positive_evidence = positive_evidence
+            correlation.missing_evidence = missing_evidence
 
     members = [
         m for m in (db.get(LogicalEvent, eid) for eid in correlation.member_event_ids) if m is not None
@@ -556,14 +620,20 @@ def correlate_pair(
 
     score = _score(weights, best_hits)
     ctype = correlation_type_for(db, best_hits, a, b)
-    correlation = _persist_correlation(db, a, b, best_rule, best_hits, score, ctype)
+    decision_level, decision_score, positive_evidence, missing_evidence = _v2_decision_metadata(best_hits, delta)
+    correlation = _persist_correlation(
+        db, a, b, best_rule, best_hits, score, ctype,
+        decision_level, decision_score, positive_evidence, missing_evidence,
+    )
 
     return CorrelationOutcome(
         correlated=True,
         reason=f"CORRELATED via rule {best_rule.rule_id} ({ctype.value})",
         hits=best_hits, score=score, correlation_type=ctype,
         matched_rule_id=best_rule.rule_id, correlation_id=correlation.id,
-        status=correlation.status,
+        status=correlation.status, decision_level=decision_level,
+        decision_score=decision_score, positive_evidence=positive_evidence,
+        missing_evidence=missing_evidence,
     )
 
 

@@ -283,6 +283,24 @@ def _compute_incident_status(
     return IncidentStatus.open
 
 
+def _incident_confidence(db: Session, correlation_ids: list[int]) -> tuple[str, float, list[str], list[str]]:
+    """Aggregate persisted Correlation V2 decisions for the operator view."""
+    if not correlation_ids:
+        return "low", 0.0, [], ["No persisted correlation decision"]
+    rows = list(db.scalars(select(Correlation).where(Correlation.id.in_(correlation_ids))).all())
+    if not rows:
+        return "low", 0.0, [], ["Correlation evidence is unavailable"]
+    score = max(float(r.decision_score or 0.0) for r in rows)
+    levels = {r.decision_level or "medium" for r in rows}
+    level = "high" if "high" in levels else ("medium" if "medium" in levels else "low")
+    reasons: list[str] = []
+    missing: list[str] = []
+    for row in rows:
+        reasons.extend(row.positive_evidence or [])
+        missing.extend(row.missing_evidence or [])
+    return level, score, list(dict.fromkeys(reasons)), sorted(set(missing))
+
+
 def recompute_incident(
     db: Session, incident: Incident, *, is_new: bool = False, membership_grew: bool = False,
 ) -> None:
@@ -323,6 +341,12 @@ def recompute_incident(
         incident.correlation_types = []
 
     incident.title = _build_title(candidates, incident.business_service, members)
+    level, score, reasons, missing = _incident_confidence(db, incident.source_correlation_ids or [])
+    incident.confidence_level = level
+    incident.confidence_score = score
+    incident.confidence_reasons = reasons
+    incident.missing_evidence = missing
+    incident.decision_version = "v2"
 
 
 def _find_incident_for_correlation(db: Session, correlation_id: int) -> Incident | None:

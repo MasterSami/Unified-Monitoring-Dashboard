@@ -45,6 +45,7 @@ from app.models import (
 NOW = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
 
 _tag_counter = itertools.count(1)
+_event_counter = itertools.count(1)
 
 
 def _tag(label: str) -> str:
@@ -64,7 +65,7 @@ def _event(
     db, *, entity_id: int | None, problem_type: str, last_seen: datetime,
     status: LogicalEventStatus = LogicalEventStatus.open, occurrence_count: int = 1,
 ) -> LogicalEvent:
-    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{id(object())}"
+    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{next(_event_counter)}"
     le = LogicalEvent(
         fingerprint=fp, entity_id=entity_id, normalized_problem_type=problem_type,
         status=status, occurrence_count=occurrence_count, first_seen=last_seen,

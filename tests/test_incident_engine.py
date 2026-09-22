@@ -52,6 +52,7 @@ from tests.conftest import RUNBOOK_PASSWORD, RUNBOOK_USER
 NOW = datetime(2026, 9, 19, 10, 1, 0, tzinfo=timezone.utc)
 
 _tag_counter = itertools.count(1)
+_occ_counter = itertools.count(1)
 
 
 def _tag(label: str) -> str:
@@ -69,7 +70,7 @@ def _event(
     db, *, entity_id: int | None, problem_type: str, last_seen: datetime,
     status: LogicalEventStatus = LogicalEventStatus.open,
 ) -> LogicalEvent:
-    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{id(object())}"
+    fp = f"entity:{entity_id}|problem:{problem_type}|__test__:{next(_occ_counter)}"
     le = LogicalEvent(
         fingerprint=fp, entity_id=entity_id, normalized_problem_type=problem_type,
         status=status, occurrence_count=1, first_seen=last_seen, last_seen=last_seen,
@@ -86,7 +87,7 @@ def _occurrence(
 ) -> Alert:
     a = Alert(
         source_platform=platform, source_instance=instance,
-        external_id=external_id or f"occ-{id(object())}",
+        external_id=external_id or f"occ-{next(_occ_counter)}",
         severity_int=3, severity_label="Average", title=logical_event.normalized_problem_type,
         started_at=logical_event.last_seen, resolved=False,
         entity_id=logical_event.entity_id, logical_event_id=logical_event.id,
