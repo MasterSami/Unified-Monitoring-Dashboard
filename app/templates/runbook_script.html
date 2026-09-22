@@ -74,15 +74,17 @@
       {% if script.slug == 'common-hosts' %}
       <label class="field">
         <span class="field-lbl">Instances to intersect <span class="rb-req">select 2+</span></span>
-        <select name="instances" class="select rb-multi-select" multiple size="7"
-                required title="Hold Ctrl and click to select multiple instances">
+        <div class="rb-instance-picks" role="group" aria-label="Instances to intersect">
           {% for i in instances %}
-          <option value="{{ i.name }}" {{ 'selected' if i.name in selected_instances else '' }}>
-            {{ i.name }} ({{ i.platform }})
-          </option>
+          <label class="rb-instance-btn {{ 'is-selected' if i.name in selected_instances else '' }}">
+            <input type="checkbox" name="instances" value="{{ i.name }}"
+                   {{ 'checked' if i.name in selected_instances else '' }} />
+            <span>{{ i.name }}</span>
+            <small>{{ i.platform }}</small>
+          </label>
           {% endfor %}
-        </select>
-        <span class="rb-help">Hold Ctrl (Windows) or Cmd (Mac) and click to select exactly the instances you want, for example Zabbix-66 + NNMI12.</span>
+        </div>
+        <span class="rb-help">Click the instance buttons to select exactly the set you want, for example Zabbix-66 + NNMI12.</span>
       </label>
       {% else %}
       <label class="field">

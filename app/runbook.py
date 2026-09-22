@@ -1570,7 +1570,10 @@ def execute(
         if p.required and not (params.get(p.name) or "").strip():
             raise RunbookError(f"{p.label} is required.")
 
-    collectors = collectors_for(instance, script.platform)
+    # Common Hosts reads the normalized Host table and accepts a comma-separated
+    # set of instances; it must not be passed to collectors_for(), which expects
+    # one exact collector name.
+    collectors = [] if script.slug == "common-hosts" else collectors_for(instance, script.platform)
     rows = script.runner(collectors, params)
 
     cap = max(1, int(settings.runbook_max_rows))
