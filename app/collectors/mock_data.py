@@ -34,7 +34,23 @@ def _slug(instance: str) -> str:
     return instance.lower().replace(" ", "-")
 
 
-# --- Host templates (hostname suffix, ip tail, status, group) --------------
+# --- Host templates (hostname suffix, ip tail, status, group, [shared_ip]) --
+#
+# Each row's IP is normally derived from the platform's octet + row position,
+# which keeps every platform's addresses in their own disjoint /16 - fine for
+# "one estate per tool", but it means a script that looks for the SAME device
+# across two DIFFERENT platforms (Common Hosts Across Instances/Tools) never
+# finds anything to report in MOCK_MODE, because no two platforms ever share
+# an IP. A real estate has devices watched by more than one tool (a gateway
+# NNMi polls for network health that Zabbix also polls for OS metrics; an app
+# host Zabbix watches that Dynatrace also instruments), so a few rows below
+# carry an explicit 5th element - a fixed shared IP - instead of the derived
+# one, deliberately overlapping across platforms.
+
+#: IPs two mock hosts on DIFFERENT platforms deliberately share, so the
+#: cross-platform "Common Hosts" scripts have something real to find.
+_SHARED_GATEWAY_IP = "10.99.0.1"    # Zabbix <-> NNMi: same edge gateway
+_SHARED_APP_HOST_IP = "10.99.0.2"   # Zabbix <-> Dynatrace: same app host
 
 _ZABBIX_HOSTS = [
     ("web-01", "11", HostStatus.up, "Web Servers"),
@@ -46,6 +62,8 @@ _ZABBIX_HOSTS = [
     ("app-02", "52", HostStatus.unknown, "App Servers"),
     ("mq-01", "61", HostStatus.up, "Messaging"),
     ("legacy-01", "71", HostStatus.disabled, "Decommissioned"),
+    ("edge-gateway-01", "81", HostStatus.up, "Network", _SHARED_GATEWAY_IP),
+    ("app-host-05", "82", HostStatus.up, "App Servers", _SHARED_APP_HOST_IP),
 ]
 
 _DYNATRACE_HOSTS = [
@@ -56,6 +74,7 @@ _DYNATRACE_HOSTS = [
     ("search-01", "41", HostStatus.up, "search"),
     ("auth-01", "61", HostStatus.up, "auth"),
     ("gateway-01", "71", HostStatus.unknown, "gateway"),
+    ("app-host-05", "81", HostStatus.up, "app", _SHARED_APP_HOST_IP),
 ]
 
 _NNMI_HOSTS = [
@@ -67,6 +86,7 @@ _NNMI_HOSTS = [
     ("wan-router-01", "31", HostStatus.up, "WAN"),
     ("wan-router-02", "32", HostStatus.unknown, "WAN"),
     ("old-switch-09", "99", HostStatus.disabled, "Decommissioned"),
+    ("edge-gateway-01", "41", HostStatus.up, "Core Network", _SHARED_GATEWAY_IP),
 ]
 
 
@@ -194,12 +214,14 @@ def _metrics(instance: str, idx: int, name: str, status: HostStatus) -> dict:
 def _hosts(instance: str, octet: int, rows: list[tuple]) -> list[dict]:
     slug = _slug(instance)
     out: list[dict] = []
-    for idx, (name, tail, status, group) in enumerate(rows, start=1):
+    for idx, row in enumerate(rows, start=1):
+        name, tail, status, group, *shared = row
+        ip = shared[0] if shared else f"10.{octet}.{idx}.{tail}"
         out.append(
             {
                 "external_id": f"{slug}-h{idx}",
                 "hostname": f"{name}.{slug}",
-                "ip": f"10.{octet}.{idx}.{tail}",
+                "ip": ip,
                 "status": status,
                 "group_name": group,
                 "last_seen": _ago(idx),
