@@ -159,12 +159,14 @@ def _script_context(
     elapsed: float | None = None,
     error: str = "",
     token: str = "",
+    selected_instances: list[str] | None = None,
 ) -> dict:
     return {
         "active_page": "runbook",
         "script": script,
         "instances": runbook_instances(settings, script.platform),
         "instance": instance,
+        "selected_instances": selected_instances or ([v for v in instance.split(",") if v] if instance != "all" else []),
         "params": params or {},
         "rows": rows,
         "elapsed": elapsed,
@@ -271,7 +273,10 @@ def runbook_script_page(
         )
     return templates.TemplateResponse(
         request, "runbook_script.html",
-        _script_context(request, script, settings, instance=instance),
+        _script_context(
+            request, script, settings, instance=instance,
+            selected_instances=[v for v in instance.split(",") if v and v != "all"],
+        ),
     )
 
 
@@ -296,13 +301,19 @@ async def runbook_run(
     if script is None:
         return HTMLResponse("<div class='notice'>Unknown script.</div>", 404)
 
-    form = dict(await request.form())
-    instance = str(form.get("instance", "all") or "all")
+    form = await request.form()
+    selected_instances = [str(v).strip() for v in form.getlist("instances") if str(v).strip()]
+    if slug == "common-hosts" and selected_instances:
+        instance = ",".join(dict.fromkeys(selected_instances))
+    else:
+        instance = str(form.get("instance", "all") or "all")
     params = _collect_params(script, form)
     # Runners normally receive only declared script parameters. The common-hosts
     # report also needs the instance picker value because it uses stored
     # cross-source inventory rather than a single collector API.
     params["instance"] = instance
+    if selected_instances:
+        params["instances"] = ",".join(dict.fromkeys(selected_instances))
 
     try:
         rows, elapsed = _run(script, instance, params, settings)
@@ -310,7 +321,8 @@ async def runbook_run(
         return templates.TemplateResponse(
             request, "partials/runbook_results.html",
             _script_context(request, script, settings, instance=instance,
-                            params=params, error=str(exc)),
+                            params=params, error=str(exc),
+                            selected_instances=selected_instances),
         )
     except Exception as exc:  # noqa: BLE001 — surface, never 500 the panel
         logger.exception("runbook %s failed", slug)
@@ -318,7 +330,8 @@ async def runbook_run(
             request, "partials/runbook_results.html",
             _script_context(request, script, settings, instance=instance,
                             params=params,
-                            error=f"{type(exc).__name__}: {exc}"),
+                            error=f"{type(exc).__name__}: {exc}",
+                            selected_instances=selected_instances),
         )
 
     token = _cache_key(user, slug, instance, params)
@@ -326,7 +339,8 @@ async def runbook_run(
     return templates.TemplateResponse(
         request, "partials/runbook_results.html",
         _script_context(request, script, settings, instance=instance, params=params,
-                        rows=rows, elapsed=elapsed, token=token),
+                        rows=rows, elapsed=elapsed, token=token,
+                        selected_instances=selected_instances),
     )
 
 

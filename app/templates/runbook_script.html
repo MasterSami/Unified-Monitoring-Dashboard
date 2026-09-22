@@ -71,6 +71,20 @@
       hx-swap="innerHTML"
       hx-indicator="#rb-run-btn"
     >
+      {% if script.slug == 'common-hosts' %}
+      <label class="field">
+        <span class="field-lbl">Instances to intersect <span class="rb-req">select 2+</span></span>
+        <select name="instances" class="select rb-multi-select" multiple size="7"
+                required title="Hold Ctrl and click to select multiple instances">
+          {% for i in instances %}
+          <option value="{{ i.name }}" {{ 'selected' if i.name in selected_instances else '' }}>
+            {{ i.name }} ({{ i.platform }})
+          </option>
+          {% endfor %}
+        </select>
+        <span class="rb-help">Hold Ctrl (Windows) or Cmd (Mac) and click to select exactly the instances you want, for example Zabbix-66 + NNMI12.</span>
+      </label>
+      {% else %}
       <label class="field">
         <span class="field-lbl">Instance</span>
         <select name="instance" class="select">
@@ -84,6 +98,7 @@
           {% endfor %}
         </select>
       </label>
+      {% endif %}
 
       {% for p in script.params %}
       <label class="field">

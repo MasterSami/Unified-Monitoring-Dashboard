@@ -44,7 +44,7 @@ def test_common_hosts_anchors_on_selected_instance():
             ),
         ])
         db.commit()
-        rows = run_common_hosts([], {"instance": "ZBX-DC1"})
+        rows = run_common_hosts([], {"instances": "ZBX-DC1,DT-PROD"})
         assert len(rows) == 2
         assert {row[1] for row in rows} == {"zabbix", "dynatrace"}
         assert all(row[0] == "10.0.0.10" for row in rows)

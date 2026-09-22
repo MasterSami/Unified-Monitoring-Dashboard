@@ -452,7 +452,12 @@ def run_common_hosts(collectors: list, params: dict[str, str]) -> list[list]:
     Stored inventory is used intentionally: this includes Dynatrace, NNMi,
     SiteScope, and DigitalView even when their collector is not being queried.
     """
-    selected = (params.get("instance") or "").strip()
+    selected = {
+        value.strip() for value in (params.get("instances") or params.get("instance") or "").split(",")
+        if value.strip() and value.strip() != "all"
+    }
+    if len(selected) < 2:
+        raise RunbookError("Select at least two instances to calculate their common hosts.")
     db = SessionLocal()
     try:
         hosts = list(db.scalars(
@@ -472,12 +477,12 @@ def run_common_hosts(collectors: list, params: dict[str, str]) -> list[list]:
 
     rows: list[list] = []
     for identity, members in groups.items():
-        source_keys = {(h.source_platform.value, h.source_instance or "") for h in members}
-        if len(source_keys) < 2:
-            continue
-        if selected and selected != "all" and not any(h.source_instance == selected for h in members):
+        member_instances = {h.source_instance or "" for h in members}
+        if not selected.issubset(member_instances):
             continue
         for h in members:
+            if (h.source_instance or "") not in selected:
+                continue
             rows.append([
                 identity, h.source_platform.value, h.source_instance or "",
                 h.hostname or "", h.ip or "",
