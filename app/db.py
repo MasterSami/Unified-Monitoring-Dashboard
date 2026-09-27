@@ -103,6 +103,7 @@ def get_db() -> Iterator[Session]:
 #: (name -> SQL type) — kept in sync with the ORM models. New tables are handled
 #: by create_all; only *added columns on existing tables* need this.
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
+    "whatif_scenarios": {},
     "hosts": {
         "cpu_pct": "FLOAT",
         "mem_pct": "FLOAT",

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}What-If Capacity Simulator · SAMI'X{% endblock %}
+{% block page_title %}What-If Capacity Simulator{% endblock %}
+{% block page_sub %}Explore capacity decisions against the current baseline - simulation, not prediction{% endblock %}
+{% block content %}
+<div class="whatif-shell" id="whatif-app">
+  <section class="card whatif-targetbar">
+    <div class="section-title">1. Choose a target</div>
+    <div class="whatif-target-controls">
+      <input id="wi-search" type="search" placeholder="Search host, IP, drive, or service…" autocomplete="off">
+      <select id="wi-kind"><option value="all">All target types</option><option value="disk">Drive</option><option value="memory">Memory</option><option value="cpu">CPU</option></select>
+    </div>
+    <div id="wi-targets" class="wi-target-list"><div class="empty">Start typing to find forecast targets.</div></div>
+  </section>
+  <div class="whatif-grid">
+    <section class="card wi-builder">
+      <div class="card-head"><h3>Scenario builder</h3><span class="hint">Operations run in order</span></div>
+      <div id="wi-selected" class="wi-selected empty">Select a trusted target above.</div>
+      <div class="wi-add-row"><select id="wi-op-kind"><option value="add_once">Add once</option><option value="free_once">Free once</option><option value="add_daily">Add daily growth</option><option value="remove_daily">Remove daily growth</option><option value="resize">Resize capacity</option><option value="growth_multiplier">Growth multiplier</option><option value="add_utilization">Add utilization</option><option value="utilization_multiplier">Utilization multiplier</option><option value="threshold">Change threshold</option><option value="horizon_date">Horizon date</option></select><button class="btn btn-accent" type="button" onclick="addOp()">Add operation</button></div>
+      <div id="wi-ops" class="wi-ops"></div>
+      <div class="wi-toolbar"><button class="btn" type="button" onclick="resetScenario()">Reset</button><button class="btn" type="button" onclick="saveScenario()">Save scenario</button><select id="wi-saved"><option value="">Load saved scenario…</option></select><button class="btn" type="button" onclick="exportScenario()">Export XLSX</button></div>
+    </section>
+    <section class="card wi-result">
+      <div class="card-head"><h3>Simulation result</h3><span class="pill">LINEAR MODEL</span></div>
+      <div id="wi-result"><div class="empty">Choose a target and add an operation to see the scenario.</div></div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function(){
+  const state={target:null,ops:[],scenarioId:null};
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function loadTargets(){const q=$('wi-search').value, kind=$('wi-kind').value; const r=await fetch('/api/v1/whatif/targets?q='+encodeURIComponent(q)+'&kind='+kind); const d=await r.json(); $('wi-targets').innerHTML=d.targets.length?d.targets.map(t=>`<button class="wi-target ${state.target&&state.target.id===t.id?'active':''} ${t.trust==='blocked'?'blocked':''}" onclick="window.pickTarget('${esc(t.id)}')"><b>${esc(t.hostname)}</b><span>${esc(t.kind)} ${esc(t.subject||'')} · ${esc(t.instance)}</span><em>${t.current_pct==null?'-':Number(t.current_pct).toFixed(1)+'%'} · ${esc(t.classification)}</em></button>`).join(''):'<div class="empty">No simulatable targets found.</div>'; }
+  window.pickTarget=async id=>{const r=await fetch('/api/v1/whatif/targets'); const d=await r.json(); state.target=d.targets.find(t=>t.id===id); if(state.target&&state.target.trust==='blocked'){alert('This baseline is not reliable enough to simulate.');return;} state.ops=[]; renderOps(); renderSelected(); simulate(); loadTargets();};
+  window.addOp=()=>{state.ops.push({kind:$('wi-op-kind').value,value:0});renderOps();simulate();};
+  window.removeOp=i=>{state.ops.splice(i,1);renderOps();simulate();};
+  window.moveOp=(i,dir)=>{const j=i+dir;if(j<0||j>=state.ops.length)return;[state.ops[i],state.ops[j]]=[state.ops[j],state.ops[i]];renderOps();simulate();};
+  function renderSelected(){if(!state.target){$('wi-selected').innerHTML='Select a trusted target above.';return;}$('wi-selected').innerHTML=`<b>${esc(state.target.label)}</b><span>Baseline: ${Number(state.target.current_pct||0).toFixed(1)}% · ${Number(state.target.slope_pct_per_day||0).toFixed(3)}%/day · R² ${state.target.r_squared??'-'}</span>`;}
+  function opFields(o,i){let field=''; if(['growth_multiplier','utilization_multiplier'].includes(o.kind))field=`<label>Factor <input type="number" step="0.05" min="0.25" max="5" value="${o.factor??1}" oninput="window.opVal(${i},'factor',this.value)"></label>`; else if(o.kind==='threshold')field=`<label>Threshold % <input type="number" min="70" max="95" value="${o.threshold??90}" oninput="window.opVal(${i},'threshold',this.value)"></label>`; else if(o.kind==='horizon_date')field=`<label>Date <input type="date" value="${o.horizon_date??''}" oninput="window.opVal(${i},'horizon_date',this.value)"></label>`; else field=`<label>Value ${o.kind.includes('daily')?'GB/day':'GB or percentage points'} <input type="number" step="0.1" value="${o.value??0}" oninput="window.opVal(${i},'value',this.value)"></label>`; return `<div class="wi-op"><div><b>${i+1}. ${o.kind.replaceAll('_',' ')}</b><div class="wi-op-actions"><button onclick="window.moveOp(${i},-1)">↑</button><button onclick="window.moveOp(${i},1)">↓</button><button onclick="window.removeOp(${i})">Remove</button></div></div>${field}</div>`;}
+  window.opVal=(i,k,v)=>{state.ops[i][k]=['factor','threshold','value'].includes(k)?Number(v):v;simulate();};
+  function renderOps(){$('wi-ops').innerHTML=state.ops.map(opFields).join('')||'<div class="empty">No operations yet.</div>';}
+  async function simulate(){if(!state.target){return;} const r=await fetch('/api/v1/whatif/simulate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target:state.target.id,ops:state.ops})});const d=await r.json();if(!r.ok){$('wi-result').innerHTML=`<div class="notice rb-error">${esc(d.detail||'Simulation failed')}</div>`;return;}renderResult(d);}
+  function renderResult(d){const b=d.baseline,s=d.scenario; $('wi-result').innerHTML=`<div class="wi-headline"><div><small>Threshold ETA</small><strong>${b.days_to_threshold??'-'}d <span>→</span> ${s.days_to_threshold??'-'}d</strong></div><div class="wi-delta">${d.deltas.days_bought==null?'-':(d.deltas.days_bought>=0?'+':'')+d.deltas.days_bought+' days'}</div></div><div class="wi-metrics"><div>Current <b>${b.current_pct}% → ${s.current_pct}%</b></div><div>Trend/day <b>${b.slope_pct_per_day} → ${s.slope_pct_per_day}</b></div><div>Class <b>${b.classification} → ${s.classification}</b></div></div><svg class="wi-chart" viewBox="0 0 640 180" preserveAspectRatio="none"><line x1="0" y1="140" x2="640" y2="140" class="threshold-line"/><polyline points="${chart(b.series_points)}" class="baseline-line"/><polyline points="${chart(s.series_points)}" class="scenario-line"/></svg><div class="wi-legend"><span class="base-dot"></span> Baseline <span class="scenario-dot"></span> Scenario</div><div class="wi-warnings">${d.warnings.map(x=>`<div class="notice">${esc(x)}</div>`).join('')}</div>`;}
+  function chart(points){if(!points||points.length<2)return '';const max=Math.max(100,...points.map(p=>p[1])), min=Math.min(0,...points.map(p=>p[1]));return points.map((p,i)=>`${(i/(points.length-1))*640},${170-((p[1]-min)/(max-min||1))*150}`).join(' ');}
+  window.resetScenario=()=>{state.ops=[];state.target=null;renderOps();renderSelected();$('wi-result').innerHTML='<div class="empty">Choose a target and add an operation to see the scenario.</div>';loadTargets();};
+  window.saveScenario=async()=>{if(!state.target)return alert('Choose a target first.');const name=prompt('Scenario name');if(!name)return;const r=await fetch('/api/v1/whatif/scenarios',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,target:state.target.id,ops:state.ops})});if(r.ok){const d=await r.json();state.scenarioId=d.id;loadSaved();}};
+  async function loadSaved(){const r=await fetch('/api/v1/whatif/scenarios');const d=await r.json();$('wi-saved').innerHTML='<option value="">Load saved scenario…</option>'+d.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');}
+  $('wi-saved').onchange=async function(){const id=this.value;if(!id)return;const r=await fetch('/api/v1/whatif/scenarios');const d=(await r.json()).find(x=>String(x.id)===id);if(!d)return;state.ops=d.ops;const tr=await fetch('/api/v1/whatif/targets');state.target=(await tr.json()).targets.find(x=>x.id===d.target.id);renderOps();renderSelected();simulate();};
+  window.exportScenario=()=>{if(state.scenarioId)location='/api/v1/whatif/export?scenario_id='+state.scenarioId;else alert('Save the scenario first.');};
+  let timer; $('wi-search').oninput=()=>{clearTimeout(timer);timer=setTimeout(loadTargets,250)}; $('wi-kind').onchange=loadTargets; loadTargets();loadSaved();
+})();
+</script>
+{% endblock %}

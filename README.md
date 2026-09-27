@@ -1177,3 +1177,30 @@ sudo systemctl enable --now unified-dashboard
   logger names (`collector.zabbix`, etc.).
 - Adding a platform: implement a `BaseCollector` subclass, add the severity map
   to `normalizer.py`, and register it in `collectors/__init__.py`.
+
+## What-If capacity simulator
+
+Open **`/whatif`** from the sidebar or directly at `http://127.0.0.1:8000/whatif`.
+The simulator is read-only with respect to `capacity_history` and
+`capacity_forecast`: it applies an ordered operation list to an in-memory copy
+of the current baseline. Saved scenarios contain only the definition and are
+re-simulated against the current baseline every time they are loaded.
+
+The projection engine is shared with the nightly forecast through
+`forecast.compute_projection`. Supported operations include one-time add/free,
+daily growth add/remove, resize, growth/utilization multipliers, threshold,
+horizon date, move workload, redistribution, and service-scoped scenarios.
+Disk and memory scenarios report ETA to the chosen threshold; CPU scenarios are
+indicative utilization only and never claim a days-to-full date.
+
+A **trust gate** blocks noisy or insufficient-data baselines. Every result and
+XLSX export is labelled: **Simulation - linear projection, not a prediction.**
+The engine clamps used capacity to `0..total` and surfaces caveats rather than
+silently hiding them.
+
+### What-If API
+
+- `GET /api/v1/whatif/targets?q=&kind=` - searchable forecast targets.
+- `POST /api/v1/whatif/simulate` - pure in-memory simulation.
+- `GET/POST/PUT/DELETE /api/v1/whatif/scenarios` - save and manage definitions.
+- `GET /api/v1/whatif/export?scenario_id=` - styled XLSX with assumptions.

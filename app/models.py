@@ -684,6 +684,24 @@ class CapacityForecast(Base):
     )
 
 
+class WhatIfScenario(Base):
+    """A saved What-If definition; results are always recomputed from current data."""
+
+    __tablename__ = "whatif_scenarios"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), index=True)
+    description: Mapped[str] = mapped_column(String(2000), default="")
+    target_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    ops_json: Mapped[list] = mapped_column(JSON, default=list)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class CollectorRun(Base):
     """A single execution of a collector, recorded for health tracking."""
 

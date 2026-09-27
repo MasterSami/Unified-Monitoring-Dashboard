@@ -102,6 +102,54 @@ class SeriesFit:
     points: list[list[float]] = field(default_factory=list)
 
 
+@dataclass
+class Projection:
+    """Pure projection result shared by scheduled forecasts and What-If runs."""
+
+    days_to_threshold: float | None
+    days_to_full: float | None
+    classification: str
+    series_points: list[list[float]] = field(default_factory=list)
+
+
+def compute_projection(
+    current_pct: float,
+    slope_pct_per_day: float,
+    total_value: float | None = None,
+    r_squared: float | None = None,
+    *,
+    threshold: float = THRESHOLD_PCT,
+    points: list[list[float]] | None = None,
+    settings: Settings | None = None,
+) -> Projection:
+    """Compute a labelled linear projection without touching the database.
+
+    What-If deliberately calls this function rather than copying ETA or risk
+    classification rules. ``r_squared`` gates dates in the same way as the
+    scheduled forecast; a scenario can change the slope, but cannot make noisy
+    baseline data trustworthy.
+    """
+    settings = settings or get_settings()
+    current = max(0.0, min(100.0, float(current_pct)))
+    slope = float(slope_pct_per_day)
+    eta = 0.0 if current >= threshold else _eta(current, threshold, slope)
+    full = 0.0 if current >= 100 else _eta(current, 100.0, slope)
+    confident = r_squared is None or r_squared >= settings.forecast_min_r_squared
+    if eta is not None and not confident:
+        eta = None
+    if eta is None:
+        classification = CRITICAL if current >= threshold else (OK if slope <= 0 else NOISY if not confident else WATCH)
+    elif eta < CRITICAL_DAYS:
+        classification = CRITICAL
+    elif eta < WARNING_DAYS:
+        classification = WARNING
+    elif eta < WATCH_DAYS:
+        classification = WATCH
+    else:
+        classification = OK
+    return Projection(eta, full, classification, list(points or []))
+
+
 def _daily_means(
     stamps: list[datetime], pcts: list[float], totals: list[float | None]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

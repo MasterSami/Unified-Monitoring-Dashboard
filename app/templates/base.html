@@ -19,6 +19,7 @@
     </script>
 
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}" />
+    <link rel="stylesheet" href="/static/whatif.css?v={{ asset_version }}" />
     <link rel="stylesheet" href="/static/correlation-v2.css?v={{ asset_version }}" />
     <!-- Favicon: served by /favicon.svg, which wraps app/static/logo.svg (or
          logo.png) on a white rounded card so it stays visible on dark tab bars.
@@ -53,6 +54,9 @@
              lives in a sub-nav on the page, not in a second sidebar entry. #}
           <a href="/capacity" class="{{ 'active' if active_page == 'capacity' else '' }}">
             <span class="ico">▤</span> Capacity
+          </a>
+          <a href="/whatif" class="{{ 'active' if active_page == 'whatif' else '' }}">
+            <span class="ico">◇</span> What-If
           </a>
           <a href="/shared" class="{{ 'active' if active_page == 'shared' else '' }}">
             <span class="ico">⇄</span> Shared
