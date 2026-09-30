@@ -52,6 +52,10 @@
         <td>
           <strong>{{ r.host.hostname }}</strong>
           <span class="fc-sub mono">{{ r.host.ip or '-' }}</span>
+          {% if f.classification not in ('insufficient_data', 'noisy') %}
+          <a class="wi-row-link" href="/capacity/whatif?target={{ (r.host.id ~ ':' ~ f.metric_kind ~ ':' ~ (f.subject or '')) | urlencode }}"
+             title="Try a change on this series in What-If">What-If →</a>
+          {% endif %}
         </td>
         <td>
           <span class="badge badge-{{ r.host.source_platform.value }}">

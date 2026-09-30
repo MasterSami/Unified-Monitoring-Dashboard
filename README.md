@@ -1178,29 +1178,49 @@ sudo systemctl enable --now unified-dashboard
 - Adding a platform: implement a `BaseCollector` subclass, add the severity map
   to `normalizer.py`, and register it in `collectors/__init__.py`.
 
-## What-If capacity simulator
+## Capacity - What-If
 
-Open **`/whatif`** from the sidebar or directly at `http://127.0.0.1:8000/whatif`.
-The simulator is read-only with respect to `capacity_history` and
-`capacity_forecast`: it applies an ordered operation list to an in-memory copy
-of the current baseline. Saved scenarios contain only the definition and are
-re-simulated against the current baseline every time they are loaded.
+The third view of the Capacity section, next to Analysis and Forecasting:
+**Capacity → What-If** (`/capacity/whatif`; the old `/whatif` address
+redirects). Analysis shows what a server uses now, Forecasting shows where
+that trend lands, and What-If shows where it would land instead after a
+change - and how many days that buys.
 
-The projection engine is shared with the nightly forecast through
-`forecast.compute_projection`. Supported operations include one-time add/free,
-daily growth add/remove, resize, growth/utilization multipliers, threshold,
-horizon date, move workload, redistribution, and service-scoped scenarios.
-Disk and memory scenarios report ETA to the chosen threshold; CPU scenarios are
-indicative utilization only and never claim a days-to-full date.
+**Using it**
 
-A **trust gate** blocks noisy or insufficient-data baselines. Every result and
-XLSX export is labelled: **Simulation - linear projection, not a prediction.**
-The engine clamps used capacity to `0..total` and surfaces caveats rather than
-silently hiding them.
+1. **Pick a target** - a server's disk (per drive), memory, or CPU. Search by
+   hostname, IP, drive, group or instance. Each card shows today's usage, the
+   forecast class and the date it reaches 90%. Rows marked *noisy* or
+   *insufficient data* are greyed out: there is no trustworthy trend to start
+   from, and the card says why. The **What-If →** link on any row of the
+   Analysis and Forecasting tables jumps straight here with that target
+   selected.
+2. **Describe the change** as one or more steps, applied in order: add or
+   free data once, extend the volume, add or remove daily growth, multiply the
+   growth rate, shift or multiply utilization, change the alert line, fast-forward
+   to a date, or move a workload (size and daily rate) to another target. The
+   *Quick tries* buttons add the common ones in one click.
+3. **Read the result** - the date the series reaches the alert line before and
+   after, the days bought or lost, used/size/trend before and after, and a
+   chart with the recent history, the current trend, the trend after your
+   change, and the alert line.
+
+Save a scenario to reload it later or export it to Excel (the sheet lists the
+steps above the numbers). A saved scenario is only its definition: it is re-run
+against the current baseline every time it is opened, so it never goes stale.
+
+**What it is not.** A straight line through recent history, extended forward,
+with the same rules as the nightly forecast (`forecast.compute_projection`).
+It says where the trend lands, not what will happen. CPU is utilization only
+(it oscillates, it does not fill) and never gets a date. A series that reports
+percent but no size can only take percentage-point changes; size changes are
+skipped with a note rather than applied wrongly. Nothing here writes to
+`capacity_history` or `capacity_forecast`.
 
 ### What-If API
 
-- `GET /api/v1/whatif/targets?q=&kind=` - searchable forecast targets.
-- `POST /api/v1/whatif/simulate` - pure in-memory simulation.
-- `GET/POST/PUT/DELETE /api/v1/whatif/scenarios` - save and manage definitions.
-- `GET /api/v1/whatif/export?scenario_id=` - styled XLSX with assumptions.
+- `GET /api/v1/whatif/targets?q=&kind=&host_id=` - searchable targets.
+- `POST /api/v1/whatif/simulate` - in-memory simulation; returns baseline,
+  scenario, deltas, a forward projection for the chart, and per-target rows.
+- `GET/POST/PUT/DELETE /api/v1/whatif/scenarios` - saved definitions.
+- `GET /api/v1/whatif/export?scenario_id=` - Excel with steps and results.

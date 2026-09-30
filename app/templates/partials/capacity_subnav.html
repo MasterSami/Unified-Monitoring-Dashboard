@@ -1,10 +1,11 @@
 {# Sub-navigation for the Capacity section.
 
-   Both views are about the same servers and the same three resources - one
-   reports what they are using now, the other where that is heading - so they
-   share a sidebar entry instead of competing for one. `subpage` selects the
-   active tab; `planning_risks` puts the at-risk count on the Forecasting tab so a
-   filling disk is visible from the utilization table without switching. #}
+   All three views are about the same servers and the same three resources -
+   one reports what they are using now, one where that is heading, and one
+   where it would head instead if something changed - so they share a sidebar
+   entry instead of competing for one. `subpage` selects the active tab;
+   `planning_risks` puts the at-risk count on the Forecasting tab so a filling
+   disk is visible from the utilization table without switching. #}
 <nav class="subnav" aria-label="Capacity views">
   <a href="/capacity"
      class="{{ 'active' if subpage == 'capacity' else '' }}"
@@ -20,5 +21,11 @@
     {% if planning_risks %}
     <span class="subnav-badge" title="{{ planning_risks }} volume(s) at risk">{{ planning_risks }}</span>
     {% endif %}
+  </a>
+  <a href="/capacity/whatif"
+     class="{{ 'active' if subpage == 'whatif' else '' }}"
+     {{ 'aria-current=page' if subpage == 'whatif' else '' }}
+     title="Try a change (extend, move, slow growth) and see how many days it buys">
+    What-If
   </a>
 </nav>

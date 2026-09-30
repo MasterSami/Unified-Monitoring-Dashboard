@@ -56,7 +56,7 @@
       {% for h in hosts %}
       {% set m = h.metrics or {} %}
       <tr>
-        <td><strong>{{ h.hostname }}</strong><br><a class="wi-row-link" href="/whatif" title="Open What-If capacity simulator">Simulate →</a></td>
+        <td><strong>{{ h.hostname }}</strong><br><a class="wi-row-link" href="/capacity/whatif?host={{ h.id }}" title="Try a change on this server in What-If">What-If →</a></td>
         <td class="mono">{{ h.ip or '-' }}</td>
         {# The instance under the badge: with eight Zabbix servers, knowing a
            host is "on Zabbix" is not enough to go and look at it. #}

@@ -132,22 +132,36 @@ def compute_projection(
     settings = settings or get_settings()
     current = max(0.0, min(100.0, float(current_pct)))
     slope = float(slope_pct_per_day)
-    eta = 0.0 if current >= threshold else _eta(current, threshold, slope)
-    full = 0.0 if current >= 100 else _eta(current, 100.0, slope)
     confident = r_squared is None or r_squared >= settings.forecast_min_r_squared
-    if eta is not None and not confident:
-        eta = None
+    history = list(points or [])
+
+    # The same decisions fit_series makes, in the same order, so a What-If
+    # result and the Forecasting row it started from can never disagree.
+    if current >= threshold:
+        full = _eta(current, 100.0, slope) if slope > 0 else None
+        if full is not None and full >= WATCH_DAYS:
+            full = None
+        return Projection(0.0, full, CRITICAL, history)
+    if slope <= 0:
+        return Projection(None, None, OK, history)
+
+    eta = _eta(current, threshold, slope)
+    full = _eta(current, 100.0, slope)
     if eta is None:
-        classification = CRITICAL if current >= threshold else (OK if slope <= 0 else NOISY if not confident else WATCH)
-    elif eta < CRITICAL_DAYS:
+        return Projection(None, None, OK, history)
+    if eta >= WATCH_DAYS:
+        # Not filling on a timescale anyone plans for; the date is a courtesy
+        # only when the points actually sit on the line.
+        return Projection(eta if confident else None, full if confident else None, OK, history)
+    if not confident:
+        return Projection(None, None, NOISY, history)
+    if eta < CRITICAL_DAYS:
         classification = CRITICAL
     elif eta < WARNING_DAYS:
         classification = WARNING
-    elif eta < WATCH_DAYS:
-        classification = WATCH
     else:
-        classification = OK
-    return Projection(eta, full, classification, list(points or []))
+        classification = WATCH
+    return Projection(eta, full, classification, history)
 
 
 def _daily_means(

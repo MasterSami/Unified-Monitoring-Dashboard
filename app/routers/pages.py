@@ -1458,6 +1458,50 @@ def capacity_forecasting_page(
     )
 
 
+@router.get("/whatif", include_in_schema=False)
+def whatif_redirect(request: Request) -> RedirectResponse:
+    """The What-If view first shipped as its own sidebar tab at /whatif. It
+    is the third Capacity view now; old links keep working."""
+    query = request.url.query
+    return RedirectResponse(
+        "/capacity/whatif" + (f"?{query}" if query else ""), status_code=301
+    )
+
+
+@router.get("/capacity/whatif", response_class=HTMLResponse)
+def capacity_whatif_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> HTMLResponse:
+    """Capacity what-if - the third view of the Capacity section.
+
+    Analysis says what a server uses now, Forecasting says where that trend
+    lands, and this page says where it would land instead after a change
+    (extend, free, slow the growth, move a workload). The data it needs is
+    the same forecast table the Forecasting tab reads; the page itself talks
+    to /api/v1/whatif/* and never fits anything on load.
+    """
+    counts = risk_counts(db)
+    last_computed = db.scalar(select(func.max(CapacityForecast.computed_at)))
+    return templates.TemplateResponse(
+        request,
+        "capacity_whatif.html",
+        {
+            "request": request,
+            "active_page": "capacity",
+            "subpage": "whatif",
+            "planning_risks": counts.get("at_risk", 0),
+            "forecast_ready": counts.get("total_series", 0) > 0,
+            "samples": sample_count(db),
+            "last_computed": last_computed,
+            "min_span_days": settings.forecast_min_span_days,
+            "instances": _instance_names(settings, db),
+            "collectors": get_collector_statuses(db, settings),
+        },
+    )
+
+
 @router.get("/partials/forecast", response_class=HTMLResponse)
 def forecast_partial(
     request: Request,

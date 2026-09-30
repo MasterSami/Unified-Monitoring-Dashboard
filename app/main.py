@@ -12,7 +12,6 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import init_db
 from app.routers import api, pages, runbook
-from app.whatif.router import api_router as whatif_api_router, page_router as whatif_page_router
 from app.scheduler import (
     get_service,
     shutdown_scheduler,
@@ -78,7 +77,9 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 app.include_router(pages.router)
 app.include_router(api.router)
 app.include_router(runbook.router)
-app.include_router(whatif_page_router)
+
+from app.whatif.router import api_router as whatif_api_router  # noqa: E402
+
 app.include_router(whatif_api_router)
 
 
