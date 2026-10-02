@@ -1224,3 +1224,38 @@ skipped with a note rather than applied wrongly. Nothing here writes to
   scenario, deltas, a forward projection for the chart, and per-target rows.
 - `GET/POST/PUT/DELETE /api/v1/whatif/scenarios` - saved definitions.
 - `GET /api/v1/whatif/export?scenario_id=` - Excel with steps and results.
+
+## SAMIx AI PoC v0.1
+
+The first AI step is intentionally **read-only** and feature-gated. It exposes one authenticated route that returns structured Dynatrace problem evidence; it does not call an LLM yet.
+
+### Local startup
+
+```bash
+cp .env.example .env
+cp servers.example.yaml servers.yaml
+# Keep MOCK_MODE=true for a local demo.
+# Enable the Runbook login and configure RUNBOOK_USERS or RUNBOOK_USER/RUNBOOK_PASSWORD.
+# Only after that set ENABLE_AI_POC=true.
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Open `http://127.0.0.1:8000/runbook`, sign in, then use the signed session cookie for the PoC route. The route is:
+
+```text
+POST /api/v1/ai-poc/dynatrace/problems
+```
+
+Example JSON:
+
+```json
+{
+  "instance": "Dynatrace-Prod",
+  "hostname": "MW10",
+  "time_window_minutes": 60,
+  "severity_filter": null,
+  "max_results": 50
+}
+```
+
+The route remains unavailable with `503` while `ENABLE_AI_POC=false`, and returns `401` without a valid Runbook session. No write tool is registered.
