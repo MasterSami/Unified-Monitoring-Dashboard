@@ -1400,3 +1400,45 @@ class IncidentResolution(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
+
+
+# --- SAMIX AI ------------------------------------------------------------------
+
+
+class AIAudit(Base):
+    """One row per question asked of SAMIX AI (app/ai/audit.py).
+
+    Holds the question as typed and the tools called with their arguments
+    (hostnames, filters) - never credentials or raw platform payloads.
+    """
+
+    __tablename__ = "ai_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(32), index=True)
+    user: Mapped[str] = mapped_column(String(128), default="", index=True)
+    question: Mapped[str] = mapped_column(String(4000), default="")
+    #: [{name, args, ok, rows, truncated, error, ms}, ...] in call order.
+    tools_json: Mapped[list] = mapped_column(JSON, default=list)
+    rounds: Mapped[int] = mapped_column(Integer, default=0)
+    model: Mapped[str] = mapped_column(String(128), default="")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    #: passed | failed | error
+    validation: Mapped[str] = mapped_column(String(16), default="")
+    answer_chars: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class AIFeedback(Base):
+    """A thumbs up / down on one answer - the evaluation set from day one."""
+
+    __tablename__ = "ai_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trace_id: Mapped[str] = mapped_column(String(32), index=True)
+    #: +1 helpful, -1 wrong or unhelpful.
+    vote: Mapped[int] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    user: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

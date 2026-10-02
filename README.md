@@ -1224,3 +1224,105 @@ skipped with a note rather than applied wrongly. Nothing here writes to
   scenario, deltas, a forward projection for the chart, and per-target rows.
 - `GET/POST/PUT/DELETE /api/v1/whatif/scenarios` - saved definitions.
 - `GET /api/v1/whatif/export?scenario_id=` - Excel with steps and results.
+
+## SAMIX AI
+
+A read-only assistant at **`/ai`** (sidebar: Operations → SAMIX AI) that
+answers operational questions - "فيه مشاكل ايه على MW10؟", "is web-01
+monitored?", "which disks reach 90% this month?" - from the data SAMIX already
+holds. A **local** model via Ollama picks from four read-only tools, the tools
+query this process's own tables, and the model then answers **only** from the
+evidence those tools returned, citing platform and time for every claim.
+
+The model never talks to Zabbix, Dynatrace, NNMi or SiteScope. SAMIX is the
+broker; the assistant is a reader of SAMIX. The only outbound network call it
+makes is to `OLLAMA_URL`.
+
+### Enable it
+
+```
+AI_ENABLED=true
+OLLAMA_URL=http://localhost:11434
+AI_MODEL=qwen2.5:7b-instruct
+AI_MAX_TOOL_ROUNDS=3
+AI_RATE_LIMIT_PER_MIN=10
+```
+
+Then `ollama pull qwen2.5:7b-instruct` on the Ollama machine and restart
+SAMIX. It ships with `AI_ENABLED=false`: the page says it is off and the
+endpoints return 404, so it is safe to deploy dormant. Questions are audited
+per user, so the page uses the Runbook sign-in; `AI_REQUIRE_LOGIN=false`
+allows anonymous use for a local demo.
+
+### Architecture - a modular monolith
+
+One process, five roles with strict boundaries, each written so it can become
+its own service later without the others changing:
+
+| Module (`app/ai/`) | Role | Future service |
+|---|---|---|
+| `gateway.py` | Entry point: Runbook-session auth, in-memory rate limit (per user/min), question validation, `trace_id`, the ask loop, in-flight job tracking for the step indicator | API gateway / orchestrator |
+| `llm.py` | Ollama `/api/chat` client with tool calling; the one place that opens a network connection | Model serving |
+| `tools.py` | Tool broker: allow-list of exactly four tools, pydantic argument schemas, 10 s timeout in a worker thread with its own DB session, 50-row cap; rows carry `record_id`, `source_platform`, `source_instance`, timestamps | Tool/MCP server |
+| `evidence.py` | Evidence Pack (every row a `FACT` with its sync time; failed tools and failed collector runs become `UNKNOWN`s; freshness per platform) and the deterministic output validator | Evidence / policy service |
+| `audit.py` | `ai_audit` (trace, user, question, tools + args, row counts, model, latency, validation result) and `ai_feedback` (👍/👎 per trace) | Audit / evaluation store |
+| `prompts.py` | The system prompt and the answer prompt, editable in one place | - |
+| `router.py` | `/ai`, `/partials/ai/*` (HTMX, polled progress), `/api/v1/ai/ask`, `/api/v1/ai/feedback`, `/api/v1/ai/health` | - |
+
+**The ask flow.** `POST /api/v1/ai/ask {question}` → gateway validates and
+mints a trace → model call #1 with the tool definitions → the broker runs each
+call (unknown names are refused and audited, bad arguments are rejected,
+failures become UNKNOWNs) → up to `AI_MAX_TOOL_ROUNDS`, then the answer is
+forced → the Evidence Pack is built → model call #2 answers only from the pack
+→ the validator checks every hostname-like token and data-like number in the
+answer exists in the pack (and that an empty pack is acknowledged) → on
+failure the pack is shown as a table under *"AI answer failed validation -
+showing raw evidence"* so the user still gets the data → the audit row is
+written. The page shows which tool is running while it waits, the freshness
+line under every answer ("Data as of: Zabbix 12:05, Dynatrace 12:03"), the
+evidence table with platform badges, and the thumbs.
+
+### The four tools
+
+- `get_host_alerts(hostname, active_only=True)` - alerts for one host across
+  every platform, matched on the normalized hostname (lower-case, domain
+  stripped), IP and source id.
+- `get_host_status(hostname)` - that host's rows from every platform: status,
+  last seen, group, which platforms monitor it and which do not.
+- `get_active_alerts_summary(severity_min, service, limit)` - the current
+  worst alerts across the estate.
+- `get_capacity_risk(hostname, classification)` - rows from
+  `capacity_forecast`: days to 90%, classification, confidence.
+
+Informal names ("MW10") resolve against known hosts: an exact normalized
+match wins, one fuzzy match is accepted, several candidates come back as a
+list for the model to ask about, none comes back as a clean "no such host".
+Nothing is ever guessed.
+
+### Swap the model, measure it
+
+Change `AI_MODEL` (and `OLLAMA_URL`) and restart. To compare models, run the
+benchmark - 15 fixed questions in Arabic and English (valid, missing and
+ambiguous hosts, "is X monitored", capacity) through the full flow:
+
+```
+python scripts/ai_benchmark.py --mock                      # self-contained demo estate
+python scripts/ai_benchmark.py --model llama3.1:8b         # another model, your DB
+python scripts/ai_benchmark.py --fake                      # no Ollama: deterministic baseline
+```
+
+It prints, per question: tools called, rounds used, validation pass/fail,
+latency, and a pass count at the end. `ai_feedback` rows accumulate the human
+verdicts for the same purpose.
+
+### Honest limits
+
+- No RAG, no vector store, no fine-tuning: the model sees only what the four
+  tools return for that question.
+- No correlation reasoning: the model **reports evidence; it does not
+  diagnose**. "Why" questions get the facts, not a root cause.
+- The validator is lexical. It stops invented hostnames and numbers; it cannot
+  judge whether a sentence is a fair summary.
+- Answer quality is the model's; a 7B model on CPU is slow (tens of seconds)
+  and sometimes picks the wrong tool. The benchmark is how you find a better one.
+- Works fully in `MOCK_MODE` (mock hosts, alerts and forecasts).

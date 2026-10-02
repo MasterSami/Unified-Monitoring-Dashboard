@@ -109,6 +109,8 @@ templates.env.globals["enable_runbook"] = get_settings().enable_runbook
 templates.env.globals["enable_dependency_graph"] = get_settings().enable_dependency_graph
 # Feature flag for the Incidents view (Correlation Phase 6).
 templates.env.globals["enable_incidents"] = get_settings().enable_incidents
+# Feature flag for SAMIX AI (app/ai).
+templates.env.globals["enable_ai"] = get_settings().enable_ai
 # Platforms that report live availability. Anything outside this set is an
 # inventory source and is labelled as such wherever hosts are counted.
 templates.env.globals["live_platforms"] = LIVE_PLATFORMS

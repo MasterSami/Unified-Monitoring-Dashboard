@@ -79,8 +79,10 @@ app.include_router(api.router)
 app.include_router(runbook.router)
 
 from app.whatif.router import api_router as whatif_api_router  # noqa: E402
+from app.ai.router import router as ai_router  # noqa: E402
 
 app.include_router(whatif_api_router)
+app.include_router(ai_router)
 
 
 @app.get("/healthz", include_in_schema=False)

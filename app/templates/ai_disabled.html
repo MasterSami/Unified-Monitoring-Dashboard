@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}SAMIX AI · SAMI'X{% endblock %}
+{% block page_title %}SAMIX AI{% endblock %}
+{% block page_sub %}{{ 'Sign in required' if needs_login else 'Feature disabled' }}{% endblock %}
+
+{% block content %}
+<div class="rb-gate">
+  <div class="card rb-login">
+    {% if needs_login %}
+    <h3>SAMIX AI uses the Runbook sign-in</h3>
+    <p class="rb-gate-note">
+      Every question is audited under a user name, so the assistant is only
+      available to signed-in operators. <a href="/runbook">Sign in to the Runbook</a>,
+      then come back to <code>/ai</code>.
+    </p>
+    <p class="rb-gate-note">
+      For a local demo without accounts, set <code>AI_REQUIRE_LOGIN=false</code>.
+    </p>
+    {% else %}
+    <h3>SAMIX AI is turned off</h3>
+    <p class="rb-gate-note">
+      It ships dormant. Enable it in your <code>.env</code> and restart - it only
+      talks to a local Ollama, never to the monitoring tools directly:
+    </p>
+    <pre class="rb-pre">AI_ENABLED=true
+OLLAMA_URL=http://localhost:11434
+AI_MODEL=qwen2.5:7b-instruct</pre>
+    <p class="rb-gate-note">
+      Then <code>ollama pull qwen2.5:7b-instruct</code> on that machine.
+    </p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

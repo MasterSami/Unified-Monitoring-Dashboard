@@ -1,0 +1,19 @@
+{# The in-flight card. Polls itself until the job is done, then the answer
+   card replaces it. Shows the actual steps (which tool, with what) rather
+   than a bare spinner. #}
+<div class="ai-msg ai-progress" id="ai-job-{{ job.trace_id }}"
+     {% if poll %}
+     hx-get="/partials/ai/progress/{{ job.trace_id }}"
+     hx-trigger="every 700ms"
+     hx-swap="outerHTML"
+     {% endif %}>
+  <div class="ai-progress-head"><span class="spin" aria-hidden="true"></span> Working on it…</div>
+  <ol class="ai-steps">
+    {% for s in job.steps %}
+    <li class="{{ 'current' if loop.last else 'done' }}">{{ s }}</li>
+    {% else %}
+    <li class="current">Starting</li>
+    {% endfor %}
+  </ol>
+  <span class="ai-trace mono">trace {{ job.trace_id }}</span>
+</div>

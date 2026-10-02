@@ -1,0 +1,58 @@
+{# One answered question. `r` is an AskResult; `facts` are its evidence rows
+   with display helpers added by the router. When the answer failed validation
+   (or the model failed), the raw evidence is shown instead - the user always
+   gets the data, whatever happened to the prose. #}
+<div class="ai-msg ai-answer" id="ai-{{ r.trace_id }}">
+  {% if r.error %}
+  <div class="notice rb-error ai-note">
+    The model could not answer: {{ r.error }}. The evidence SAMIX collected for this question is below.
+  </div>
+  {% elif show_raw %}
+  <div class="notice rb-error ai-note">
+    AI answer failed validation - showing raw evidence.
+    <span class="ai-note-why" title="{{ r.validation.problems | join('; ') }}">why?</span>
+  </div>
+  {% endif %}
+
+  {% if r.answer and not show_raw %}
+  <div class="ai-answer-text">{{ answer_html | safe }}</div>
+  {% elif r.answer and show_raw %}
+  <details class="ai-details ai-rejected">
+    <summary>Rejected answer text</summary>
+    <div class="ai-answer-text ai-dim">{{ answer_html | safe }}</div>
+  </details>
+  {% endif %}
+
+  {# Raw evidence as the primary content when the prose cannot be trusted. #}
+  {% if show_raw %}
+  <div class="ai-evidence-table">
+    {% include "partials/ai_evidence_table.html" %}
+  </div>
+  {% else %}
+  <details class="ai-details">
+    <summary>
+      Evidence
+      <span class="ai-count">{{ facts | length }} fact{{ '' if facts | length == 1 else 's' }}</span>
+      {% if r.pack.unknowns %}<span class="ai-count ai-count-unknown">{{ r.pack.unknowns | length }} unknown</span>{% endif %}
+    </summary>
+    {% include "partials/ai_evidence_table.html" %}
+  </details>
+  {% endif %}
+
+  <div class="ai-meta">
+    <span class="ai-fresh">{{ r.freshness_line }}</span>
+    <span class="ai-tools" title="tools called">
+      {% for t in r.tools %}<span class="ai-tool-chip {{ '' if t.ok else 'bad' }}">{{ t.name }} · {{ t.rows }}</span>{% endfor %}
+    </span>
+  </div>
+
+  <div class="ai-foot">
+    <form class="ai-vote" hx-post="/api/v1/ai/feedback" hx-target="this" hx-swap="innerHTML">
+      <input type="hidden" name="trace_id" value="{{ r.trace_id }}" />
+      <button class="ai-vote-btn" type="submit" name="vote" value="1" title="Helpful">👍</button>
+      <button class="ai-vote-btn" type="submit" name="vote" value="-1" title="Wrong or unhelpful">👎</button>
+      <input class="ai-comment" type="text" name="comment" maxlength="2000" placeholder="optional: what was wrong?" />
+    </form>
+    <span class="ai-trace mono">trace {{ r.trace_id }} · {{ r.model }} · {{ r.latency_ms }} ms · {{ r.rounds }} round{{ '' if r.rounds == 1 else 's' }}</span>
+  </div>
+</div>

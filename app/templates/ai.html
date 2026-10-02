@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}SAMIX AI · SAMI'X{% endblock %}
+{% block page_title %}SAMIX AI{% endblock %}
+{% block page_sub %}Ask about hosts, alerts and capacity. Answers come only from data SAMIX already holds - read-only, evidence first{% endblock %}
+
+{% block content %}
+<div class="ai-shell">
+  <div class="ai-status card">
+    <div class="ai-status-row">
+      <span class="ai-dot {{ 'ok' if health.ok and health.model_present else ('warn' if health.ok else 'down') }}"></span>
+      <span class="ai-status-text">
+        {% if health.ok and health.model_present %}
+          Model <b class="mono">{{ health.model }}</b> ready on <span class="mono">{{ health.url }}</span>
+        {% elif health.ok %}
+          Ollama is up on <span class="mono">{{ health.url }}</span> but model <b class="mono">{{ health.model }}</b> is not pulled.
+          Run <code>ollama pull {{ health.model }}</code>.
+        {% else %}
+          Ollama is not reachable on <span class="mono">{{ health.url }}</span>. Start it, or set <code>OLLAMA_URL</code>.
+          Questions will fail until it is up; the evidence tools still work.
+        {% endif %}
+      </span>
+      <span class="spacer"></span>
+      <span class="ai-who">Signed in as <b>{{ user }}</b> · {{ rate_limit }} questions/min</span>
+    </div>
+    <div class="ai-rules">
+      Read-only. The model sees only SAMIX's normalized data through four tools and must cite every claim.
+      It reports evidence; it does not diagnose. Mark bad answers with 👎 so the evaluation set grows.
+    </div>
+  </div>
+
+  <div id="ai-log" class="ai-log" aria-live="polite">
+    <div class="ai-msg ai-hello">
+      <div class="ai-hello-title">Try one of these, or type your own (Arabic or English):</div>
+      <div class="ai-examples">
+        {% for ex in examples %}
+        <button type="button" class="ai-example" data-q="{{ ex }}">{{ ex }}</button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <form id="ai-form" class="ai-form card"
+        hx-post="/partials/ai/ask"
+        hx-target="#ai-log"
+        hx-swap="beforeend"
+        hx-indicator="#ai-send">
+    <textarea id="ai-q" name="question" rows="2" maxlength="2000" required
+              placeholder="e.g. فيه مشاكل ايه على MW10؟  /  is web-01 monitored?"></textarea>
+    <button id="ai-send" class="btn btn-accent" type="submit">
+      <span class="spin htmx-indicator" aria-hidden="true"></span> Ask
+    </button>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var form = document.getElementById("ai-form");
+  var box = document.getElementById("ai-q");
+  var log = document.getElementById("ai-log");
+
+  document.querySelectorAll(".ai-example").forEach(function (b) {
+    b.addEventListener("click", function () { box.value = b.dataset.q; box.focus(); });
+  });
+
+  // Enter sends, Shift+Enter makes a new line.
+  box.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (box.value.trim()) htmx.trigger(form, "submit"); }
+  });
+
+  // Echo the question into the log before the progress card arrives, clear the box.
+  form.addEventListener("htmx:configRequest", function () {
+    var q = box.value.trim();
+    if (!q) return;
+    var el = document.createElement("div");
+    el.className = "ai-msg ai-user";
+    el.textContent = q;
+    log.appendChild(el);
+    box.value = "";
+  });
+  // Keep the newest exchange in view as cards arrive and swap.
+  document.body.addEventListener("htmx:afterSettle", function (e) {
+    if (log.contains(e.target) || e.target === log) {
+      log.lastElementChild && log.lastElementChild.scrollIntoView({ block: "end", behavior: "smooth" });
+    }
+  });
+  // A 4xx on ask (rate limit, expired session) is still a card we want to show.
+  document.body.addEventListener("htmx:beforeSwap", function (e) {
+    if (e.detail.xhr && e.detail.xhr.status >= 400 && e.detail.xhr.status < 500) e.detail.shouldSwap = true;
+  });
+})();
+</script>
+{% endblock %}

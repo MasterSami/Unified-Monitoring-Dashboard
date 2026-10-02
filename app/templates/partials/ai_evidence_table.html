@@ -1,0 +1,53 @@
+{# The evidence pack as a table: facts with platform badge and sync time,
+   unknowns highlighted. Used inside the answer card (collapsed) and as the
+   main content when the prose failed validation. #}
+{% if r.pack.unknowns %}
+<ul class="ai-unknowns">
+  {% for u in r.pack.unknowns %}
+  <li><span class="ai-tag ai-tag-unknown">UNKNOWN</span> {{ u }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if facts %}
+<div class="table-wrap">
+  <table class="ai-facts">
+    <thead>
+      <tr>
+        <th style="width:60px"></th>
+        <th>Source</th>
+        <th>Fact</th>
+        <th style="width:72px">As of</th>
+        <th style="width:110px">Record</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in facts %}
+      <tr>
+        <td><span class="ai-tag ai-tag-fact">FACT</span></td>
+        <td>
+          <span class="badge badge-{{ f.source_platform }}"><span class="dot"></span>{{ f.platform_label }}</span>
+          {% if f.source_instance %}<span class="inst mono">{{ f.source_instance }}</span>{% endif %}
+        </td>
+        <td class="ai-fact-text" title="{{ f.data | tojson }}">{{ f.summary }}</td>
+        <td class="mono">{{ f.as_of_short or '-' }}</td>
+        <td class="mono ai-dim">{{ f.id }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif not r.pack.unknowns %}
+<div class="empty ai-empty">No facts were collected for this question{% if not r.tools %} - the model did not call any tool{% endif %}.</div>
+{% endif %}
+
+{% if r.pack.tool_notes %}
+<div class="ai-notes">
+  {% for n in r.pack.tool_notes %}
+  <span class="ai-note-chip" title="{{ n | tojson }}">
+    {{ n.tool }}({% for k, v in n.args.items() %}{{ k }}={{ v }}{{ ', ' if not loop.last }}{% endfor %})
+    {% if n.result %}: {{ n.result }}{% elif n.ok %}: {{ n.rows }} row{{ '' if n.rows == 1 else 's' }}{% endif %}
+  </span>
+  {% endfor %}
+</div>
+{% endif %}

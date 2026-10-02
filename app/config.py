@@ -159,6 +159,28 @@ class Settings(BaseSettings):
     # from .env exactly like ENABLE_TOPOLOGY. See RUNBOOK.md.
     enable_runbook: bool = False
 
+    # --- SAMIX AI (read-only assistant over SAMIX's own data) ---------------
+    # Ships dormant. When on, /ai answers operational questions through a
+    # LOCAL Ollama model and four read-only tools that query this process's
+    # tables - the only outbound call the assistant makes is to OLLAMA_URL.
+    # See app/ai/__init__.py for the module roles and README "SAMIX AI".
+    enable_ai: bool = Field(
+        default=False, validation_alias=AliasChoices("AI_ENABLED", "ENABLE_AI")
+    )
+    ollama_url: str = "http://localhost:11434"
+    ai_model: str = "qwen2.5:7b-instruct"
+    #: Tool-call rounds before the model is forced to answer.
+    ai_max_tool_rounds: int = 3
+    ai_rate_limit_per_min: int = 10
+    #: One model call; a 7B model on CPU can take a while.
+    ai_timeout_seconds: int = 60
+    ai_tool_timeout_seconds: int = 10
+    ai_tool_max_rows: int = 50
+    #: Questions are audited per user, so by default the Runbook sign-in is
+    #: required. False allows anonymous use (rate-limited per client address)
+    #: for a local demo with no accounts configured.
+    ai_require_login: bool = True
+
     # Who may open the Runbook. Preferred form is a ';'-separated list of
     # "user=<sha256-hex-of-password>" entries, so no plaintext password is ever
     # stored:

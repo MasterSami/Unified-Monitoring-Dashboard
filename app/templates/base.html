@@ -20,6 +20,7 @@
 
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}" />
     <link rel="stylesheet" href="/static/whatif.css?v={{ asset_version }}" />
+    <link rel="stylesheet" href="/static/ai.css?v={{ asset_version }}" />
     <link rel="stylesheet" href="/static/correlation-v2.css?v={{ asset_version }}" />
     <!-- Favicon: served by /favicon.svg, which wraps app/static/logo.svg (or
          logo.png) on a white rounded card so it stays visible on dark tab bars.
@@ -99,10 +100,17 @@
           </span>
           {% endif %}
 
-          {% if enable_runbook %}
+          {% if enable_runbook or enable_ai %}
           <div class="nav-section">Operations</div>
+          {% endif %}
+          {% if enable_runbook %}
           <a href="/runbook" class="{{ 'active' if active_page == 'runbook' else '' }}">
             <span class="ico">▷</span> Runbook
+          </a>
+          {% endif %}
+          {% if enable_ai %}
+          <a href="/ai" class="{{ 'active' if active_page == 'ai' else '' }}">
+            <span class="ico">✦</span> SAMIX AI
           </a>
           {% endif %}
         </nav>
