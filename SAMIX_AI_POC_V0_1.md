@@ -38,6 +38,14 @@ Those are intentionally deferred until the tool contract and authorization bound
 - Existing AI readiness tests passed.
 - Result: `16 passed`.
 
-## Next small step
+## Gateway boundary completed
 
-Add a disabled-by-default AI Gateway contract that accepts a user question, enforces the read-only tool allow-list, and returns the structured Dynatrace evidence without invoking an external model.
+`AIGateway` now provides the next security boundary. It is disabled by default,
+requires an authenticated user with the `ai.read` scope, checks an optional
+host allow-list, permits only `get_dynatrace_problems`, and emits an audit event
+for both allowed and denied calls. It still invokes no LLM and exposes no HTTP
+route.
+
+The next small step is to connect this contract to SAMIx authentication through
+a feature-flagged internal route. That route will remain disabled until the
+application's identity source and host-level authorization policy are selected.
