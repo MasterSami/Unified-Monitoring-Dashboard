@@ -177,10 +177,6 @@ class Settings(BaseSettings):
     # How long a Runbook login stays valid.
     runbook_session_minutes: int = 60
 
-    # First SAMIx AI PoC route. It remains disabled until the operator enables
-    # it explicitly after configuring Runbook authentication.
-    enable_ai_poc: bool = False
-
     # Hard cap on rows a single Runbook script may return, so one broad query
     # can never exhaust memory or freeze the browser.
     runbook_max_rows: int = 20000
