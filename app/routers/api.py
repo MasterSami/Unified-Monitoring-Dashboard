@@ -1890,6 +1890,8 @@ def export_alerts_xlsx(
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     group: str | None = Query(default=None),
+    platform: str = Query(default="all"),
+    instance: str = Query(default="all"),
     db: Session = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> Response:
@@ -1909,7 +1911,7 @@ def export_alerts_xlsx(
         state = "active"
 
     stmt = _alerts_filtered_stmt(
-        q, parse_dt(date_from), parse_dt(date_to), state, group
+        q, parse_dt(date_from), parse_dt(date_to), state, group, platform, instance
     )
     stmt = stmt.order_by(
         Alert.severity_int.desc(), Alert.started_at.desc().nullslast()

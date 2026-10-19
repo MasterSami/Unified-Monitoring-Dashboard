@@ -37,6 +37,36 @@
     {% endfor %}
   </div>
 
+  <div class="tabs" role="tablist" title="Filter by monitoring tool" id="platform-tabs">
+    {% set cur_plat = current.platform if current and current.platform else 'all' %}
+    {% for p in ['all'] + platform_order | list %}
+    <button
+      type="button"
+      class="{{ 'active' if p == cur_plat else '' }}"
+      data-platform="{{ p }}"
+      onclick="selectPlatform(this)"
+    >
+      {{ p | platform_label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <select
+    name="instance"
+    class="afilter select"
+    hx-get="/partials/alerts"
+    hx-trigger="change"
+    hx-target="#alerts-region"
+    hx-swap="innerHTML"
+    hx-include=".afilter"
+    title="Filter by collector instance"
+  >
+    <option value="all">All instances</option>
+    {% for i in instances %}
+    <option value="{{ i.name }}">{{ i.name }}</option>
+    {% endfor %}
+  </select>
+
   {{ service_filter("/partials/alerts", "#alerts-region", "afilter", current.group, services) }}
 
   <div class="filter-group">
@@ -55,9 +85,11 @@
     {% endif %}
   </div>
 
-  <!-- Lifecycle state mirror, included on every request. -->
+  <!-- Hidden filter mirrors, included on every request. -->
   <input type="hidden" name="state" value="{{ current.state if current and current.state else 'active' }}"
     class="afilter" id="a-state" />
+  <input type="hidden" name="platform" value="{{ current.platform if current and current.platform else 'all' }}"
+    class="afilter" id="a-platform" />
 </div>
 
 <script>
@@ -73,6 +105,18 @@
     // the Active tab.
     var mirror = document.getElementById("a-state");
     if (mirror) mirror.value = btn.dataset.state;
+    if (window.htmx) {
+      window.htmx.trigger(document.getElementById("alerts-region"), "refresh");
+    }
+  }
+
+  function selectPlatform(btn) {
+    btn.parentElement.querySelectorAll("button").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    btn.classList.add("active");
+    var mirror = document.getElementById("a-platform");
+    if (mirror) mirror.value = btn.dataset.platform;
     if (window.htmx) {
       window.htmx.trigger(document.getElementById("alerts-region"), "refresh");
     }

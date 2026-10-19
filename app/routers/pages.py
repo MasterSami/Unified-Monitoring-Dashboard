@@ -832,6 +832,8 @@ def _alerts_filtered_stmt(
     date_to: datetime | None = None,
     state: str = "active",
     group: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
 ):
     """Alerts SELECT with search + optional started_at range (all in SQL).
 
@@ -876,6 +878,10 @@ def _alerts_filtered_stmt(
             | func.lower(Alert.source_platform).like(like)
             | func.lower(Alert.severity_label).like(like)
         )
+    if platform and platform != "all":
+        stmt = stmt.where(Alert.source_platform == platform)
+    if instance and instance != "all":
+        stmt = stmt.where(Alert.source_instance == instance)
     if date_from is not None:
         stmt = stmt.where(Alert.started_at >= date_from)
     if date_to is not None:
@@ -891,9 +897,11 @@ def _active_alerts(
     date_to: datetime | None = None,
     state: str = "active",
     group: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
 ) -> tuple[list[Alert], int, int, int]:
     """Return (rows, total, page, pages) — one page of alerts for ``state``."""
-    stmt = _alerts_filtered_stmt(q, date_from, date_to, state, group)
+    stmt = _alerts_filtered_stmt(q, date_from, date_to, state, group, platform, instance)
     total = _count_of(db, stmt)
     page, pages, offset = _paginate(page, total)
     stmt = (
@@ -1909,7 +1917,10 @@ def alerts_page(
                 "date_to": "",
                 "state": "active",
                 "group": "",
+                "platform": "all",
+                "instance": "all",
             },
+            "instances": _instance_names(settings, db),
             "services": _service_catalog(db),
             "collectors": get_collector_statuses(db, settings),
         },
@@ -1978,11 +1989,15 @@ def alerts_partial(
     date_to: str | None = None,
     state: str = "active",
     group: str | None = None,
+    platform: str = "all",
+    instance: str = "all",
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Alerts table fragment (search + state + service + date range + paginate)."""
     df, dt = parse_dt(date_from), parse_dt(date_to)
-    alerts, total, page, pages = _active_alerts(db, q, page, df, dt, state, group)
+    alerts, total, page, pages = _active_alerts(
+        db, q, page, df, dt, state, group, platform, instance,
+    )
     return templates.TemplateResponse(
         request,
         "partials/alerts_table.html",
@@ -1998,6 +2013,8 @@ def alerts_partial(
                 "date_to": date_to or "",
                 "state": state,
                 "group": group or "",
+                "platform": platform or "all",
+                "instance": instance or "all",
             },
         },
     )
