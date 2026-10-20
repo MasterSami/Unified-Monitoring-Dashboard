@@ -472,44 +472,53 @@ class DynatraceCollector(BaseCollector):
         if self.settings.mock_mode:
             return mock_data.mock_dynatrace_alerts(self.instance)
 
+        days = max(1, int(self.settings.alert_history_days))
         url = f"{self._base}/api/v2/problems"
-        params = {"problemSelector": 'status("OPEN")', "pageSize": "500"}
+        params: dict[str, str] = {
+            "problemSelector": 'status("OPEN")',
+            "from": f"now-{days}d",
+            "pageSize": "500",
+        }
         alerts: list[dict] = []
         with self._client(headers=self._headers()) as client:
-            resp = self._request_with_retries(client, "GET", url, params=params)
-            if resp.status_code == 403:
-                # Token lacks problems.read — degrade gracefully.
-                self.logger.warning(
-                    "Dynatrace problems endpoint returned 403; %s",
-                    _PROBLEMS_UNAVAILABLE,
-                )
-                self.notes = f"Dynatrace alerts {_PROBLEMS_UNAVAILABLE}"
-                return []
-            resp.raise_for_status()
-            data = resp.json()
-            for p in data.get("problems", []):
-                host_id, hostname = self._affected_host(p)
-                started = None
-                if p.get("startTime"):
-                    started = datetime.fromtimestamp(
-                        int(p["startTime"]) / 1000, tz=timezone.utc
+            while True:
+                resp = self._request_with_retries(client, "GET", url, params=params)
+                if resp.status_code == 403:
+                    self.logger.warning(
+                        "Dynatrace problems endpoint returned 403; %s",
+                        _PROBLEMS_UNAVAILABLE,
                     )
-                alerts.append(
-                    {
-                        "external_id": p.get("problemId"),
-                        "host_hostname": hostname,
-                        "host_external_id": host_id,
-                        "severity_int": normalize_dynatrace_severity(
-                            p.get("severityLevel")
-                        ),
-                        "severity_label": dynatrace_severity_label(
-                            p.get("severityLevel")
-                        ),
-                        "title": p.get("title", ""),
-                        "started_at": started,
-                        "raw_payload": p,
-                    }
-                )
+                    self.notes = f"Dynatrace alerts {_PROBLEMS_UNAVAILABLE}"
+                    return []
+                resp.raise_for_status()
+                data = resp.json()
+                for p in data.get("problems", []):
+                    host_id, hostname = self._affected_host(p)
+                    started = None
+                    if p.get("startTime"):
+                        started = datetime.fromtimestamp(
+                            int(p["startTime"]) / 1000, tz=timezone.utc
+                        )
+                    alerts.append(
+                        {
+                            "external_id": p.get("problemId"),
+                            "host_hostname": hostname,
+                            "host_external_id": host_id,
+                            "severity_int": normalize_dynatrace_severity(
+                                p.get("severityLevel")
+                            ),
+                            "severity_label": dynatrace_severity_label(
+                                p.get("severityLevel")
+                            ),
+                            "title": p.get("title", ""),
+                            "started_at": started,
+                            "raw_payload": p,
+                        }
+                    )
+                next_key = data.get("nextPageKey")
+                if not next_key:
+                    break
+                params = {"nextPageKey": next_key}
         return alerts
 
     def collect_resolved_alerts(self, since: datetime | None = None) -> list[dict]:
