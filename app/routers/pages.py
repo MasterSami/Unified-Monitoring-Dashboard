@@ -1874,7 +1874,16 @@ def correlation_page(
              "current": {"state": "active", "platform": "all", "instance": "all"}},
         )
     from app.correlation_v2 import correlate_alerts
-    groups, uncorrelated = correlate_alerts(db, state="active")
+    import logging
+    try:
+        groups, uncorrelated = correlate_alerts(db, state="active")
+    except Exception:
+        logging.getLogger(__name__).exception("correlation_v2 failed")
+        groups, uncorrelated = [], []
+    try:
+        instances = _instance_names(settings, db)
+    except Exception:
+        instances = []
     return templates.TemplateResponse(
         request, "correlation.html",
         {
@@ -1883,7 +1892,7 @@ def correlation_page(
             "enabled": True,
             "groups": groups,
             "uncorrelated": uncorrelated,
-            "instances": _instance_names(settings, db),
+            "instances": instances,
             "current": {"state": "active", "platform": "all", "instance": "all"},
         },
     )
@@ -2027,9 +2036,14 @@ def correlation_partial(
 ) -> HTMLResponse:
     """Correlation groups fragment (HTMX partial)."""
     from app.correlation_v2 import correlate_alerts
-    groups, uncorrelated = correlate_alerts(
-        db, state=state, platform=platform, instance=instance,
-    )
+    import logging
+    try:
+        groups, uncorrelated = correlate_alerts(
+            db, state=state, platform=platform, instance=instance,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("correlation_v2 partial failed")
+        groups, uncorrelated = [], []
     if q:
         ql = q.lower()
         groups = [

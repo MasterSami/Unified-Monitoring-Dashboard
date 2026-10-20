@@ -272,13 +272,16 @@ def _build_db_impact_links(alerts: list[Alert]) -> list[tuple[int, int, str]]:
         if a.database_name:
             db_host_alerts[a.database_name.lower()].append(a.id)
         dk = dedup_key(a.host_hostname)
-        if dk and a.source_platform in (SourcePlatform.zabbix, SourcePlatform.sitescope):
+        plat = a.source_platform.value if isinstance(a.source_platform, SourcePlatform) else str(a.source_platform)
+        if dk and plat in ("zabbix", "sitescope"):
             db_host_alerts[dk].append(a.id)
-        if a.db_calls:
+        if a.db_calls and isinstance(a.db_calls, list):
             service_alerts.append(a)
     links: list[tuple[int, int, str]] = []
     for sa in service_alerts:
         for call in (sa.db_calls or []):
+            if not isinstance(call, dict):
+                continue
             target = (call.get("name") or call.get("host") or "").lower()
             dk = dedup_key(target)
             for key in (target, dk):
