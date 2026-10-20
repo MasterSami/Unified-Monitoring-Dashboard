@@ -1855,40 +1855,36 @@ def dependency_graph_page(
 def incidents_page(
     request: Request, settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Correlation Phase 6: the incident list. A thin shell — the actual
-    fetch/filter/render happens client-side against /api/v1/incidents, same
-    pattern as the Dependency Graph page's own Cytoscape fetch.
-    """
-    if not settings.enable_incidents:
-        return templates.TemplateResponse(
-            request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": False},
-        )
-    return templates.TemplateResponse(
-        request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": True},
-    )
+    """Legacy incidents route — redirect to the new Correlation page."""
+    return RedirectResponse("/correlation", status_code=301)
 
 
-@router.get("/incidents/{incident_id}", response_class=HTMLResponse)
-def incident_detail_page(
-    request: Request, incident_id: int, settings: Settings = Depends(get_settings),
+@router.get("/correlation", response_class=HTMLResponse)
+def correlation_page(
+    request: Request,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
 ) -> HTMLResponse:
-    """Correlation Phase 6: one incident's full operational view — summary,
-    root cause candidates, correlation explanation, timeline, dependency
-    graph, related events by source, impact, correlation types, event
-    detail, and operator feedback. Also a thin shell; every section is
-    fetched client-side from the existing Phase 4/5 JSON API.
-    """
+    """Correlation v2: cross-platform root cause analysis."""
     if not settings.enable_incidents:
         return templates.TemplateResponse(
-            request, "incidents.html", {"request": request, "active_page": "incidents", "enabled": False},
+            request, "correlation.html",
+            {"request": request, "active_page": "correlation", "enabled": False,
+             "groups": [], "uncorrelated": [], "instances": [],
+             "current": {"state": "active", "platform": "all", "instance": "all"}},
         )
-    is_operator = read_token(settings, request.cookies.get(RUNBOOK_COOKIE_NAME)) is not None
+    from app.correlation_v2 import correlate_alerts
+    groups, uncorrelated = correlate_alerts(db, state="active")
     return templates.TemplateResponse(
-        request,
-        "incident_detail.html",
+        request, "correlation.html",
         {
-            "request": request, "active_page": "incidents", "enabled": True,
-            "incident_id": incident_id, "is_operator": is_operator,
+            "request": request,
+            "active_page": "correlation",
+            "enabled": True,
+            "groups": groups,
+            "uncorrelated": uncorrelated,
+            "instances": _instance_names(settings, db),
+            "current": {"state": "active", "platform": "all", "instance": "all"},
         },
     )
 
@@ -2016,6 +2012,43 @@ def alerts_partial(
                 "platform": platform or "all",
                 "instance": instance or "all",
             },
+        },
+    )
+
+
+@router.get("/partials/correlation", response_class=HTMLResponse)
+def correlation_partial(
+    request: Request,
+    q: str | None = None,
+    state: str = "active",
+    platform: str = "all",
+    instance: str = "all",
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Correlation groups fragment (HTMX partial)."""
+    from app.correlation_v2 import correlate_alerts
+    groups, uncorrelated = correlate_alerts(
+        db, state=state, platform=platform, instance=instance,
+    )
+    if q:
+        ql = q.lower()
+        groups = [
+            g for g in groups
+            if ql in g.title.lower()
+            or any(ql in a["host"].lower() or ql in a["title"].lower() or ql in a["platform"].lower() for a in g.alerts)
+        ]
+        uncorrelated = [
+            a for a in uncorrelated
+            if ql in a["host"].lower() or ql in a["title"].lower() or ql in a["platform"].lower()
+        ]
+    return templates.TemplateResponse(
+        request,
+        "partials/correlation_groups.html",
+        {
+            "request": request,
+            "groups": groups,
+            "uncorrelated": uncorrelated,
+            "current": {"state": state, "platform": platform, "instance": instance},
         },
     )
 

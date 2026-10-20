@@ -1,0 +1,234 @@
+/* Correlation tab styles */
+
+.corr-summary {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 4px;
+}
+
+.corr-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  background: var(--surface);
+  overflow: hidden;
+  border-left: 4px solid var(--border);
+}
+.corr-card.sev-border-5 { border-left-color: var(--sev5); }
+.corr-card.sev-border-4 { border-left-color: var(--sev4); }
+.corr-card.sev-border-3 { border-left-color: var(--sev3); }
+.corr-card.sev-border-2 { border-left-color: var(--sev2); }
+.corr-card.sev-border-1 { border-left-color: var(--sev1); }
+
+.corr-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  gap: 10px;
+  transition: background 0.15s;
+}
+.corr-card-header:hover {
+  background: var(--surface-2);
+}
+
+.corr-card-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.corr-gid {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.corr-title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.corr-card-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.corr-alert-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.corr-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.corr-chevron {
+  font-size: 14px;
+  color: var(--text-muted);
+  width: 16px;
+  text-align: center;
+  transition: transform 0.2s;
+}
+
+/* Card body (expanded) */
+.corr-card-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.corr-section {
+  margin-top: 14px;
+}
+.corr-section h4 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+/* Root cause */
+.corr-rc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--sev5) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--sev5) 20%, var(--border));
+  border-radius: 6px;
+  font-size: 13px;
+}
+.corr-rc-reasons {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.corr-reason-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.corr-reason-tag.rc {
+  background: color-mix(in srgb, var(--sev5) 8%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--sev5) 18%, var(--border));
+  color: var(--sev5);
+}
+
+/* Correlation reasons */
+.corr-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.corr-reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.corr-signal {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.corr-signal-high {
+  background: color-mix(in srgb, var(--up) 14%, transparent);
+  color: var(--up);
+}
+.corr-signal-medium {
+  background: color-mix(in srgb, var(--sev3) 14%, transparent);
+  color: var(--sev3);
+}
+.corr-signal-low {
+  background: color-mix(in srgb, var(--sev2) 14%, transparent);
+  color: var(--sev2);
+}
+.corr-detail {
+  flex: 1;
+  color: var(--text);
+}
+.corr-conf {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.corr-conf-high {
+  color: var(--up);
+}
+.corr-conf-medium {
+  color: var(--sev3);
+}
+.corr-conf-low {
+  color: var(--text-muted);
+}
+
+/* Device xref */
+.corr-device-xref {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Alert table inside card */
+.corr-table {
+  font-size: 12px;
+}
+.corr-rc-row {
+  background: color-mix(in srgb, var(--sev5) 5%, var(--surface)) !important;
+}
+.corr-rc-row td:first-child::before {
+  content: "★ ";
+  color: var(--sev5);
+  font-size: 11px;
+}
+
+/* Uncorrelated */
+.corr-uncorrelated {
+  margin-top: 8px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 48px 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .corr-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .corr-card-right {
+    flex-wrap: wrap;
+  }
+}

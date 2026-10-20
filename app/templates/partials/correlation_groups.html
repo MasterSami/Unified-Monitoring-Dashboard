@@ -1,0 +1,171 @@
+{% set st = current.state if current and current.state else 'active' %}
+{% set st_label = 'open' if st == 'active' else ('resolved' if st == 'resolved' else '') %}
+
+<div class="corr-summary">
+  <span class="count-tag"><b>{{ groups | length }}</b> correlation group{{ '' if groups | length == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
+  {% if uncorrelated | length > 0 %}
+  <span class="count-tag" style="margin-left:12px"><b>{{ uncorrelated | length }}</b> uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}</span>
+  {% endif %}
+</div>
+
+{% if groups | length == 0 and uncorrelated | length == 0 %}
+<div class="empty-state">No alerts match the current filters.</div>
+{% endif %}
+
+{% for g in groups %}
+<div class="corr-card sev-border-{{ g.severity_int }}">
+  <div class="corr-card-header" onclick="toggleDetail(this)">
+    <div class="corr-card-left">
+      <span class="pill sev-pill sev-{{ g.severity_int }}"><span class="dot"></span>{{ g.severity_label }}</span>
+      <span class="corr-gid">{{ g.group_id }}</span>
+      <span class="corr-title">{{ g.title | truncate(90) }}</span>
+    </div>
+    <div class="corr-card-right">
+      {% for p in g.platforms %}
+      <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}</span>
+      {% endfor %}
+      <span class="corr-alert-count">{{ g.alert_ids | length }} alert{{ '' if g.alert_ids | length == 1 else 's' }}</span>
+      <span class="pill {{ 'status-down' if g.status == 'open' else 'status-up' }}"><span class="dot"></span>{{ g.status }}</span>
+      {% if g.started_at %}
+      <span class="corr-time mono">{{ g.started_at | relative_time }}</span>
+      {% endif %}
+      <span class="corr-chevron">▸</span>
+    </div>
+  </div>
+
+  <div class="corr-card-body" style="display:none">
+    {# --- Root cause --- #}
+    {% if g.root_cause %}
+    <div class="corr-section">
+      <h4>Root Cause Candidate</h4>
+      <div class="corr-rc">
+        <span class="pill sev-pill sev-{{ g.root_cause.severity_int }}"><span class="dot"></span>{{ g.root_cause.severity_int }}</span>
+        <span class="badge badge-{{ g.root_cause.platform }}"><span class="dot"></span>{{ g.root_cause.platform }}</span>
+        <strong>{{ g.root_cause.host }}</strong>: {{ g.root_cause.title | truncate(100) }}
+        {% if g.root_cause.started_at %}
+        <span class="mono" style="margin-left:8px">{{ g.root_cause.started_at | relative_time }}</span>
+        {% endif %}
+      </div>
+      <div class="corr-rc-reasons">
+        {% for r in g.root_cause.reasons %}
+        <span class="corr-reason-tag rc">{{ r }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Correlation reasons --- #}
+    {% if g.reasons %}
+    <div class="corr-section">
+      <h4>Why These Are Correlated</h4>
+      <div class="corr-reasons">
+        {% for r in g.reasons %}
+        <div class="corr-reason">
+          <span class="corr-signal corr-signal-{{ r.confidence }}">{{ r.signal | replace('_', ' ') }}</span>
+          <span class="corr-detail">{{ r.detail }}</span>
+          <span class="corr-conf corr-conf-{{ r.confidence }}">{{ r.confidence }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Device name cross-reference --- #}
+    {% if g.device_names and g.device_names | length > 1 %}
+    <div class="corr-section">
+      <h4>Device Cross-Reference</h4>
+      <div class="corr-device-xref">
+        {% for p, name in g.device_names.items() %}
+        <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}: <span class="mono">{{ name }}</span></span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Alert table --- #}
+    <div class="corr-section">
+      <h4>Alerts in This Group ({{ g.alerts | length }})</h4>
+      <div class="table-wrap">
+        <table class="corr-table">
+          <thead>
+            <tr>
+              <th style="width:90px">Severity</th>
+              <th>Title</th>
+              <th style="width:100px">Platform</th>
+              <th style="width:130px">Host</th>
+              <th style="width:110px">Service</th>
+              <th style="width:90px">Started</th>
+              <th style="width:80px">State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in g.alerts %}
+            <tr class="{{ 'corr-rc-row' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
+              <td><span class="pill sev-pill sev-{{ a.severity_int }}"><span class="dot"></span>{{ a.severity_label }}</span></td>
+              <td>{{ a.title | truncate(80) }}</td>
+              <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
+              <td class="mono">{{ a.host or '-' }}</td>
+              <td style="font-size:12px">{{ a.service_name or a.application_name or '-' }}</td>
+              <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
+              <td>
+                {% if a.resolved %}
+                <span class="pill status-up"><span class="dot"></span>resolved</span>
+                {% else %}
+                <span class="pill status-down"><span class="dot"></span>active</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+{% if uncorrelated | length > 0 %}
+<details class="corr-uncorrelated">
+  <summary class="count-tag" style="cursor:pointer; margin-top:16px">
+    <b>{{ uncorrelated | length }}</b> uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }} (no matching group)
+  </summary>
+  <div class="table-wrap" style="margin-top:8px">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:90px">Severity</th>
+          <th>Title</th>
+          <th style="width:100px">Platform</th>
+          <th style="width:130px">Host</th>
+          <th style="width:90px">Started</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in uncorrelated %}
+        <tr>
+          <td><span class="pill sev-pill sev-{{ a.severity_int }}"><span class="dot"></span>{{ a.severity_label }}</span></td>
+          <td>{{ a.title | truncate(80) }}</td>
+          <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
+          <td class="mono">{{ a.host or '-' }}</td>
+          <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endif %}
+
+<script>
+function toggleDetail(header) {
+  var body = header.nextElementSibling;
+  var chevron = header.querySelector(".corr-chevron");
+  if (body.style.display === "none") {
+    body.style.display = "block";
+    chevron.textContent = "▾";
+  } else {
+    body.style.display = "none";
+    chevron.textContent = "▸";
+  }
+}
+</script>
