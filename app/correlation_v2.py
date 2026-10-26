@@ -135,6 +135,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware(dt: datetime | None) -> datetime:
+    """Ensure a datetime is timezone-aware (assume UTC if naive)."""
+    if dt is None:
+        return _now()
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # ---------------------------------------------------------------------------
 # Step 1: Build the device map (host normalisation + IP matching)
 # ---------------------------------------------------------------------------
@@ -476,7 +485,7 @@ def _pick_root_cause(
         group_alerts,
         key=lambda a: (
             -upstream_score.get(a.id, 0),
-            a.started_at or _now(),
+            _aware(a.started_at),
             -a.severity_int,
         ),
     )
@@ -485,7 +494,7 @@ def _pick_root_cause(
     if upstream_score.get(best.id, 0) > 0:
         reasons.append("upstream dependency (other alerts depend on this)")
     if best.started_at and all(
-        (a.started_at or _now()) >= best.started_at for a in group_alerts
+        _aware(a.started_at) >= _aware(best.started_at) for a in group_alerts
     ):
         reasons.append("earliest alert in the group")
     if best.severity_int >= max(a.severity_int for a in group_alerts):
@@ -581,7 +590,7 @@ def correlate_alerts(
         key=lambda kv: (
             -max(alert_map[a].severity_int for a in kv[1]),
             -len(kv[1]),
-            min(alert_map[a].started_at or _now() for a in kv[1]),
+            min(_aware(alert_map[a].started_at) for a in kv[1]),
         ),
     )
 
@@ -592,7 +601,7 @@ def correlate_alerts(
         correlated_ids |= aids
         group_alerts_sorted = sorted(
             [alert_map[a] for a in aids],
-            key=lambda a: (a.started_at or _now()),
+            key=lambda a: _aware(a.started_at),
         )
         max_sev = max(a.severity_int for a in group_alerts_sorted)
         platforms_in = sorted({
@@ -604,8 +613,8 @@ def correlate_alerts(
         start = first.started_at
         dur = None
         if start:
-            end = last.resolved_at or _now()
-            dur = int((end - start).total_seconds())
+            end = _aware(last.resolved_at)
+            dur = int((end - _aware(start)).total_seconds())
 
         any_active = any(not a.resolved for a in group_alerts_sorted)
 
