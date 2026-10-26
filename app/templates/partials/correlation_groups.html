@@ -8,7 +8,14 @@
   {% endif %}
 </div>
 
-{% if groups | length == 0 and uncorrelated | length == 0 %}
+{% if corr_error %}
+<div style="margin:16px 0; padding:12px 16px; background:color-mix(in srgb, var(--sev5) 10%, var(--surface)); border:1px solid color-mix(in srgb, var(--sev5) 30%, var(--border)); border-radius:8px; font-size:13px;">
+  <strong>Correlation engine error:</strong> <code>{{ corr_error }}</code>
+  <br><span style="color:var(--text-muted); font-size:12px">Check the uvicorn console for the full traceback.</span>
+</div>
+{% endif %}
+
+{% if groups | length == 0 and uncorrelated | length == 0 and not corr_error %}
 <div class="empty-state">No alerts match the current filters.</div>
 {% endif %}
 

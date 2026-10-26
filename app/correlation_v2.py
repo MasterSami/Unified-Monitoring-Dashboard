@@ -545,12 +545,27 @@ def correlate_alerts(
     alert_map: dict[int, Alert] = {a.id: a for a in alerts}
     all_ids = set(alert_map.keys())
 
-    # --- Compute all signals ---
-    device_map = _build_device_map(alerts, db)
+    # --- Compute all signals (each step is individually safe) ---
+    import logging
+    _log = logging.getLogger(__name__)
+
+    try:
+        device_map = _build_device_map(alerts, db)
+    except Exception:
+        _log.exception("device_map failed")
+        device_map = {}
     trace_groups = _build_trace_groups(alerts)
-    dep_links = _build_dependency_links(alerts, db)
+    try:
+        dep_links = _build_dependency_links(alerts, db)
+    except Exception:
+        _log.exception("dep_links failed")
+        dep_links = []
     svc_groups = _build_service_groups(alerts)
-    db_links = _build_db_impact_links(alerts)
+    try:
+        db_links = _build_db_impact_links(alerts)
+    except Exception:
+        _log.exception("db_links failed")
+        db_links = []
 
     # --- Merge into groups ---
     raw_groups = _merge_groups(all_ids, device_map, trace_groups, dep_links, svc_groups, db_links)
