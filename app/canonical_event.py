@@ -91,10 +91,19 @@ def adapt_dynatrace_event(item: dict) -> dict:
     problem_type = None
     if ranked and isinstance(ranked[0], dict):
         problem_type = ranked[0].get("eventType")
+    # Persist service / application / management-zone names from the collector.
+    svc = item.get("service_name")
+    app = item.get("application_name")
+    mz_list = item.get("management_zones") or []
+    # Store the first management zone as business_service (incident-management label).
+    biz_svc = mz_list[0] if mz_list else None
     return {
         "event_type": _EVENT_TYPE[SourcePlatform.dynatrace],
         "problem_type": problem_type,
         "tags": _extract_tags(raw),
+        "service_name": svc,
+        "application_name": app,
+        "business_service": biz_svc,
     }
 
 

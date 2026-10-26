@@ -26,6 +26,9 @@
       <span class="pill sev-pill sev-{{ g.severity_int }}"><span class="dot"></span>{{ g.severity_label }}</span>
       <span class="corr-gid">{{ g.group_id }}</span>
       <span class="corr-title">{{ g.title | truncate(90) }}</span>
+      {% if g.affected_services %}
+      <span class="corr-affected-svc">{{ g.affected_services | join(' · ') }}</span>
+      {% endif %}
     </div>
     <div class="corr-card-right">
       {% for p in g.platforms %}
@@ -41,6 +44,18 @@
   </div>
 
   <div class="corr-card-body" style="display:none">
+    {# --- Affected services --- #}
+    {% if g.affected_services %}
+    <div class="corr-section corr-affected-section">
+      <h4>Affected Services</h4>
+      <div class="corr-affected-list">
+        {% for svc in g.affected_services %}
+        <span class="corr-svc-tag">{{ svc }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     {# --- Root cause --- #}
     {% if g.root_cause %}
     <div class="corr-section">
@@ -112,7 +127,7 @@
               <td>{{ a.title | truncate(80) }}</td>
               <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
               <td class="mono">{{ a.host or '-' }}</td>
-              <td style="font-size:12px">{{ a.service_name or a.application_name or '-' }}</td>
+              <td style="font-size:12px">{{ a.business_service or a.service_name or a.application_name or a.host_group or '-' }}</td>
               <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
               <td>
                 {% if a.resolved %}
@@ -144,6 +159,7 @@
           <th>Title</th>
           <th style="width:100px">Platform</th>
           <th style="width:130px">Host</th>
+          <th style="width:110px">Service</th>
           <th style="width:90px">Started</th>
         </tr>
       </thead>
@@ -154,6 +170,7 @@
           <td>{{ a.title | truncate(80) }}</td>
           <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
           <td class="mono">{{ a.host or '-' }}</td>
+          <td style="font-size:12px">{{ a.business_service or a.service_name or a.application_name or a.host_group or '-' }}</td>
           <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
         </tr>
         {% endfor %}

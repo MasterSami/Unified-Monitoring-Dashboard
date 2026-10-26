@@ -40,6 +40,7 @@
   gap: 8px;
   min-width: 0;
   flex: 1;
+  flex-wrap: wrap;
 }
 
 .corr-gid {
@@ -55,6 +56,39 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.corr-affected-svc {
+  width: 100%;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary, #5b8def);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-left: 2px;
+}
+
+.corr-affected-section {
+  background: color-mix(in srgb, var(--primary, #5b8def) 6%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary, #5b8def) 20%, var(--border));
+  border-radius: 6px;
+  padding: 10px 14px;
+}
+.corr-affected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.corr-svc-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--primary, #5b8def) 14%, var(--surface));
+  color: var(--primary, #5b8def);
+  border: 1px solid color-mix(in srgb, var(--primary, #5b8def) 30%, var(--border));
 }
 
 .corr-card-right {

@@ -93,6 +93,7 @@ class CorrelationGroup:
     root_cause: RootCauseCandidate | None = None
     reasons: list[CorrelationReason] = field(default_factory=list)
     device_names: dict[str, str] = field(default_factory=dict)
+    affected_services: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +116,8 @@ def _alert_dict(a: Alert) -> dict[str, Any]:
         "trace_id": a.trace_id,
         "service_name": a.service_name,
         "application_name": a.application_name,
+        "business_service": a.business_service,
+        "host_group": a.host_group,
         "database_name": a.database_name,
         "db_calls": a.db_calls or [],
         "external_calls": a.external_calls or [],
@@ -625,12 +628,22 @@ def correlate_alerts(
             if a.host_hostname and p not in dnames:
                 dnames[p] = a.host_hostname
 
+        # Affected services: collect service_name, application_name,
+        # business_service (management zone), host_group from all alerts.
+        aff_svcs: list[str] = []
+        _seen_svc: set[str] = set()
+        for a in group_alerts_sorted:
+            for val in (a.business_service, a.service_name, a.application_name, a.host_group):
+                if val and val not in _seen_svc:
+                    _seen_svc.add(val)
+                    aff_svcs.append(val)
+
         reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links)
         root_cause = _pick_root_cause(aids, alert_map, dep_links)
 
-        # Title: use root cause host/service + summary.
-        title_host = root_cause.host if root_cause else (first.host_hostname or "")
-        title = f"{title_host}: {root_cause.title}" if root_cause else first.title
+        # Title: prefer affected service name over raw hostname.
+        title_label = aff_svcs[0] if aff_svcs else (root_cause.host if root_cause else (first.host_hostname or ""))
+        title = f"{title_label}: {root_cause.title}" if root_cause else first.title
 
         groups.append(CorrelationGroup(
             group_id=f"CG-{gnum:03d}",
@@ -646,6 +659,7 @@ def correlate_alerts(
             root_cause=root_cause,
             reasons=reasons,
             device_names=dnames,
+            affected_services=aff_svcs,
         ))
 
     # Uncorrelated.

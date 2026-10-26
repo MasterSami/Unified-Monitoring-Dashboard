@@ -468,6 +468,26 @@ class DynatraceCollector(BaseCollector):
         first = (problem.get("affectedEntities") or [{}])[0]
         return None, first.get("name")
 
+    @staticmethod
+    def _affected_service_app(problem: dict) -> tuple[str | None, str | None]:
+        """Extract the first SERVICE and APPLICATION names from affected/impacted entities."""
+        svc_name: str | None = None
+        app_name: str | None = None
+        for bucket in ("affectedEntities", "impactedEntities"):
+            for e in problem.get(bucket) or []:
+                if not isinstance(e, dict):
+                    continue
+                eid = e.get("entityId") or {}
+                ent_id = eid.get("id") if isinstance(eid, dict) else eid
+                if isinstance(ent_id, str):
+                    if ent_id.startswith("SERVICE-") and not svc_name:
+                        svc_name = e.get("name")
+                    elif ent_id.startswith("APPLICATION-") and not app_name:
+                        app_name = e.get("name")
+                if svc_name and app_name:
+                    return svc_name, app_name
+        return svc_name, app_name
+
     def collect_alerts(self) -> list[dict]:
         if self.settings.mock_mode:
             return mock_data.mock_dynatrace_alerts(self.instance)
@@ -499,6 +519,13 @@ class DynatraceCollector(BaseCollector):
                         started = datetime.fromtimestamp(
                             int(p["startTime"]) / 1000, tz=timezone.utc
                         )
+                    # Extract management zones.
+                    mz_names = [
+                        mz.get("name") for mz in (p.get("managementZones") or [])
+                        if isinstance(mz, dict) and mz.get("name")
+                    ]
+                    # Extract affected service/application names from entities.
+                    svc_name, app_name = self._affected_service_app(p)
                     alerts.append(
                         {
                             "external_id": p.get("problemId"),
@@ -512,6 +539,9 @@ class DynatraceCollector(BaseCollector):
                             ),
                             "title": p.get("title", ""),
                             "started_at": started,
+                            "service_name": svc_name,
+                            "application_name": app_name,
+                            "management_zones": mz_names,
                             "raw_payload": p,
                         }
                     )
