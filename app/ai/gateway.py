@@ -194,6 +194,34 @@ class Gateway:
         error: str | None = None
         answer = ""
 
+        # Fast path: greetings and general chat — skip tools and evidence entirely.
+        from .evidence import _is_greeting
+        if _is_greeting(question):
+            step("Greeting detected — answering directly")
+            try:
+                direct = self.llm.chat([
+                    {"role": "system", "content": prompts.SYSTEM_PROMPT},
+                    {"role": "user", "content": question},
+                ])
+                answer = (direct.get("content") or "").strip()
+                if not answer:
+                    answer = "أهلاً! أنا SAMIX AI، مساعدك في المراقبة. اسألني عن أي host أو alert أو مشكلة."
+            except LLMError:
+                answer = "أهلاً! أنا SAMIX AI، مساعدك في المراقبة. اسألني عن أي host أو alert أو مشكلة."
+            pack = build_pack(question, [], self._freshness())
+            latency_ms = int((time.monotonic() - started) * 1000)
+            record_audit(
+                trace_id=trace_id, user=user, question=question, tools=[], rounds=0,
+                model=self.llm.model, latency_ms=latency_ms,
+                validation="passed", answer_chars=len(answer), error=None,
+            )
+            return AskResult(
+                trace_id=trace_id, user=user, question=question, answer=answer,
+                validation=Validation(True, []),
+                pack=pack, tools=[], rounds=0, model=self.llm.model, latency_ms=latency_ms,
+                freshness_line=freshness_line(pack.freshness), error=None, steps=steps,
+            )
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": prompts.SYSTEM_PROMPT},
             {"role": "user", "content": f"{question}\n\n{prompts.TOOL_ROUND_HINT}"},
@@ -223,12 +251,17 @@ class Gateway:
             # Rounds exhausted or the model stopped asking: build the pack.
             step("Packaging evidence")
             pack = build_pack(question, results, self._freshness())
-            step("Composing the answer")
-            final = self.llm.chat([
-                {"role": "system", "content": prompts.SYSTEM_PROMPT},
-                {"role": "user", "content": prompts.ANSWER_PROMPT.format(pack=pack.prompt_json(), question=question)},
-            ])
-            answer = (final.get("content") or "").strip()
+            # If the first call already answered (no tools used), use that answer
+            # directly instead of running a second evidence-only call.
+            if not results and message and (message.get("content") or "").strip():
+                answer = (message.get("content") or "").strip()
+            else:
+                step("Composing the answer")
+                final = self.llm.chat([
+                    {"role": "system", "content": prompts.SYSTEM_PROMPT},
+                    {"role": "user", "content": prompts.ANSWER_PROMPT.format(pack=pack.prompt_json(), question=question)},
+                ])
+                answer = (final.get("content") or "").strip()
         except LLMError as exc:
             error = str(exc)
             logger.warning("ai %s: %s", trace_id, error)
