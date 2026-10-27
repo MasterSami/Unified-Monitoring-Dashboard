@@ -173,7 +173,7 @@ class Settings(BaseSettings):
     ai_max_tool_rounds: int = 3
     ai_rate_limit_per_min: int = 10
     #: One model call; a 7B model on CPU can take a while.
-    ai_timeout_seconds: int = 180
+    ai_timeout_seconds: int = 300
     ai_tool_timeout_seconds: int = 10
     ai_tool_max_rows: int = 50
     #: Questions are audited per user, so by default the Runbook sign-in is

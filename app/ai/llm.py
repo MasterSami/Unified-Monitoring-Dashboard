@@ -64,8 +64,14 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             # Deterministic answers are what an evidence-only assistant wants.
-            "options": {"temperature": 0},
+            # num_ctx: smaller context window = faster on CPU.
+            # num_predict: cap output length to avoid runaway generation.
+            "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 1024},
         }
+        # Disable thinking/reasoning mode for models that support it (qwen3, etc.)
+        # — it generates long internal <think> blocks that waste time on CPU.
+        if "qwen3" in self.model or "deepseek" in self.model:
+            payload["options"]["think"] = False
         if tools:
             payload["tools"] = tools
         try:
