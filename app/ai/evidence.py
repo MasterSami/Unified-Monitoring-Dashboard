@@ -169,7 +169,7 @@ def build_pack(question: str, results: list[ToolResult], freshness: dict[str, di
 #: '.' with at least one separator (web-01, mw-10, web-01.zabbix-dc1, 10.20.1.11).
 _HOSTLIKE = re.compile(r"(?<![\w/])[a-z0-9]+(?:[-.][a-z0-9]+)+(?![\w/])", re.I)
 _NUMBER = re.compile(r"(?<![\w.:-])\d+(?:\.\d+)?(?![\w.:-])")
-_WORD_NUMBER_OK = {"0", "1"}
+_WORD_NUMBER_OK = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
 
 #: Phrases that count as "there is no data" in either language.
 _NO_DATA_MARKERS = (
@@ -231,6 +231,17 @@ def _pack_tokens(pack: EvidencePack) -> tuple[set[str], set[str], set[str]]:
     return hosts, numbers, counts
 
 
+_GREETING_MARKERS = (
+    "اهلا", "أهلا", "مرحبا", "سلام", "هلا", "hi", "hello", "hey", "مساء", "صباح",
+    "شكرا", "thanks", "ازيك", "إزيك", "عامل ايه", "كيف",
+)
+
+
+def _is_greeting(question: str) -> bool:
+    q = (question or "").strip().lower()
+    return any(m in q for m in _GREETING_MARKERS) and len(q) < 60
+
+
 def validate_answer(answer: str, pack: EvidencePack) -> Validation:
     """Every hostname-looking token and every data-looking number in the
     answer must appear in the pack (or be a count derivable from it). An
@@ -240,6 +251,10 @@ def validate_answer(answer: str, pack: EvidencePack) -> Validation:
     low = text.lower()
     if not text:
         return Validation(False, ["empty answer"])
+
+    # Greetings and general questions don't need evidence.
+    if pack.is_empty and _is_greeting(pack.question):
+        return Validation(True, [])
 
     if pack.is_empty:
         if not any(marker in low for marker in _NO_DATA_MARKERS):
