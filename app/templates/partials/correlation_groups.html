@@ -25,12 +25,21 @@
     <div class="corr-card-left">
       <span class="pill sev-pill sev-{{ g.severity_int }}"><span class="dot"></span>{{ g.severity_label }}</span>
       <span class="corr-gid">{{ g.group_id }}</span>
+      {% if g.issue_category %}
+      <span class="corr-category-pill cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
+      {% endif %}
       <span class="corr-title">{{ g.title | truncate(90) }}</span>
+      {% if g.impact_level %}
+      <span class="corr-impact-badge impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
+      {% endif %}
       {% if g.affected_services %}
       <span class="corr-affected-svc">{{ g.affected_services | join(' · ') }}</span>
       {% endif %}
     </div>
     <div class="corr-card-right">
+      {% if g.incident_type %}
+      <span class="corr-incident-type itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
+      {% endif %}
       {% for p in g.platforms %}
       <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}</span>
       {% endfor %}
@@ -39,11 +48,45 @@
       {% if g.started_at %}
       <span class="corr-time mono">{{ g.started_at | relative_time }}</span>
       {% endif %}
-      <span class="corr-chevron">▸</span>
+      <span class="corr-chevron">&#x25B8;</span>
     </div>
   </div>
 
   <div class="corr-card-body" style="display:none">
+
+    {# --- Incident Classification --- #}
+    {% if g.issue_category or g.impact_level or g.suggested_team %}
+    <div class="corr-section corr-classification">
+      <h4>Incident Classification</h4>
+      <div class="corr-class-grid">
+        {% if g.issue_category %}
+        <div class="corr-class-item">
+          <span class="corr-class-label">Category</span>
+          <span class="corr-category-pill cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
+        </div>
+        {% endif %}
+        {% if g.incident_type %}
+        <div class="corr-class-item">
+          <span class="corr-class-label">Type</span>
+          <span class="corr-incident-type itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
+        </div>
+        {% endif %}
+        {% if g.impact_level %}
+        <div class="corr-class-item">
+          <span class="corr-class-label">Impact</span>
+          <span class="corr-impact-badge impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
+        </div>
+        {% endif %}
+        {% if g.suggested_team %}
+        <div class="corr-class-item">
+          <span class="corr-class-label">Suggested Team</span>
+          <span class="corr-team-badge">{{ g.suggested_team }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
     {# --- Affected services --- #}
     {% if g.affected_services %}
     <div class="corr-section corr-affected-section">
@@ -71,6 +114,48 @@
       <div class="corr-rc-reasons">
         {% for r in g.root_cause.reasons %}
         <span class="corr-reason-tag rc">{{ r }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- RFO Quick Reference --- #}
+    {% if g.rfo_hints %}
+    <div class="corr-section corr-rfo-section">
+      <h4>RFO Quick Reference — {{ g.issue_category }}</h4>
+      <div class="corr-rfo-hints">
+        {% for hint in g.rfo_hints %}
+        <div class="corr-rfo-hint">
+          <span class="corr-rfo-bullet">&#x25B6;</span>
+          <span>{{ hint }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# --- Timeline --- #}
+    {% if g.alerts | length > 1 %}
+    <div class="corr-section">
+      <h4>Alert Timeline</h4>
+      <div class="corr-timeline">
+        {% for a in g.alerts %}
+        <div class="corr-timeline-item">
+          <div class="corr-timeline-track">
+            <div class="corr-timeline-dot sev-bg-{{ a.severity_int }}"></div>
+            {% if not loop.last %}
+            <div class="corr-timeline-line"></div>
+            {% endif %}
+          </div>
+          <div class="corr-timeline-content">
+            <span class="corr-timeline-time mono">{{ a.started_at.strftime('%H:%M:%S') if a.started_at else '?' }}</span>
+            <span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span>
+            <span class="corr-timeline-title">{{ (a.host + ': ') if a.host else '' }}{{ a.title | truncate(60) }}</span>
+            {% if a.resolved %}
+            <span class="pill status-up" style="font-size:10px; padding:1px 6px"><span class="dot"></span>resolved</span>
+            {% endif %}
+          </div>
+        </div>
         {% endfor %}
       </div>
     </div>

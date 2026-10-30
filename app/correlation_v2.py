@@ -94,6 +94,11 @@ class CorrelationGroup:
     reasons: list[CorrelationReason] = field(default_factory=list)
     device_names: dict[str, str] = field(default_factory=dict)
     affected_services: list[str] = field(default_factory=list)
+    issue_category: str = ""
+    suggested_team: str = ""
+    impact_level: str = ""
+    incident_type: str = ""
+    rfo_hints: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +521,205 @@ def _pick_root_cause(
 
 
 # ---------------------------------------------------------------------------
+# Step 8: Issue classification, impact assessment, incident typing
+# ---------------------------------------------------------------------------
+
+_ISSUE_PATTERNS: dict[str, dict[str, Any]] = {
+    "Network": {
+        "keywords": [
+            "network", "connectivity", "connection", "firewall", "routing",
+            "dns", "link", "reachab", "flap", "timeout", "unreachable",
+            "icmp", "bgp", "ospf", "switch", "router", "interface",
+            "port down", "packet loss", "latency", "vlan", "arp",
+            "route", "wan", "lan",
+        ],
+        "team": "Network Operations",
+    },
+    "Database": {
+        "keywords": [
+            "database", "db ", " db", "oracle", "sql", "tablespace",
+            "deadlock", "mysql", "postgres", "mongo", "redis",
+            "replication", "query", "transaction", "rollback",
+            "backup failed", "archivelog", "listener", "redo",
+            "datafile", "rman",
+        ],
+        "team": "Database Administration",
+    },
+    "Application": {
+        "keywords": [
+            "application", "service", "process", "api", "http",
+            "response time", "error rate", "exception", "crash",
+            "oom", "out of memory", "heap", "thread", "jvm",
+            "tomcat", "apache", "nginx", "iis", "websphere",
+            "queue", "consumer", "producer",
+        ],
+        "team": "Application Support",
+    },
+    "Infrastructure": {
+        "keywords": [
+            "cpu", "memory", "disk", "storage", "capacity",
+            "utilization", "filesystem", "inode", "swap",
+            "load average", "hardware", "blade", "controller",
+            "fan", "temperature", "power supply", "raid",
+            "vmware", "hypervisor", "esxi", "vm ",
+        ],
+        "team": "System Administration",
+    },
+    "Config/Deployment": {
+        "keywords": [
+            "config", "configuration", "deploy", "release", "change",
+            "update", "upgrade", "patch", "misconfigur", "rollback",
+            "policy", "maintenance", "scheduled",
+        ],
+        "team": "Change Management",
+    },
+    "Security": {
+        "keywords": [
+            "security", "certificate", "ssl", "tls", "auth",
+            "password", "permission", "expired", "license",
+            "firewall rule", "acl", "blocked", "denied",
+            "intrusion", "malware", "brute",
+        ],
+        "team": "Security Operations",
+    },
+    "Power/Facility": {
+        "keywords": [
+            "power", "electricity", "ups", "facility", "cooling",
+            "hvac", "generator", "site down", "pdu", "breaker",
+        ],
+        "team": "Facility Management",
+    },
+}
+
+_RFO_HINTS: dict[str, list[str]] = {
+    "Network": [
+        "Check firewall rules / recent policy changes",
+        "Verify routing tables and BGP/OSPF adjacency",
+        "Check for link flapping or packet loss on interfaces",
+        "Review recent network change requests",
+    ],
+    "Database": [
+        "Check tablespace usage and archivelog status",
+        "Look for long-running queries or deadlocks",
+        "Verify DB listener and replication status",
+        "Check recent DB maintenance or backup jobs",
+    ],
+    "Application": [
+        "Check application logs for exceptions or OOM",
+        "Verify service health and JVM/process memory",
+        "Look for recent deployments or config changes",
+        "Check upstream dependencies and API responses",
+    ],
+    "Infrastructure": [
+        "Check CPU, memory, and disk utilization",
+        "Verify hardware health (RAID, fans, PSU)",
+        "Look for VM resource contention on hypervisor",
+        "Check for scheduled maintenance or patches",
+    ],
+    "Config/Deployment": [
+        "Identify the last change request and rollback if needed",
+        "Compare current config with last known-good version",
+        "Check deployment logs for failed steps",
+        "Verify configuration on all affected nodes",
+    ],
+    "Security": [
+        "Check for expired certificates or licenses",
+        "Review firewall/ACL rule changes",
+        "Verify authentication services (AD, LDAP, RADIUS)",
+        "Check for security policy enforcement blocks",
+    ],
+    "Power/Facility": [
+        "Verify UPS and generator status at affected site",
+        "Check power distribution and breaker status",
+        "Contact facility management for site status",
+        "Confirm cooling systems are operational",
+    ],
+}
+
+
+def _classify_issue(
+    group_alerts: list[Alert],
+    platforms: list[str],
+) -> tuple[str, str, list[str]]:
+    """Return (issue_category, suggested_team, rfo_hints)."""
+    blob = " ".join((a.title or "").lower() for a in group_alerts)
+    blob += " " + " ".join(
+        (a.service_name or "").lower() + " " + (a.host_group or "").lower()
+        for a in group_alerts
+    )
+
+    scores: dict[str, int] = {}
+    for cat, info in _ISSUE_PATTERNS.items():
+        score = sum(1 for kw in info["keywords"] if kw in blob)
+        if score:
+            scores[cat] = score
+
+    # Platform heuristics when keyword matching is inconclusive.
+    if not scores:
+        if "nnmi" in platforms:
+            scores["Network"] = 1
+        elif any(
+            "db" in (a.database_name or "").lower() or "database" in (a.host_group or "").lower()
+            for a in group_alerts
+        ):
+            scores["Database"] = 1
+        elif len(platforms) >= 3:
+            scores["Infrastructure"] = 1
+
+    if not scores:
+        return "Unknown", "Incident Management", _RFO_HINTS.get("Infrastructure", [])
+
+    best_cat = max(scores, key=lambda c: scores[c])
+    team = _ISSUE_PATTERNS[best_cat]["team"]
+    hints = _RFO_HINTS.get(best_cat, [])
+    return best_cat, team, hints
+
+
+def _assess_impact(group_alerts: list[Alert], platforms: list[str]) -> str:
+    """Rate the business impact of a correlation group."""
+    n_alerts = len(group_alerts)
+    n_platforms = len(platforms)
+    max_sev = max(a.severity_int for a in group_alerts)
+    any_down = any(
+        "down" in (a.title or "").lower()
+        or "unreachable" in (a.title or "").lower()
+        or a.severity_int >= 5
+        for a in group_alerts
+    )
+
+    if (n_platforms >= 3 and max_sev >= 4) or (n_alerts >= 5 and any_down):
+        return "Critical Impact"
+    if n_platforms >= 2 or (n_alerts >= 3 and max_sev >= 4):
+        return "High Impact"
+    if n_alerts >= 2 and max_sev >= 3:
+        return "Medium Impact"
+    return "Low Impact"
+
+
+def _detect_incident_type(group_alerts: list[Alert]) -> str:
+    """Classify the incident type based on alert patterns."""
+    titles = " ".join((a.title or "").lower() for a in group_alerts)
+    all_down = all(
+        "down" in (a.title or "").lower()
+        or "unreachable" in (a.title or "").lower()
+        or a.severity_int >= 5
+        for a in group_alerts
+    )
+    any_slow = any(
+        w in titles
+        for w in ("slow", "latency", "response time", "performance", "delay", "degraded")
+    )
+
+    if all_down:
+        return "Down"
+    if any_slow:
+        return "Slowness"
+    if len(group_alerts) > 1:
+        return "Partial Outage"
+    return "Degraded"
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -641,6 +845,13 @@ def correlate_alerts(
         reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links)
         root_cause = _pick_root_cause(aids, alert_map, dep_links)
 
+        # Incident classification based on real incident data patterns.
+        issue_cat, suggested_team, rfo_hints = _classify_issue(
+            group_alerts_sorted, platforms_in,
+        )
+        impact = _assess_impact(group_alerts_sorted, platforms_in)
+        inc_type = _detect_incident_type(group_alerts_sorted)
+
         # Title: prefer affected service name over raw hostname.
         title_label = aff_svcs[0] if aff_svcs else (root_cause.host if root_cause else (first.host_hostname or ""))
         title = f"{title_label}: {root_cause.title}" if root_cause else first.title
@@ -660,6 +871,11 @@ def correlate_alerts(
             reasons=reasons,
             device_names=dnames,
             affected_services=aff_svcs,
+            issue_category=issue_cat,
+            suggested_team=suggested_team,
+            impact_level=impact,
+            incident_type=inc_type,
+            rfo_hints=rfo_hints,
         ))
 
     # Uncorrelated.
