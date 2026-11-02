@@ -336,7 +336,9 @@ def host_capacity_detail(collector, hostid: str, days: int = 7) -> dict:
 
 REPORT_COLUMNS = [
     "Host Name", "Host IP", "Total Cpu Cores", "Cpu Usage Percentage",
-    "Total Memory", "Memory Usage Percentage", "Total VM Disk Size",
+    "Total Memory", "Memory Usage Percentage",
+    "Avg Memory Usage Percentage", "Max Memory Usage Percentage",
+    "Total VM Disk Size",
     "Total VM Used Disk Size", "VM Space For Each Drive",
     "VM Used Space For Each Drive", "Service", "Owner",
     "Max Ram Usage", "Min Ram Usage", "Avg Ram Usage",
@@ -487,6 +489,8 @@ def weekly_report_rows(collector, days: int = 7) -> list[list]:
             "Cpu Usage Percentage": round(cpu_now, 2) if cpu_now is not None else 0,
             "Total Memory": round(mem_tot / GB, 1) if mem_tot else 0.0,
             "Memory Usage Percentage": int(round(mem_now)) if mem_now is not None else 0,
+            "Avg Memory Usage Percentage": round(ms[1], 1) if ms and ms[1] is not None else 0,
+            "Max Memory Usage Percentage": round(ms[2], 1) if ms else 0,
             "Total VM Disk Size": round(tot_sum / GB, 1),
             "Total VM Used Disk Size": round(used_sum / GB, 1),
             "Service": str([g["name"] for g in h.get("_groups", [])]),

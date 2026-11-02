@@ -1980,6 +1980,7 @@ def _db_report_rows(
             h.hostname, h.ip or "N/A",
             m.get("cores", 0), h.cpu_pct if h.cpu_pct is not None else 0,
             m.get("mem_total_gb", 0.0), int(h.mem_pct) if h.mem_pct is not None else 0,
+            "N/A", "N/A",
             m.get("disk_total_gb", 0.0), m.get("disk_used_gb", 0.0),
             "N/A", "N/A",
             h.group_name or "N/A", "N/A",
@@ -2017,8 +2018,9 @@ def _dynatrace_report_rows(
             h.hostname, h.ip or "N/A",
             m.get("cores", 0), h.cpu_pct if h.cpu_pct is not None else 0,
             m.get("mem_total_gb", 0.0), int(h.mem_pct) if h.mem_pct is not None else 0,
+            "N/A", "N/A",
             m.get("disk_total_gb", 0.0), m.get("disk_used_gb", 0.0),
-            "N/A", "N/A",                       # per-drive (cols 8, 9) — filled below
+            "N/A", "N/A",                       # per-drive (cols 10, 11) — filled below
             h.group_name or "N/A", "N/A",
             "N/A", "N/A", "N/A", "N/A", "N/A", "N/A",
         ]
@@ -2026,8 +2028,8 @@ def _dynatrace_report_rows(
         if disks:
             for label, total_gb, used_gb in sorted(disks):
                 r = list(base)
-                r[8] = f"{label} : {total_gb}"
-                r[9] = f"{label} : {used_gb}"
+                r[10] = f"{label} : {total_gb}"
+                r[11] = f"{label} : {used_gb}"
                 rows.append(r)
         else:
             rows.append(list(base))
