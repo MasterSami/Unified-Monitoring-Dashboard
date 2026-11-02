@@ -152,6 +152,7 @@ def _unresolved(res: Resolution) -> dict[str, Any]:
 
 class HostAlertsIn(BaseModel):
     hostname: str = Field(min_length=1, max_length=255, description="Hostname as the user wrote it, e.g. MW10")
+    platform: str | None = Field(default=None, max_length=50, description="Filter by source platform: zabbix, dynatrace, nnmi, sitescope, digitalview. Omit for all platforms.")
     active_only: bool = Field(default=True, description="Only alerts still open (default). False includes resolved ones.")
 
 
@@ -161,6 +162,7 @@ class HostStatusIn(BaseModel):
 
 class AlertsSummaryIn(BaseModel):
     severity_min: int | None = Field(default=None, ge=1, le=5, description="Minimum severity 1 (info) .. 5 (critical/disaster)")
+    platform: str | None = Field(default=None, max_length=50, description="Filter by source platform: zabbix, dynatrace, nnmi, sitescope, digitalview. Omit for all platforms.")
     service: str | None = Field(default=None, max_length=255, description="Service or host-group name to filter on")
     limit: int = Field(default=20, ge=1, le=50)
 
@@ -209,6 +211,8 @@ def get_host_alerts(db: Session, args: HostAlertsIn) -> dict[str, Any]:
     if keys:
         conditions.append(Alert.dedup_key.in_(sorted(keys)))
     stmt = select(Alert).options(defer(Alert.raw_payload)).where(or_(*conditions))
+    if args.platform:
+        stmt = stmt.where(Alert.source_platform == args.platform.strip().lower())
     if args.active_only:
         stmt = stmt.where(Alert.resolved.is_(False))
     stmt = stmt.order_by(Alert.resolved.asc(), Alert.severity_int.desc(), Alert.started_at.desc().nullslast()).limit(300)
@@ -260,6 +264,8 @@ def get_active_alerts_summary(db: Session, args: AlertsSummaryIn) -> dict[str, A
     stmt = select(Alert).options(defer(Alert.raw_payload)).where(Alert.resolved.is_(False))
     if args.severity_min is not None:
         stmt = stmt.where(Alert.severity_int >= args.severity_min)
+    if args.platform:
+        stmt = stmt.where(Alert.source_platform == args.platform.strip().lower())
     if args.service:
         like = f"%{args.service.strip()}%"
         stmt = stmt.where(or_(Alert.host_group.ilike(like), Alert.business_service.ilike(like),
@@ -273,7 +279,8 @@ def get_active_alerts_summary(db: Session, args: AlertsSummaryIn) -> dict[str, A
         by_severity[str(r["severity"])] = by_severity.get(str(r["severity"]), 0) + 1
     return {"rows": rows, "meta": {"returned": len(rows), "limit": args.limit,
                                    "by_platform": by_platform, "by_severity": by_severity,
-                                   "severity_min": args.severity_min, "service": args.service}}
+                                   "severity_min": args.severity_min, "platform": args.platform,
+                                   "service": args.service}}
 
 
 def get_capacity_risk(db: Session, args: CapacityRiskIn) -> dict[str, Any]:
@@ -330,8 +337,9 @@ TOOLS: dict[str, ToolSpec] = {
     spec.name: spec for spec in (
         ToolSpec(
             "get_host_alerts",
-            "Alerts for one host across every monitoring platform SAMIX holds (Zabbix, Dynatrace, "
-            "NNMi, SiteScope). Use for 'what problems are on X'. Returns active alerts by default.",
+            "Alerts for one host. Optional platform filter (zabbix/dynatrace/nnmi/sitescope/digitalview) "
+            "to limit results to one monitoring tool. When the user asks about a specific platform, "
+            "ALWAYS pass the platform parameter. Returns active alerts by default.",
             HostAlertsIn, get_host_alerts,
         ),
         ToolSpec(
@@ -342,8 +350,10 @@ TOOLS: dict[str, ToolSpec] = {
         ),
         ToolSpec(
             "get_active_alerts_summary",
-            "Top current alerts across the estate, most severe first. Optional minimum severity "
-            "(1-5) and service/group filter. Use for 'what is happening now', 'worst alerts'.",
+            "Top current alerts across the estate, most severe first. Optional filters: platform "
+            "(zabbix/dynatrace/nnmi/sitescope/digitalview), minimum severity (1-5), service/group. "
+            "IMPORTANT: when the user asks about a specific platform, ALWAYS pass the platform parameter. "
+            "Use for 'what is happening now', 'worst alerts', 'alerts on dynatrace'.",
             AlertsSummaryIn, get_active_alerts_summary,
         ),
         ToolSpec(
