@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from app.config import Settings, get_settings
 from app.routers.pages import templates
 
-from .audit import record_feedback
+from .audit import delete_correction, list_corrections, record_feedback, save_correction
 from .evidence import platform_label, render_answer_html
 from .gateway import Gateway, GatewayError, get_gateway
 
@@ -171,6 +171,57 @@ async def ai_feedback(request: Request):
         label = "Thanks, noted as helpful." if data.vote > 0 else "Thanks, noted. This goes into the evaluation set."
         return HTMLResponse(f"<span class='ai-voted'>{label}</span>")
     return {"ok": True, "trace_id": data.trace_id, "vote": data.vote}
+
+
+class CorrectionIn(BaseModel):
+    question_pattern: str = Field(min_length=1, max_length=500)
+    keywords: str = Field(min_length=1, max_length=1000)
+    correct_answer: str = Field(min_length=1, max_length=4000)
+    data_source: str | None = Field(default=None, max_length=1000)
+    root_cause_hint: str | None = Field(default=None, max_length=2000)
+    trace_id: str | None = Field(default=None, max_length=32)
+
+
+@router.post("/api/v1/ai/corrections")
+async def ai_correction_create(request: Request):
+    gw = get_gateway()
+    user = _gate(request, gw)
+    if request.headers.get("content-type", "").startswith("application/json"):
+        data = CorrectionIn.model_validate(await request.json())
+    else:
+        form = await request.form()
+        data = CorrectionIn(
+            question_pattern=str(form.get("question_pattern", "")),
+            keywords=str(form.get("keywords", "")),
+            correct_answer=str(form.get("correct_answer", "")),
+            data_source=str(form.get("data_source") or "") or None,
+            root_cause_hint=str(form.get("root_cause_hint") or "") or None,
+            trace_id=str(form.get("trace_id") or "") or None,
+        )
+    cid = save_correction(
+        question_pattern=data.question_pattern, keywords=data.keywords,
+        correct_answer=data.correct_answer, data_source=data.data_source,
+        root_cause_hint=data.root_cause_hint, trace_id=data.trace_id, created_by=user,
+    )
+    if request.headers.get("hx-request"):
+        return HTMLResponse("<span class='ai-voted'>✅ Correction saved — AI will use it from now on.</span>")
+    return {"ok": True, "id": cid}
+
+
+@router.get("/api/v1/ai/corrections")
+def ai_corrections_list(request: Request):
+    gw = get_gateway()
+    _gate(request, gw)
+    return list_corrections()
+
+
+@router.delete("/api/v1/ai/corrections/{correction_id}")
+def ai_correction_delete(correction_id: int, request: Request):
+    gw = get_gateway()
+    _gate(request, gw)
+    if not delete_correction(correction_id):
+        raise HTTPException(404, "correction not found")
+    return {"ok": True}
 
 
 @router.get("/api/v1/ai/health")

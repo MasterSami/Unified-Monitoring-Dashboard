@@ -53,6 +53,27 @@
       <button class="ai-vote-btn" type="submit" name="vote" value="-1" title="Wrong or unhelpful">👎</button>
       <input class="ai-comment" type="text" name="comment" maxlength="2000" placeholder="optional: what was wrong?" />
     </form>
+    <button class="ai-vote-btn ai-correct-toggle" type="button" title="Teach AI the correct answer"
+            onclick="this.nextElementSibling.classList.toggle('hidden')">📝 Correct</button>
+    <form class="ai-correction-form hidden" hx-post="/api/v1/ai/corrections" hx-target="this" hx-swap="innerHTML">
+      <input type="hidden" name="trace_id" value="{{ r.trace_id }}" />
+      <label>Question pattern <small>(what kind of question was this?)</small>
+        <input type="text" name="question_pattern" maxlength="500" placeholder="e.g. alerts on Dynatrace" required />
+      </label>
+      <label>Keywords <small>(comma-separated, used to match future questions)</small>
+        <input type="text" name="keywords" maxlength="1000" placeholder="e.g. dynatrace, alerts, dangerous" required />
+      </label>
+      <label>Correct answer
+        <textarea name="correct_answer" maxlength="4000" rows="3" placeholder="The answer AI should give" required></textarea>
+      </label>
+      <label>Data source <small>(optional: where should AI get the data?)</small>
+        <input type="text" name="data_source" maxlength="1000" placeholder="e.g. Dynatrace platform only, not Zabbix" />
+      </label>
+      <label>Root cause hint <small>(optional: how to find root cause for this type of issue)</small>
+        <textarea name="root_cause_hint" maxlength="2000" rows="2" placeholder="e.g. Check host metrics on Dynatrace, compare with baseline"></textarea>
+      </label>
+      <button type="submit" class="ai-correct-submit">Save Correction</button>
+    </form>
     <span class="ai-trace mono">trace {{ r.trace_id }} · {{ r.model }} · {{ r.latency_ms }} ms · {{ r.rounds }} round{{ '' if r.rounds == 1 else 's' }}</span>
   </div>
 </div>

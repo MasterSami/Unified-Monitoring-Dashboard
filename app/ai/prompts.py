@@ -68,3 +68,20 @@ Evidence Pack (JSON):
 
 User question: {question}
 """
+
+
+def build_corrections_block(corrections: list[dict]) -> str:
+    """Format matched corrections for injection into the system prompt."""
+    if not corrections:
+        return ""
+    lines = ["\n\n--- TEAM CORRECTIONS (override your defaults with these) ---"]
+    for i, c in enumerate(corrections, 1):
+        lines.append(f"\nCorrection {i}:")
+        lines.append(f"  When asked about: {c['question_pattern']}")
+        lines.append(f"  Correct answer: {c['correct_answer']}")
+        if c.get("data_source"):
+            lines.append(f"  Data source: {c['data_source']}")
+        if c.get("root_cause_hint"):
+            lines.append(f"  Root cause: {c['root_cause_hint']}")
+    lines.append("\nAlways prefer these corrections over your general knowledge.")
+    return "\n".join(lines)

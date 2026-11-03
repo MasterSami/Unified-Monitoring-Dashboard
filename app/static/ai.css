@@ -105,6 +105,21 @@
 .ai-voted { font-size: 12px; color: var(--up); }
 .ai-trace { font-size: 11px; color: var(--text-faint); }
 
+/* correction form */
+.ai-correct-toggle { font-size: 12px; width: auto; padding: 0 10px; }
+.ai-correction-form { width: 100%; display: flex; flex-direction: column; gap: 8px; margin-top: 8px;
+  padding: 12px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ai-correction-form.hidden { display: none; }
+.ai-correction-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.ai-correction-form label small { font-weight: 400; color: var(--text-faint); }
+.ai-correction-form input, .ai-correction-form textarea { font: inherit; font-size: 13px; padding: 6px 10px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ai-correction-form textarea { resize: vertical; min-height: 48px; }
+.ai-correct-submit { align-self: flex-start; font: inherit; font-size: 13px; font-weight: 600;
+  padding: 6px 18px; cursor: pointer; border-radius: var(--radius-sm);
+  background: var(--accent); color: #fff; border: none; }
+.ai-correct-submit:hover { opacity: .85; }
+
 /* composer */
 .ai-form { display: flex; gap: 10px; align-items: flex-end; padding: 12px; position: sticky; bottom: 8px; }
 .ai-form textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 180px; font: inherit; font-size: 14px;

@@ -34,7 +34,7 @@ from app.db import SessionLocal
 from app.runbook_auth import COOKIE_NAME, read_token
 
 from . import prompts
-from .audit import record_audit
+from .audit import find_corrections, record_audit
 from .evidence import EvidencePack, Validation, build_pack, freshness_by_instance, freshness_line, validate_answer
 from .llm import ChatModel, LLMError, OllamaClient, tool_calls
 from .tools import ToolArgumentError, ToolBroker, ToolResult, UnknownToolError, ollama_tool_definitions
@@ -222,8 +222,12 @@ class Gateway:
                 freshness_line=freshness_line(pack.freshness), error=None, steps=steps,
             )
 
+        corrections = find_corrections(question)
+        corrections_block = prompts.build_corrections_block(corrections)
+        system_prompt = prompts.SYSTEM_PROMPT + corrections_block
+
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": prompts.SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"{question}\n\n{prompts.TOOL_ROUND_HINT}"},
         ]
         tool_defs = ollama_tool_definitions()
@@ -258,7 +262,7 @@ class Gateway:
             else:
                 step("Composing the answer")
                 final = self.llm.chat([
-                    {"role": "system", "content": prompts.SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompts.ANSWER_PROMPT.format(pack=pack.prompt_json(), question=question)},
                 ])
                 answer = (final.get("content") or "").strip()

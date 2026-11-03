@@ -1442,3 +1442,20 @@ class AIFeedback(Base):
     comment: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     user: Mapped[str] = mapped_column(String(128), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class AICorrection(Base):
+    """Human-supplied correction injected into the AI system prompt."""
+
+    __tablename__ = "ai_corrections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    question_pattern: Mapped[str] = mapped_column(String(500), default="")
+    keywords: Mapped[str] = mapped_column(String(1000), default="")
+    correct_answer: Mapped[str] = mapped_column(String(4000), default="")
+    data_source: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    root_cause_hint: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    created_by: Mapped[str] = mapped_column(String(128), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
