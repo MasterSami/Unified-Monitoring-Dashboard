@@ -231,6 +231,22 @@
 </div>
 {% endfor %}
 
+{% if total_pages is defined and total_pages > 1 %}
+<div class="corr-pagination">
+  {% if page > 1 %}
+  <button class="corr-page-btn"
+    hx-get="/partials/correlation?page={{ page - 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
+    hx-target="#corr-region" hx-swap="innerHTML">&#x2039; Previous</button>
+  {% endif %}
+  <span class="corr-page-info">Page {{ page }} of {{ total_pages }} ({{ total_groups }} groups)</span>
+  {% if page < total_pages %}
+  <button class="corr-page-btn"
+    hx-get="/partials/correlation?page={{ page + 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
+    hx-target="#corr-region" hx-swap="innerHTML">Next &#x203A;</button>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if uncorrelated | length > 0 %}
 <details class="corr-uncorrelated">
   <summary class="count-tag" style="cursor:pointer; margin-top:16px">

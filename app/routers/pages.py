@@ -1874,18 +1874,22 @@ def correlation_page(
              "current": {"state": "active", "platform": "all", "instance": "all"}},
         )
     from app.correlation_v2 import correlate_alerts
-    import logging, traceback
+    import logging, traceback, math
     corr_error = None
     try:
-        groups, uncorrelated = correlate_alerts(db, state="active")
+        all_groups, uncorrelated = correlate_alerts(db, state="active")
     except Exception as exc:
         logging.getLogger(__name__).exception("correlation_v2 failed")
-        groups, uncorrelated = [], []
+        all_groups, uncorrelated = [], []
         corr_error = f"{type(exc).__name__}: {exc}"
     try:
         instances = _instance_names(settings, db)
     except Exception:
         instances = []
+    per_page = 50
+    total_groups = len(all_groups)
+    total_pages = max(1, math.ceil(total_groups / per_page))
+    groups = all_groups[:per_page]
     return templates.TemplateResponse(
         request, "correlation.html",
         {
@@ -1896,7 +1900,12 @@ def correlation_page(
             "uncorrelated": uncorrelated,
             "instances": instances,
             "corr_error": corr_error,
-            "current": {"state": "active", "platform": "all", "instance": "all"},
+            "page": 1,
+            "per_page": per_page,
+            "total_groups": total_groups,
+            "total_pages": total_pages,
+            "current": {"state": "active", "platform": "all", "instance": "all",
+                        "severity_min": "", "q": ""},
         },
     )
 
@@ -2035,24 +2044,29 @@ def correlation_partial(
     state: str = "active",
     platform: str = "all",
     instance: str = "all",
+    severity: str | None = None,
+    page: int = 1,
+    per_page: int = 50,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Correlation groups fragment (HTMX partial)."""
     from app.correlation_v2 import correlate_alerts
-    import logging
+    import logging, math
     corr_error = None
+    min_sev = int(severity) if severity and severity.isdigit() else 1
     try:
-        groups, uncorrelated = correlate_alerts(
+        all_groups, uncorrelated = correlate_alerts(
             db, state=state, platform=platform, instance=instance,
+            min_severity=min_sev,
         )
     except Exception as exc:
         logging.getLogger(__name__).exception("correlation_v2 partial failed")
-        groups, uncorrelated = [], []
+        all_groups, uncorrelated = [], []
         corr_error = f"{type(exc).__name__}: {exc}"
     if q:
         ql = q.lower()
-        groups = [
-            g for g in groups
+        all_groups = [
+            g for g in all_groups
             if ql in g.title.lower()
             or any(ql in a["host"].lower() or ql in a["title"].lower() or ql in a["platform"].lower() for a in g.alerts)
         ]
@@ -2060,15 +2074,26 @@ def correlation_partial(
             a for a in uncorrelated
             if ql in a["host"].lower() or ql in a["title"].lower() or ql in a["platform"].lower()
         ]
+    total_groups = len(all_groups)
+    total_pages = max(1, math.ceil(total_groups / per_page))
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * per_page
+    groups = all_groups[start:start + per_page]
+    show_uncorrelated = (page == 1)
     return templates.TemplateResponse(
         request,
         "partials/correlation_groups.html",
         {
             "request": request,
             "groups": groups,
-            "uncorrelated": uncorrelated,
+            "uncorrelated": uncorrelated if show_uncorrelated else [],
             "corr_error": corr_error,
-            "current": {"state": state, "platform": platform, "instance": instance},
+            "page": page,
+            "per_page": per_page,
+            "total_groups": total_groups,
+            "total_pages": total_pages,
+            "current": {"state": state, "platform": platform, "instance": instance,
+                        "severity_min": severity or "", "q": q or ""},
         },
     )
 

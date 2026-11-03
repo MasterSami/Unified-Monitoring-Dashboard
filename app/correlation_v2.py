@@ -24,6 +24,7 @@ Temporal proximity alone never creates a group.
 
 from __future__ import annotations
 
+import time as _time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -723,6 +724,14 @@ def _detect_incident_type(group_alerts: list[Alert]) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+_corr_cache: dict[str, tuple[float, Any]] = {}
+_CORR_CACHE_TTL = 90  # seconds
+
+
+def _corr_cache_key(state: str, platform: str, instance: str, min_severity: int) -> str:
+    return f"{state}|{platform}|{instance}|{min_severity}"
+
+
 def correlate_alerts(
     db: Session,
     *,
@@ -741,6 +750,11 @@ def correlate_alerts(
     Returns a list of :class:`CorrelationGroup` (multi-alert clusters) plus
     a list of alert dicts that didn't match any group.
     """
+    ckey = _corr_cache_key(state, platform, instance, min_severity)
+    hit = _corr_cache.get(ckey)
+    if hit and hit[0] > _time.time():
+        return hit[1]
+
     # --- Fetch alerts ---
     stmt = select(Alert)
     if state == "active":
@@ -883,4 +897,6 @@ def correlate_alerts(
         _alert_dict(alert_map[a])
         for a in sorted(all_ids - correlated_ids)
     ]
-    return groups, uncorrelated
+    result = (groups, uncorrelated)
+    _corr_cache[ckey] = (_time.time() + _CORR_CACHE_TTL, result)
+    return result
