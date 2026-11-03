@@ -128,11 +128,14 @@ def fetch_and_store_rca(
             start_dt = None
             if start_ms and isinstance(start_ms, (int, float)):
                 start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+            raw_eid = ev_entity.get("entityId") if isinstance(ev_entity, dict) else None
+            if isinstance(raw_eid, dict):
+                raw_eid = raw_eid.get("id", "")
             db.add(RCAEvidence(
                 rca_id=rca.id,
                 evidence_type=ev.get("evidenceType", ""),
                 display_name=ev.get("displayName", "")[:1000],
-                entity_id=ev_entity.get("entityId") if isinstance(ev_entity, dict) else None,
+                entity_id=str(raw_eid) if raw_eid else None,
                 entity_name=ev_entity.get("name") if isinstance(ev_entity, dict) else None,
                 is_root_cause_relevant=bool(ev.get("rootCauseRelevant")),
                 start_time=start_dt,
