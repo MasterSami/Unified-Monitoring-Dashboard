@@ -33,6 +33,8 @@ from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.runbook_auth import COOKIE_NAME, read_token
 
+import re
+
 from . import prompts
 from .audit import find_corrections, record_audit
 from .evidence import EvidencePack, Validation, build_pack, freshness_by_instance, freshness_line, validate_answer
@@ -126,6 +128,31 @@ class Job:
     @property
     def done(self) -> bool:
         return self.result is not None or self.error is not None
+
+
+def _deloop(text: str, max_repeats: int = 3) -> str:
+    """Detect and truncate repetitive model output (hallucination loops).
+
+    Finds the longest sentence-level phrase that repeats more than
+    *max_repeats* times and cuts the text at the end of the Nth occurrence.
+    """
+    if not text or len(text) < 200:
+        return text
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) < max_repeats + 2:
+        return text
+    for window in (3, 2, 1):
+        for i in range(len(sentences) - window):
+            chunk = " ".join(sentences[i:i + window])
+            if len(chunk) < 20:
+                continue
+            count = text.count(chunk)
+            if count > max_repeats:
+                idx = -1
+                for _ in range(max_repeats):
+                    idx = text.index(chunk, idx + 1)
+                return text[:idx + len(chunk)].rstrip() + "\n\n⚠️ (تم قطع الإجابة — تكرار مُكتشف)"
+    return text
 
 
 _JOB_TTL_SECONDS = 600
@@ -255,17 +282,26 @@ class Gateway:
             # Rounds exhausted or the model stopped asking: build the pack.
             step("Packaging evidence")
             pack = build_pack(question, results, self._freshness())
-            # If the first call already answered (no tools used), use that answer
-            # directly instead of running a second evidence-only call.
-            if not results and message and (message.get("content") or "").strip():
-                answer = (message.get("content") or "").strip()
+            if not results:
+                # Model skipped tools entirely — no evidence gathered.
+                # Return a clear "no data" answer instead of letting the
+                # model hallucinate without evidence.
+                answer = (
+                    "⚠️ لم أتمكن من جمع بيانات من أدوات المراقبة للإجابة على هذا السؤال.\n\n"
+                    "حاول تسأل بشكل أوضح، مثلاً:\n"
+                    "- \"alerts on MW10\"\n"
+                    "- \"status of CC-IVRLB3\"\n"
+                    "- \"investigate RCA for P-12345\"\n"
+                    "- \"top 10 alerts\""
+                )
+                step("No tools called — returning guidance")
             else:
                 step("Composing the answer")
                 final = self.llm.chat([
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompts.ANSWER_PROMPT.format(pack=pack.prompt_json(), question=question)},
                 ])
-                answer = (final.get("content") or "").strip()
+                answer = _deloop((final.get("content") or "").strip())
         except LLMError as exc:
             error = str(exc)
             logger.warning("ai %s: %s", trace_id, error)

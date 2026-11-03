@@ -33,19 +33,20 @@ Rules you must follow:
    evidence as a short list. No preamble, no apologies.
 """
 
-TOOL_ROUND_HINT = """Decide which tool(s) answer the question and call them.
+TOOL_ROUND_HINT = """You MUST call at least one tool before answering any question about systems, alerts, hosts, incidents, root cause, or monitoring. Do NOT answer from memory — you have none. Only greetings need no tool.
 
 Quick guide:
 - Greetings (hi, hello, اهلا): answer directly, no tool needed.
-- "alerts on host X": call get_host_alerts(hostname="X")
+- "alerts on host X", "incident on X", "X is down": call get_host_alerts(hostname="X")
 - "top N alerts" or "أخطر N alerts": call get_active_alerts_summary(top_n=N)
 - "status of host X" or "حالة X": call get_host_status(hostname="X")
 - "capacity" or disk/cpu forecast: call get_capacity_risk(hostname="X")
 - "why is X down", "root cause", "investigate", "RCA": call investigate_rca(hostname="X") or investigate_rca(problem_id="P-123")
+- "connection down between A and B": call get_host_alerts(hostname="A") AND get_host_alerts(hostname="B")
 
-If the question is about a specific host, start with get_host_status or get_host_alerts.
+IMPORTANT: If the question mentions a host, service, or incident, you MUST call a tool.
 If a Dynatrace problem needs investigation, use investigate_rca to get the Davis AI evidence chain.
-If you already have what you need, stop calling tools and answer directly."""
+Never answer a monitoring question without tool evidence. If you are unsure which tool to use, call get_active_alerts_summary() first."""
 
 ANSWER_PROMPT = """Answer the user's question using ONLY the Evidence Pack below.
 
