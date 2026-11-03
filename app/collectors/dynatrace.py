@@ -612,3 +612,64 @@ class DynatraceCollector(BaseCollector):
                     break
                 params = {"nextPageKey": next_key}
         return alerts
+
+    # --- RCA (Root Cause Analysis) ------------------------------------------
+
+    def fetch_problem_rca(self, problem_id: str) -> dict | None:
+        """Fetch problem details with evidence and impact analysis."""
+        try:
+            with self._client(headers=self._headers()) as client:
+                resp = self._request_with_retries(
+                    client, "GET",
+                    f"{self._base}/api/v2/problems/{problem_id}",
+                    params={"fields": "+evidenceDetails,+impactAnalysis"},
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+                self.logger.warning("RCA fetch %s -> HTTP %s", problem_id, resp.status_code)
+        except Exception:
+            self.logger.exception("Failed to fetch RCA for problem %s", problem_id)
+        return None
+
+    def fetch_entity_details(self, entity_id: str) -> dict | None:
+        """Fetch entity details with properties and relationships."""
+        try:
+            with self._client(headers=self._headers()) as client:
+                resp = self._request_with_retries(
+                    client, "GET",
+                    f"{self._base}/api/v2/entities/{entity_id}",
+                    params={"fields": "+properties,+toRelationships,+fromRelationships"},
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+        except Exception:
+            self.logger.exception("Failed to fetch entity %s", entity_id)
+        return None
+
+    def fetch_entity_metrics(self, entity_id: str, entity_type: str) -> dict:
+        """Fetch key metrics for an entity based on its type."""
+        metrics_map = {
+            "HOST": ["builtin:host.cpu.usage", "builtin:host.mem.usage"],
+            "SERVICE": ["builtin:service.response.time", "builtin:service.errors.total.rate"],
+            "PROCESS_GROUP_INSTANCE": ["builtin:tech.generic.cpu.usage", "builtin:tech.generic.mem.workingSetSize"],
+        }
+        selectors = metrics_map.get(entity_type, metrics_map["HOST"])
+        results: dict[str, dict] = {}
+        try:
+            with self._client(headers=self._headers()) as client:
+                for metric in selectors:
+                    resp = self._request_with_retries(
+                        client, "GET",
+                        f"{self._base}/api/v2/metrics/query",
+                        params={
+                            "metricSelector": metric,
+                            "entitySelector": f'entityId("{entity_id}")',
+                            "from": "now-1h",
+                            "resolution": "5m",
+                        },
+                    )
+                    if resp.status_code == 200:
+                        results[metric] = resp.json()
+        except Exception:
+            self.logger.exception("Failed to fetch metrics for %s", entity_id)
+        return results

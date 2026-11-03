@@ -2478,6 +2478,58 @@ def export_dynatrace_map_xlsx(
     )
 
 
+# --- RCA (Root Cause Analysis) ------------------------------------------------
+
+
+@router.get("/rca/alert/{alert_id}")
+def get_rca(alert_id: int, db: Session = Depends(get_db)):
+    from app.rca import get_rca_for_alert
+    rca = get_rca_for_alert(db, alert_id)
+    if not rca:
+        raise HTTPException(404, "No RCA found for this alert")
+    return rca
+
+
+@router.get("/rca/problem/{problem_id}")
+def get_rca_by_problem(problem_id: str, db: Session = Depends(get_db)):
+    from app.rca import get_rca_for_problem
+    rca = get_rca_for_problem(db, problem_id)
+    if not rca:
+        raise HTTPException(404, "No RCA found for this problem")
+    return rca
+
+
+@router.post("/rca/investigate/{problem_id}")
+def trigger_rca_investigation(
+    problem_id: str,
+    instance: str = "all",
+    db: Session = Depends(get_db),
+):
+    """Trigger an RCA investigation for a Dynatrace problem."""
+    from app.rca import _get_dt_collector, fetch_and_store_rca
+    collector = _get_dt_collector(instance)
+    if not collector:
+        raise HTTPException(404, "No Dynatrace instance configured")
+    alert = db.query(Alert).filter(
+        Alert.external_id == problem_id,
+        Alert.source_platform == "dynatrace",
+    ).first()
+    rca = fetch_and_store_rca(
+        db, collector, problem_id,
+        alert_id=alert.id if alert else None,
+        instance=instance,
+    )
+    if not rca:
+        raise HTTPException(502, "Could not fetch RCA from Dynatrace")
+    return {"ok": True, "rca_id": rca.id}
+
+
+@router.get("/rca/entity-health/{entity_id}")
+def get_entity_health(entity_id: str, instance: str = "all"):
+    from app.rca import fetch_entity_health
+    return fetch_entity_health(instance, entity_id, entity_type="")
+
+
 @router.get("/summary", response_model=SummaryOut)
 def summary(
     db: Session = Depends(get_db),

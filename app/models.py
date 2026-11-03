@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Float,
+    ForeignKey,
     Integer,
     String,
     UniqueConstraint,
@@ -1458,4 +1459,43 @@ class AICorrection(Base):
     trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     created_by: Mapped[str] = mapped_column(String(128), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+# --- Dynatrace Root Cause Analysis -------------------------------------------
+
+
+class RootCauseAnalysis(Base):
+    """One RCA investigation for a Dynatrace problem (Davis AI evidence chain)."""
+
+    __tablename__ = "rca_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    alert_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("alerts.id"), index=True, nullable=True)
+    problem_id: Mapped[str] = mapped_column(String(128), index=True)
+    source_instance: Mapped[str] = mapped_column(String(128), default="")
+    root_cause_entity_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    root_cause_entity_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    root_cause_entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str] = mapped_column(String(4000), default="")
+    impact_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="open")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class RCAEvidence(Base):
+    """One piece of Davis AI evidence attached to an RCA investigation."""
+
+    __tablename__ = "rca_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rca_id: Mapped[int] = mapped_column(Integer, ForeignKey("rca_analyses.id"), index=True)
+    evidence_type: Mapped[str] = mapped_column(String(64), default="")
+    display_name: Mapped[str] = mapped_column(String(1000), default="")
+    entity_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    entity_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    is_root_cause_relevant: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    raw_data: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
