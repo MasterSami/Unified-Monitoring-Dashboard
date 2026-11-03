@@ -2047,6 +2047,7 @@ def correlation_partial(
     severity: str | None = None,
     page: int = 1,
     per_page: int = 50,
+    refresh: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Correlation groups fragment (HTMX partial)."""
@@ -2054,10 +2055,11 @@ def correlation_partial(
     import logging, math
     corr_error = None
     min_sev = int(severity) if severity and severity.isdigit() else 1
+    force = refresh == "1"
     try:
         all_groups, uncorrelated = correlate_alerts(
             db, state=state, platform=platform, instance=instance,
-            min_severity=min_sev,
+            min_severity=min_sev, force_refresh=force,
         )
     except Exception as exc:
         logging.getLogger(__name__).exception("correlation_v2 partial failed")

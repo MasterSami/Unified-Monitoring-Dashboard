@@ -732,6 +732,11 @@ def _corr_cache_key(state: str, platform: str, instance: str, min_severity: int)
     return f"{state}|{platform}|{instance}|{min_severity}"
 
 
+def invalidate_corr_cache() -> None:
+    """Clear the correlation cache so the next call recomputes."""
+    _corr_cache.clear()
+
+
 def correlate_alerts(
     db: Session,
     *,
@@ -740,6 +745,7 @@ def correlate_alerts(
     instance: str = "all",
     min_severity: int = 1,
     time_window: int = _TIME_WINDOW,
+    force_refresh: bool = False,
 ) -> tuple[list[CorrelationGroup], list[dict[str, Any]]]:
     """Run correlation over alerts and return (groups, uncorrelated_alerts).
 
@@ -751,9 +757,10 @@ def correlate_alerts(
     a list of alert dicts that didn't match any group.
     """
     ckey = _corr_cache_key(state, platform, instance, min_severity)
-    hit = _corr_cache.get(ckey)
-    if hit and hit[0] > _time.time():
-        return hit[1]
+    if not force_refresh:
+        hit = _corr_cache.get(ckey)
+        if hit and hit[0] > _time.time():
+            return hit[1]
 
     # --- Fetch alerts ---
     stmt = select(Alert)

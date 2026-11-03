@@ -2,10 +2,13 @@
 {% set st_label = 'open' if st == 'active' else ('resolved' if st == 'resolved' else '') %}
 
 <div class="corr-summary">
-  <span class="count-tag"><b>{{ groups | length }}</b> correlation group{{ '' if groups | length == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
+  <span class="count-tag"><b>{{ total_groups }}</b> correlation group{{ '' if total_groups == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
   {% if uncorrelated | length > 0 %}
   <span class="count-tag" style="margin-left:12px"><b>{{ uncorrelated | length }}</b> uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}</span>
   {% endif %}
+  <button class="corr-page-btn" style="margin-left:auto"
+          hx-get="/partials/correlation?refresh=1&page=1" hx-target="#corr-region" hx-swap="innerHTML"
+          title="Force refresh — bypass cache and re-run correlation">🔄 Refresh</button>
 </div>
 
 {% if corr_error %}
