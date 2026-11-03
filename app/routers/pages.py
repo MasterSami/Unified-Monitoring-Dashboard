@@ -2100,6 +2100,46 @@ def correlation_partial(
     )
 
 
+@router.post("/api/v1/rca/investigate/{problem_id}", response_class=HTMLResponse)
+def rca_investigate_html(
+    request: Request,
+    problem_id: str,
+    instance: str = "all",
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Trigger RCA fetch and return HTML partial for the correlation card."""
+    try:
+        from app.rca import fetch_and_store_rca_by_problem_id
+        from app.models import RootCauseAnalysis, RCAEvidence
+        rca = db.query(RootCauseAnalysis).filter(
+            RootCauseAnalysis.problem_id == problem_id
+        ).first()
+        if not rca:
+            rca = fetch_and_store_rca_by_problem_id(db, problem_id, instance=instance)
+        if not rca:
+            return templates.TemplateResponse(request, "partials/rca_result.html",
+                                              {"rca": None, "evidence": [], "impact": {}, "error": None, "root_cause_count": 0})
+        evidence = db.query(RCAEvidence).filter(RCAEvidence.rca_id == rca.id).all()
+        evidence_list = [
+            {"evidence_type": e.evidence_type, "display_name": e.display_name,
+             "entity_id": e.entity_id, "entity_name": e.entity_name,
+             "is_root_cause_relevant": e.is_root_cause_relevant,
+             "start_time": e.start_time.strftime("%H:%M:%S") if e.start_time else None}
+            for e in evidence
+        ]
+        root_cause_count = sum(1 for e in evidence if e.is_root_cause_relevant)
+        return templates.TemplateResponse(request, "partials/rca_result.html", {
+            "rca": rca, "evidence": evidence_list,
+            "impact": rca.impact_json or {},
+            "root_cause_count": root_cause_count, "error": None,
+        })
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).exception("RCA investigation failed for %s", problem_id)
+        return templates.TemplateResponse(request, "partials/rca_result.html",
+                                          {"rca": None, "evidence": [], "impact": {}, "error": str(exc), "root_cause_count": 0})
+
+
 @router.get("/partials/health", response_class=HTMLResponse)
 def health_partial(
     request: Request,

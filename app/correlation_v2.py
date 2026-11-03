@@ -109,6 +109,7 @@ class CorrelationGroup:
 def _alert_dict(a: Alert) -> dict[str, Any]:
     return {
         "id": a.id,
+        "external_id": a.external_id or "",
         "title": a.title,
         "host": a.host_hostname or "",
         "host_ip": a.host_ip or "",

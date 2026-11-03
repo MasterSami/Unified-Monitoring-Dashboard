@@ -41,8 +41,10 @@ Quick guide:
 - "top N alerts" or "أخطر N alerts": call get_active_alerts_summary(top_n=N)
 - "status of host X" or "حالة X": call get_host_status(hostname="X")
 - "capacity" or disk/cpu forecast: call get_capacity_risk(hostname="X")
+- "why is X down", "root cause", "investigate", "RCA": call investigate_rca(hostname="X") or investigate_rca(problem_id="P-123")
 
 If the question is about a specific host, start with get_host_status or get_host_alerts.
+If a Dynatrace problem needs investigation, use investigate_rca to get the Davis AI evidence chain.
 If you already have what you need, stop calling tools and answer directly."""
 
 ANSWER_PROMPT = """Answer the user's question using ONLY the Evidence Pack below.

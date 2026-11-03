@@ -1,0 +1,69 @@
+{# Inline RCA investigation result, rendered inside a correlation card. #}
+{% if error %}
+<div class="corr-rca-error">{{ error }}</div>
+{% elif rca %}
+<div class="corr-rca-panel">
+  <h4>Root Cause Analysis — {{ rca.problem_id }}</h4>
+
+  {% if rca.root_cause_entity_name %}
+  <div class="corr-rca-root">
+    <span class="corr-rca-label">Root Cause Entity</span>
+    <span class="corr-rca-entity">
+      <span class="badge badge-dynatrace"><span class="dot"></span>{{ rca.root_cause_entity_type or 'ENTITY' }}</span>
+      <strong>{{ rca.root_cause_entity_name }}</strong>
+    </span>
+    {% if rca.root_cause_entity_id %}
+    <span class="mono" style="font-size:11px; color:var(--text-faint)">{{ rca.root_cause_entity_id }}</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if rca.summary %}
+  <div class="corr-rca-summary">{{ rca.summary }}</div>
+  {% endif %}
+
+  {% if evidence %}
+  <div class="corr-rca-evidence">
+    <h5>Evidence Chain ({{ evidence | length }} items, {{ root_cause_count }} root-cause relevant)</h5>
+    <div class="corr-timeline">
+      {% for e in evidence %}
+      <div class="corr-timeline-item">
+        <div class="corr-timeline-track">
+          <div class="corr-timeline-dot {{ 'rca-root-dot' if e.is_root_cause_relevant else '' }}"></div>
+          {% if not loop.last %}
+          <div class="corr-timeline-line"></div>
+          {% endif %}
+        </div>
+        <div class="corr-timeline-content">
+          <span class="corr-rca-etype {{ 'rca-relevant' if e.is_root_cause_relevant else '' }}">{{ e.evidence_type }}</span>
+          <span class="corr-timeline-title">{{ e.display_name }}</span>
+          {% if e.entity_name %}
+          <span class="mono" style="font-size:11px; color:var(--text-muted)">{{ e.entity_name }}</span>
+          {% endif %}
+          {% if e.start_time %}
+          <span class="mono" style="font-size:11px">{{ e.start_time }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if impact %}
+  <div class="corr-rca-impact">
+    <h5>Impact Analysis</h5>
+    <div class="corr-rca-impact-grid">
+      {% if impact.get('impactedEntities') %}
+      <div class="corr-class-item">
+        <span class="corr-class-label">Impacted Entities</span>
+        <span>{{ impact['impactedEntities'] | length }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% else %}
+<div class="corr-rca-empty">No RCA data available for this problem.</div>
+{% endif %}

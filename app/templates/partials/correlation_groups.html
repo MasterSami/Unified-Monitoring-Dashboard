@@ -230,6 +230,36 @@
         </table>
       </div>
     </div>
+
+    {# --- RCA Investigation --- #}
+    {% set has_dt = 'dynatrace' in g.platforms %}
+    <div class="corr-section corr-rca-section">
+      <div class="corr-rca-actions">
+        {% if has_dt %}
+        {% set dt_alert = namespace(id=None, problem=None) %}
+        {% for a in g.alerts %}
+          {% if a.platform == 'dynatrace' and not dt_alert.id %}
+            {% set dt_alert.id = a.id %}
+            {% set dt_alert.problem = a.external_id %}
+          {% endif %}
+        {% endfor %}
+        <button class="corr-investigate-btn"
+                hx-post="/api/v1/rca/investigate/{{ dt_alert.problem or '' }}?instance=all"
+                hx-target="#rca-result-{{ g.group_id }}"
+                hx-swap="innerHTML"
+                hx-indicator="#rca-spinner-{{ g.group_id }}">
+          🔍 Investigate RCA (Dynatrace)
+        </button>
+        <span id="rca-spinner-{{ g.group_id }}" class="htmx-indicator" style="font-size:12px; color:var(--text-muted)">Fetching from Dynatrace...</span>
+        {% endif %}
+        <a class="corr-investigate-btn corr-ai-btn"
+           href="/ai?q=Investigate%20root%20cause%20for%20correlation%20group%20{{ g.group_id }}%20-%20{{ g.title | urlencode }}"
+           title="Ask SAMIX AI to investigate">
+          🤖 Ask AI
+        </a>
+      </div>
+      <div id="rca-result-{{ g.group_id }}" class="corr-rca-result"></div>
+    </div>
   </div>
 </div>
 {% endfor %}

@@ -172,6 +172,12 @@ class CapacityRiskIn(BaseModel):
     classification: str | None = Field(default=None, description="critical | warning | watch | ok | noisy | insufficient_data")
 
 
+class InvestigateRCAIn(BaseModel):
+    problem_id: str | None = Field(default=None, max_length=256, description="Dynatrace problem ID (e.g. P-12345678). Use when investigating a specific Dynatrace problem.")
+    hostname: str | None = Field(default=None, max_length=255, description="Hostname to investigate. Finds the most recent Dynatrace problem for this host and returns its RCA.")
+    alert_id: int | None = Field(default=None, description="SAMIX alert ID to investigate.")
+
+
 # --- Tool implementations ----------------------------------------------------
 # Each returns {"rows": [...], "meta": {...}}. Rows are plain dicts.
 
@@ -322,6 +328,103 @@ def get_capacity_risk(db: Session, args: CapacityRiskIn) -> dict[str, Any]:
     return {"rows": rows, "meta": meta}
 
 
+def investigate_rca(db: Session, args: InvestigateRCAIn) -> dict[str, Any]:
+    """Look up or fetch Dynatrace Root Cause Analysis."""
+    from app.models import RootCauseAnalysis, RCAEvidence
+
+    rca_row = None
+
+    if args.problem_id:
+        rca_row = db.query(RootCauseAnalysis).filter(
+            RootCauseAnalysis.problem_id == args.problem_id
+        ).first()
+        if not rca_row:
+            # Try to trigger a live fetch
+            try:
+                from app.rca import fetch_and_store_rca_by_problem_id
+                rca_row = fetch_and_store_rca_by_problem_id(db, args.problem_id)
+            except Exception:
+                logger.exception("Live RCA fetch failed for %s", args.problem_id)
+
+    elif args.alert_id:
+        rca_row = db.query(RootCauseAnalysis).filter(
+            RootCauseAnalysis.alert_id == args.alert_id
+        ).first()
+        if not rca_row:
+            alert = db.query(Alert).filter(Alert.id == args.alert_id).first()
+            if alert and alert.source_platform.value == "dynatrace" and alert.external_id:
+                try:
+                    from app.rca import fetch_and_store_rca_by_problem_id
+                    rca_row = fetch_and_store_rca_by_problem_id(db, alert.external_id)
+                except Exception:
+                    logger.exception("Live RCA fetch failed for alert %s", args.alert_id)
+
+    elif args.hostname:
+        res = resolve_hostname(db, args.hostname)
+        if res.status in ("none", "ambiguous"):
+            return _unresolved(res)
+        keys = res.keys
+        ips = res.ips
+        dt_alert = db.query(Alert).filter(
+            Alert.source_platform == "dynatrace",
+            Alert.resolved.is_(False),
+        ).filter(
+            or_(
+                Alert.host_hostname.ilike(f"%{dedup_key(args.hostname)}%"),
+                Alert.host_ip.in_(sorted(ips)) if ips else False,
+            )
+        ).order_by(Alert.severity_int.desc(), Alert.started_at.desc()).first()
+
+        if dt_alert and dt_alert.external_id:
+            rca_row = db.query(RootCauseAnalysis).filter(
+                RootCauseAnalysis.problem_id == dt_alert.external_id
+            ).first()
+            if not rca_row:
+                try:
+                    from app.rca import fetch_and_store_rca_by_problem_id
+                    rca_row = fetch_and_store_rca_by_problem_id(db, dt_alert.external_id)
+                except Exception:
+                    logger.exception("Live RCA fetch failed for host %s", args.hostname)
+        else:
+            return {"rows": [], "meta": {"message": f"No active Dynatrace problem found for host '{args.hostname}'."}}
+    else:
+        return {"rows": [], "meta": {"message": "Provide problem_id, alert_id, or hostname."}}
+
+    if not rca_row:
+        return {"rows": [], "meta": {"message": "Could not retrieve RCA data from Dynatrace."}}
+
+    evidence = db.query(RCAEvidence).filter(RCAEvidence.rca_id == rca_row.id).all()
+
+    rows = []
+    for e in evidence:
+        rows.append({
+            "record_id": f"evidence:{e.id}",
+            "source_platform": "dynatrace",
+            "source_instance": rca_row.source_instance or "",
+            "evidence_type": e.evidence_type,
+            "display_name": e.display_name,
+            "entity_id": e.entity_id,
+            "entity_name": e.entity_name,
+            "is_root_cause_relevant": e.is_root_cause_relevant,
+            "start_time": _iso(e.start_time),
+        })
+
+    return {
+        "rows": rows,
+        "meta": {
+            "problem_id": rca_row.problem_id,
+            "root_cause_entity": rca_row.root_cause_entity_name,
+            "root_cause_entity_type": rca_row.root_cause_entity_type,
+            "root_cause_entity_id": rca_row.root_cause_entity_id,
+            "summary": rca_row.summary,
+            "status": rca_row.status,
+            "evidence_count": len(rows),
+            "root_cause_relevant_count": sum(1 for e in evidence if e.is_root_cause_relevant),
+            "impact": rca_row.impact_json if rca_row.impact_json else {},
+        },
+    }
+
+
 # --- Registry ---------------------------------------------------------------
 
 
@@ -361,6 +464,14 @@ TOOLS: dict[str, ToolSpec] = {
             "Capacity forecast rows: which disks/memory are filling up, days to 90%, classification "
             "(critical/warning/watch/ok) and confidence. Optional host or classification filter.",
             CapacityRiskIn, get_capacity_risk,
+        ),
+        ToolSpec(
+            "investigate_rca",
+            "Root Cause Analysis from Dynatrace Davis AI. Returns evidence chain, root cause entity, "
+            "and impact analysis. Use for 'why is X down', 'root cause of problem P-123', 'investigate "
+            "this alert', 'RCA for host Y'. Pass problem_id for a specific Dynatrace problem, hostname "
+            "to find the latest Dynatrace problem on that host, or alert_id for a SAMIX alert.",
+            InvestigateRCAIn, investigate_rca,
         ),
     )
 }

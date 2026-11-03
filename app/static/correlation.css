@@ -524,3 +524,27 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* --- RCA Investigation --- */
+.corr-rca-section { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 8px; }
+.corr-rca-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.corr-investigate-btn { display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 12px; font-weight: 600;
+  padding: 5px 14px; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); text-decoration: none; }
+.corr-investigate-btn:hover { border-color: var(--accent); color: var(--accent); }
+.corr-ai-btn { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.corr-ai-btn:hover { background: color-mix(in srgb, var(--accent) 20%, var(--surface)); }
+.corr-rca-result { margin-top: 10px; }
+.corr-rca-error { padding: 8px 12px; background: color-mix(in srgb, var(--sev5) 10%, var(--surface)); border: 1px solid color-mix(in srgb, var(--sev5) 30%, var(--border)); border-radius: 6px; font-size: 13px; color: var(--sev5); }
+.corr-rca-empty { font-size: 13px; color: var(--text-muted); }
+.corr-rca-panel { padding: 12px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--border)); border-radius: 8px; }
+.corr-rca-panel h4 { font-size: 14px; margin: 0 0 10px; color: var(--accent); }
+.corr-rca-panel h5 { font-size: 12px; margin: 10px 0 6px; color: var(--text-muted); }
+.corr-rca-root { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.corr-rca-label { font-size: 11px; color: var(--text-faint); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.corr-rca-entity { display: flex; align-items: center; gap: 6px; }
+.corr-rca-summary { font-size: 13px; padding: 8px 10px; background: var(--surface-2); border-radius: 6px; margin-bottom: 8px; }
+.corr-rca-etype { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--text-muted); text-transform: uppercase; }
+.corr-rca-etype.rca-relevant { background: color-mix(in srgb, var(--sev4) 15%, var(--surface)); color: var(--sev4); }
+.rca-root-dot { background: var(--sev4) !important; box-shadow: 0 0 6px var(--sev4); }
+.corr-rca-impact-grid { display: flex; gap: 12px; flex-wrap: wrap; }
