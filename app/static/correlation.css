@@ -207,6 +207,29 @@
   transform: rotate(180deg);
 }
 
+/* --- Export Button --- */
+.cg-export-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--fg-muted, #64748b);
+  background: transparent;
+  border: 1px solid transparent;
+  flex-shrink: 0;
+  margin-top: 2px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.cg-export-btn:hover {
+  color: var(--accent, #818cf8);
+  background: rgba(129, 140, 248, 0.1);
+  border-color: rgba(129, 140, 248, 0.25);
+}
+
 /* ==================== DETAIL PANEL ==================== */
 .cg-detail {
   display: none;
@@ -643,3 +666,138 @@
   .cg-detail { padding: 0 10px 10px; }
   .cg-face-title { font-size: 0.78rem; }
 }
+
+/* ==================== LIGHT MODE ==================== */
+[data-theme="light"] .cg-strip {
+  background: #fff;
+  border-color: #e2e5ea;
+}
+[data-theme="light"] .cg-strip-num { color: #1e293b; }
+[data-theme="light"] .cg-strip-label { color: #64748b; }
+[data-theme="light"] .cg-refresh-btn {
+  border-color: #e2e5ea;
+  color: #64748b;
+}
+[data-theme="light"] .cg-card {
+  background: #fff;
+  border-color: #e2e5ea;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .cg-card:hover {
+  border-color: #6366f1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .cg-card.open {
+  border-color: #6366f1;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .cg-face:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .cg-face-title { color: #1e293b; }
+[data-theme="light"] .cg-face-count { color: #64748b; }
+[data-theme="light"] .cg-face-age { color: #94a3b8; }
+[data-theme="light"] .cg-face-arrow { color: #94a3b8; }
+[data-theme="light"] .cg-export-btn { color: #94a3b8; }
+[data-theme="light"] .cg-export-btn:hover { color: #6366f1; background: rgba(99, 102, 241, 0.08); border-color: rgba(99, 102, 241, 0.2); }
+
+[data-theme="light"] .cg-info {
+  background: rgba(99, 102, 241, 0.05);
+  border-color: rgba(99, 102, 241, 0.12);
+}
+[data-theme="light"] .cg-info-label { color: #64748b; }
+[data-theme="light"] .cg-info-val { color: #1e293b; }
+
+[data-theme="light"] .cg-bar { background: #e2e8f0; }
+
+[data-theme="light"] .cg-panel {
+  background: #f8fafc;
+  border-color: #e2e5ea;
+}
+[data-theme="light"] .cg-panel-h { color: #64748b; }
+[data-theme="light"] .cg-panel-rc {
+  background: rgba(239, 68, 68, 0.04);
+  border-color: rgba(239, 68, 68, 0.15);
+}
+[data-theme="light"] .cg-panel-rfo {
+  background: rgba(234, 179, 8, 0.05);
+  border-color: rgba(234, 179, 8, 0.15);
+}
+[data-theme="light"] .cg-rfo { color: #1e293b; }
+
+[data-theme="light"] .cg-sig {
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+[data-theme="light"] .cg-sig-text { color: #1e293b; }
+[data-theme="light"] .cg-show-more {
+  color: #6366f1;
+  border-color: rgba(99, 102, 241, 0.3);
+}
+[data-theme="light"] .cg-show-more:hover { background: rgba(99, 102, 241, 0.06); }
+
+[data-theme="light"] .cg-tl-time { color: #64748b; }
+[data-theme="light"] .cg-tl-desc { color: #1e293b; }
+[data-theme="light"] .cg-tl-rc { background: rgba(239, 68, 68, 0.05); }
+
+[data-theme="light"] .cg-alerts-box { border-color: #e2e5ea; }
+[data-theme="light"] .cg-alerts-box summary { color: #64748b; }
+[data-theme="light"] .cg-alerts-box summary:hover { background: rgba(0, 0, 0, 0.02); }
+
+[data-theme="light"] .cg-tbl thead th {
+  color: #64748b;
+  border-bottom-color: #e2e5ea;
+}
+[data-theme="light"] .cg-tbl tbody td {
+  color: #1e293b;
+  border-bottom-color: #f1f5f9;
+}
+[data-theme="light"] .cg-tbl tbody tr:hover { background: #f8fafc; }
+[data-theme="light"] .cg-tbl-rc { background: rgba(239, 68, 68, 0.04) !important; }
+
+[data-theme="light"] .cg-actions { border-top-color: #e2e5ea; }
+[data-theme="light"] .cg-pager-btn {
+  background: #fff;
+  color: #6366f1;
+  border-color: #6366f1;
+}
+[data-theme="light"] .cg-pager-pos { color: #64748b; }
+
+[data-theme="light"] .cg-uncorr {
+  background: #fff;
+  border-color: #e2e5ea;
+}
+[data-theme="light"] .cg-uncorr summary { color: #64748b; }
+[data-theme="light"] .cg-uncorr summary:hover { background: rgba(0, 0, 0, 0.02); }
+
+[data-theme="light"] .cg-loader { background: #e2e5ea; }
+
+[data-theme="light"] .plat-zabbix { background: rgba(211, 47, 47, 0.08); color: #dc2626; }
+[data-theme="light"] .plat-dynatrace { background: rgba(111, 45, 168, 0.08); color: #7c3aed; }
+[data-theme="light"] .plat-nnmi { background: rgba(0, 118, 214, 0.08); color: #2563eb; }
+[data-theme="light"] .plat-sitescope { background: rgba(0, 135, 90, 0.08); color: #059669; }
+
+[data-theme="light"] .impact-critical { background: rgba(239, 68, 68, 0.08); color: #dc2626; }
+[data-theme="light"] .impact-high { background: rgba(249, 115, 22, 0.08); color: #ea580c; }
+[data-theme="light"] .impact-medium { background: rgba(234, 179, 8, 0.08); color: #a16207; }
+[data-theme="light"] .impact-low { background: rgba(59, 130, 246, 0.08); color: #2563eb; }
+
+[data-theme="light"] .cg-badge-ok { background: rgba(16, 185, 129, 0.1); color: #059669; }
+[data-theme="light"] .cg-badge-active { background: rgba(239, 68, 68, 0.08); color: #dc2626; }
+
+[data-theme="light"] .conf-hi { background: rgba(16, 185, 129, 0.1); color: #059669; }
+[data-theme="light"] .conf-md { background: rgba(234, 179, 8, 0.1); color: #a16207; }
+[data-theme="light"] .conf-lo { background: rgba(239, 68, 68, 0.1); color: #dc2626; }
+
+[data-theme="light"] .sig-high { background: rgba(16, 185, 129, 0.1); color: #059669; }
+[data-theme="light"] .sig-medium { background: rgba(234, 179, 8, 0.1); color: #a16207; }
+[data-theme="light"] .sig-low { background: rgba(148, 163, 184, 0.1); color: #64748b; }
+
+[data-theme="light"] .rc-high { color: #059669; }
+[data-theme="light"] .rc-medium { color: #a16207; }
+[data-theme="light"] .rc-low { color: #64748b; }
+
+[data-theme="light"] .cg-chip { background: rgba(100, 116, 139, 0.08); color: #475569; }
+[data-theme="light"] .cg-chip-cat { background: rgba(99, 102, 241, 0.08); color: #4f46e5; }
+[data-theme="light"] .cg-chip-svc { background: rgba(99, 102, 241, 0.08); color: #4f46e5; }
+[data-theme="light"] .cg-rc-tag { background: rgba(249, 115, 22, 0.1); color: #ea580c; }
