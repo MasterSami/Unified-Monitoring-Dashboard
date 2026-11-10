@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from app.models import (
     Alert,
@@ -100,6 +100,8 @@ class CorrelationGroup:
     impact_level: str = ""
     incident_type: str = ""
     rfo_hints: list[str] = field(default_factory=list)
+    confidence_score: float = 0.0
+    temporal_proximity: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +137,28 @@ def _severity_label(sev: int) -> str:
     return {5: "Critical", 4: "High", 3: "Average", 2: "Warning", 1: "Info"}.get(sev, "Unknown")
 
 
+def _normalize_hostname(name: str | None) -> str:
+    """Aggressively normalise a hostname for matching.
+
+    Strips common domain suffixes, removes dashes/dots so MW-10 == MW10,
+    and lowercases.
+    """
+    if not name:
+        return ""
+    h = name.strip().lower()
+    for sfx in (".te.eg", ".local", ".corp", ".domain", ".internal", ".lan", ".mgmt"):
+        if h.endswith(sfx):
+            h = h[: -len(sfx)]
+    h = h.replace("-", "").replace("_", "").replace(".", "")
+    return h
+
+
 def _device_key(alert: Alert) -> str:
     """Normalised host identifier: dedup_key of hostname, or IP as fallback."""
     dk = dedup_key(alert.host_hostname)
-    return dk if dk else (alert.host_ip or "")
+    if dk:
+        return _normalize_hostname(dk)
+    return _normalize_hostname(alert.host_hostname) or (alert.host_ip or "")
 
 
 def _now() -> datetime:
@@ -201,7 +221,7 @@ def _build_device_map(alerts: list[Alert], db: Session) -> dict[str, set[int]]:
     all_ips = [ip for ip in ip_to_keys if ip]
     if all_ips:
         hosts_by_ip: dict[str, list[str]] = defaultdict(list)
-        for h in db.scalars(select(Host).where(Host.ip.in_(all_ips))):
+        for h in db.scalars(select(Host).options(load_only(Host.hostname, Host.ip)).where(Host.ip.in_(all_ips))):
             dk = dedup_key(h.hostname)
             if dk and h.ip:
                 hosts_by_ip[h.ip].append(dk)
@@ -247,7 +267,13 @@ def _build_dependency_links(alerts: list[Alert], db: Session) -> list[tuple[int,
     if not entity_ids:
         return []
     rels = db.scalars(
-        select(EntityRelationship).where(
+        select(EntityRelationship)
+        .options(load_only(
+            EntityRelationship.from_entity_id,
+            EntityRelationship.to_entity_id,
+            EntityRelationship.relationship_type,
+        ))
+        .where(
             EntityRelationship.relationship_type.in_(list(_DEPENDENCY_EDGES)),
             EntityRelationship.from_entity_id.in_(entity_ids)
             | EntityRelationship.to_entity_id.in_(entity_ids),
@@ -281,6 +307,49 @@ def _build_service_groups(alerts: list[Alert]) -> dict[str, set[int]]:
         if a.application_name:
             groups[f"app:{a.application_name.lower()}"].add(a.id)
     return {k: v for k, v in groups.items() if len(v) >= 2}
+
+
+def _build_business_service_groups(alerts: list[Alert]) -> dict[str, set[int]]:
+    """Group alerts sharing the same business_service (Dynatrace management zone)."""
+    groups: dict[str, set[int]] = defaultdict(set)
+    for a in alerts:
+        if a.business_service:
+            groups[f"bsvc:{a.business_service.lower()}"].add(a.id)
+    return {k: v for k, v in groups.items() if len(v) >= 2}
+
+
+def _build_host_group_groups(alerts: list[Alert]) -> dict[str, set[int]]:
+    """Group alerts in the same host_group with severity >= 3."""
+    groups: dict[str, set[int]] = defaultdict(set)
+    for a in alerts:
+        if a.host_group and a.severity_int >= 3:
+            groups[f"hg:{a.host_group.lower()}"].add(a.id)
+    return {k: v for k, v in groups.items() if len(v) >= 2}
+
+
+def _build_problem_groups(alerts: list[Alert]) -> dict[str, set[int]]:
+    """Group by Dynatrace problem ID — alerts from the same problem are definitely related."""
+    groups: dict[str, set[int]] = defaultdict(set)
+    for a in alerts:
+        plat = a.source_platform.value if isinstance(a.source_platform, SourcePlatform) else str(a.source_platform)
+        if plat == "dynatrace" and a.external_id:
+            groups[a.external_id].add(a.id)
+    return {k: v for k, v in groups.items() if len(v) >= 2}
+
+
+def _temporal_proximity(alerts_in_group: list[Alert]) -> str:
+    """Classify temporal proximity of alerts in a group."""
+    times = sorted(_aware(a.started_at) for a in alerts_in_group if a.started_at)
+    if len(times) < 2:
+        return "single"
+    span = (times[-1] - times[0]).total_seconds()
+    if span <= 60:
+        return "burst"
+    if span <= 300:
+        return "tight"
+    if span <= 900:
+        return "moderate"
+    return "spread"
 
 
 def _build_db_impact_links(alerts: list[Alert]) -> list[tuple[int, int, str]]:
@@ -343,6 +412,9 @@ def _merge_groups(
     dep_links: list[tuple[int, int, str]],
     svc_groups: dict[str, set[int]],
     db_links: list[tuple[int, int, str]],
+    bsvc_groups: dict[str, set[int]] | None = None,
+    hg_groups: dict[str, set[int]] | None = None,
+    problem_groups: dict[str, set[int]] | None = None,
 ) -> dict[int, set[int]]:
     """Union-find over all signal sources → root_id → set of alert IDs."""
     uf = _UnionFind(alert_ids)
@@ -375,6 +447,24 @@ def _merge_groups(
         if a_id in alert_ids and b_id in alert_ids:
             uf.union(a_id, b_id)
 
+    # Business service.
+    for aids in (bsvc_groups or {}).values():
+        aids_list = sorted(aids & alert_ids)
+        for i in range(1, len(aids_list)):
+            uf.union(aids_list[0], aids_list[i])
+
+    # Host group.
+    for aids in (hg_groups or {}).values():
+        aids_list = sorted(aids & alert_ids)
+        for i in range(1, len(aids_list)):
+            uf.union(aids_list[0], aids_list[i])
+
+    # Problem ID (Dynatrace).
+    for aids in (problem_groups or {}).values():
+        aids_list = sorted(aids & alert_ids)
+        for i in range(1, len(aids_list)):
+            uf.union(aids_list[0], aids_list[i])
+
     # Collect.
     groups: dict[int, set[int]] = defaultdict(set)
     for aid in alert_ids:
@@ -394,6 +484,9 @@ def _group_reasons(
     dep_links: list[tuple[int, int, str]],
     svc_groups: dict[str, set[int]],
     db_links: list[tuple[int, int, str]],
+    bsvc_groups: dict[str, set[int]] | None = None,
+    hg_groups: dict[str, set[int]] | None = None,
+    problem_groups: dict[str, set[int]] | None = None,
 ) -> list[CorrelationReason]:
     reasons: list[CorrelationReason] = []
     seen: set[str] = set()
@@ -465,6 +558,46 @@ def _group_reasons(
                     "db_impact",
                     f"Database call chain: {detail}",
                     "medium",
+                ))
+
+    # Business service.
+    for bk, b_aids in (bsvc_groups or {}).items():
+        overlap = b_aids & aids
+        if len(overlap) >= 2:
+            key = f"bsvc:{bk}"
+            if key not in seen:
+                seen.add(key)
+                label = bk.split(":", 1)[1] if ":" in bk else bk
+                reasons.append(CorrelationReason(
+                    "business_service",
+                    f"Same business service / management zone '{label}'",
+                    "medium",
+                ))
+
+    # Host group.
+    for hk, h_aids in (hg_groups or {}).items():
+        overlap = h_aids & aids
+        if len(overlap) >= 2:
+            key = f"hg:{hk}"
+            if key not in seen:
+                seen.add(key)
+                label = hk.split(":", 1)[1] if ":" in hk else hk
+                reasons.append(CorrelationReason(
+                    "host_group",
+                    f"Same host group '{label}'",
+                    "medium",
+                ))
+
+    # Problem ID.
+    for pid, p_aids in (problem_groups or {}).items():
+        if p_aids & aids:
+            key = f"problem:{pid}"
+            if key not in seen:
+                seen.add(key)
+                reasons.append(CorrelationReason(
+                    "same_problem",
+                    f"Same Dynatrace problem {pid}",
+                    "high",
                 ))
 
     return reasons
@@ -647,6 +780,9 @@ def _classify_issue(
     blob = " ".join((a.title or "").lower() for a in group_alerts)
     blob += " " + " ".join(
         (a.service_name or "").lower() + " " + (a.host_group or "").lower()
+        + " " + (a.host_hostname or "").lower()
+        + " " + (a.business_service or "").lower()
+        + " " + (a.database_name or "").lower()
         for a in group_alerts
     )
 
@@ -675,6 +811,55 @@ def _classify_issue(
     team = _ISSUE_PATTERNS[best_cat]["team"]
     hints = _RFO_HINTS.get(best_cat, [])
     return best_cat, team, hints
+
+
+def _calc_confidence(
+    aids: set[int],
+    trace_groups: dict[str, set[int]],
+    dep_links: list[tuple[int, int, str]],
+    device_map: dict[str, set[int]],
+    svc_groups: dict[str, set[int]],
+    bsvc_groups: dict[str, set[int]],
+    hg_groups: dict[str, set[int]],
+    db_links: list[tuple[int, int, str]],
+    alert_map: dict[int, Alert],
+) -> float:
+    """Calculate a 0.0–1.0 confidence score for a correlation group."""
+    score = 0.0
+    if any(t_aids & aids for t_aids in trace_groups.values()):
+        score += 0.35
+    if any(a in aids and b in aids for a, b, _ in dep_links):
+        score += 0.30
+    if any(len(d_aids & aids) >= 2 for d_aids in device_map.values()):
+        score += 0.20
+    if any(len(s_aids & aids) >= 2 for s_aids in svc_groups.values()):
+        score += 0.15
+    if any(len(b_aids & aids) >= 2 for b_aids in bsvc_groups.values()):
+        score += 0.10
+    if any(len(h_aids & aids) >= 2 for h_aids in hg_groups.values()):
+        score += 0.10
+    if any(a in aids and b in aids for a, b, _ in db_links):
+        score += 0.10
+    # Temporal tightness bonus.
+    times = [_aware(alert_map[a].started_at) for a in aids if alert_map[a].started_at]
+    if len(times) >= 2:
+        span = (max(times) - min(times)).total_seconds()
+        if span <= 300:
+            score += 0.10
+    return min(score, 1.0)
+
+
+def _calc_temporal_proximity(aids: set[int], alert_map: dict[int, Alert]) -> str:
+    """Classify how tightly clustered the alerts are in time."""
+    times = [_aware(alert_map[a].started_at) for a in aids if alert_map[a].started_at]
+    if len(times) < 2:
+        return "single"
+    span = (max(times) - min(times)).total_seconds()
+    if span <= 300:
+        return "tight"
+    if span <= 900:
+        return "moderate"
+    return "loose"
 
 
 def _assess_impact(group_alerts: list[Alert], platforms: list[str]) -> str:
@@ -726,7 +911,7 @@ def _detect_incident_type(group_alerts: list[Alert]) -> str:
 # ---------------------------------------------------------------------------
 
 _corr_cache: dict[str, tuple[float, Any]] = {}
-_CORR_CACHE_TTL = 90  # seconds
+_CORR_CACHE_TTL = 300  # seconds (5 min; use force-refresh button for immediate)
 
 
 def _corr_cache_key(state: str, platform: str, instance: str, min_severity: int) -> str:
@@ -763,8 +948,19 @@ def correlate_alerts(
         if hit and hit[0] > _time.time():
             return hit[1]
 
-    # --- Fetch alerts ---
-    stmt = select(Alert)
+    # --- Fetch alerts (load only columns the engine needs) ---
+    _ALERT_COLS = load_only(
+        Alert.id, Alert.external_id, Alert.title,
+        Alert.host_hostname, Alert.host_ip,
+        Alert.source_platform, Alert.source_instance,
+        Alert.severity_int, Alert.severity_label,
+        Alert.started_at, Alert.resolved, Alert.resolved_at,
+        Alert.trace_id, Alert.service_name, Alert.application_name,
+        Alert.business_service, Alert.host_group,
+        Alert.database_name, Alert.db_calls, Alert.external_calls,
+        Alert.entity_id,
+    )
+    stmt = select(Alert).options(_ALERT_COLS)
     if state == "active":
         stmt = stmt.where(Alert.resolved.is_(False))
     elif state == "resolved":
@@ -775,7 +971,7 @@ def correlate_alerts(
         stmt = stmt.where(Alert.source_instance == instance)
     if min_severity > 1:
         stmt = stmt.where(Alert.severity_int >= min_severity)
-    stmt = stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc())
+    stmt = stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc()).limit(2000)
     alerts = list(db.scalars(stmt).all())
     if not alerts:
         return [], []
@@ -799,6 +995,9 @@ def correlate_alerts(
         _log.exception("dep_links failed")
         dep_links = []
     svc_groups = _build_service_groups(alerts)
+    bsvc_groups = _build_business_service_groups(alerts)
+    hg_groups = _build_host_group_groups(alerts)
+    problem_groups = _build_problem_groups(alerts)
     try:
         db_links = _build_db_impact_links(alerts)
     except Exception:
@@ -806,7 +1005,7 @@ def correlate_alerts(
         db_links = []
 
     # --- Merge into groups ---
-    raw_groups = _merge_groups(all_ids, device_map, trace_groups, dep_links, svc_groups, db_links)
+    raw_groups = _merge_groups(all_ids, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups)
 
     # --- Build output ---
     correlated_ids: set[int] = set()
@@ -864,8 +1063,15 @@ def correlate_alerts(
                     _seen_svc.add(val)
                     aff_svcs.append(val)
 
-        reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links)
+        reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups)
         root_cause = _pick_root_cause(aids, alert_map, dep_links)
+
+        # Confidence and temporal scoring.
+        conf_score = _calc_confidence(
+            aids, trace_groups, dep_links, device_map, svc_groups,
+            bsvc_groups, hg_groups, db_links, alert_map,
+        )
+        temporal = _calc_temporal_proximity(aids, alert_map)
 
         # Incident classification based on real incident data patterns.
         issue_cat, suggested_team, rfo_hints = _classify_issue(
@@ -898,6 +1104,8 @@ def correlate_alerts(
             impact_level=impact,
             incident_type=inc_type,
             rfo_hints=rfo_hints,
+            confidence_score=conf_score,
+            temporal_proximity=temporal,
         ))
 
     # Uncorrelated.

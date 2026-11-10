@@ -406,7 +406,7 @@ class Alert(Base):
     severity_label: Mapped[str] = mapped_column(String(32), default="info")
     title: Mapped[str] = mapped_column(String(512), default="")
     started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), nullable=True, index=True
     )
     resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     #: When ``resolved`` last flipped True — set once, at that transition

@@ -27,6 +27,7 @@ from app.models import (
     TopologyEdge,
     TopologyNode,
 )
+from app.correlation_v2 import correlate_alerts
 from app.normalizer import severity_label
 from app.runbook_auth import COOKIE_NAME as RUNBOOK_COOKIE_NAME
 from app.runbook_auth import read_token
@@ -2046,12 +2047,11 @@ def correlation_partial(
     instance: str = "all",
     severity: str | None = None,
     page: int = 1,
-    per_page: int = 50,
+    per_page: int = 20,
     refresh: str | None = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Correlation groups fragment (HTMX partial)."""
-    from app.correlation_v2 import correlate_alerts
     import logging, math
     corr_error = None
     min_sev = int(severity) if severity and severity.isdigit() else 1
