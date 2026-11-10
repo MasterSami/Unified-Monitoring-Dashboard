@@ -29,6 +29,7 @@
     <script src="/static/htmx.min.js" defer></script>
     <script src="/static/theme.js?v={{ asset_version }}" defer></script>
     <script src="/static/svcbox.js?v={{ asset_version }}" defer></script>
+    {% block head_extra %}{% endblock %}
   </head>
   <body>
     <div class="shell">
