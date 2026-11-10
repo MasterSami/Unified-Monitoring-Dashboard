@@ -1,145 +1,118 @@
 {% set st = current.state if current and current.state else 'active' %}
 {% set st_label = 'open' if st == 'active' else ('resolved' if st == 'resolved' else '') %}
 
-<div class="corr-summary-bar">
-  <div class="corr-stats">
-    <div class="corr-stat">
-      <span class="corr-stat-num">{{ total_groups }}</span>
-      <span class="corr-stat-label">group{{ '' if total_groups == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
-    </div>
+{# ===== Summary Strip ===== #}
+<div class="cg-strip">
+  <div class="cg-strip-left">
+    <span class="cg-strip-num">{{ total_groups }}</span>
+    <span class="cg-strip-label">Correlation Group{{ '' if total_groups == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
     {% if uncorrelated | length > 0 %}
-    <div class="corr-stat corr-stat-muted">
-      <span class="corr-stat-num">{{ uncorrelated | length }}</span>
-      <span class="corr-stat-label">uncorrelated</span>
-    </div>
+    <span class="cg-strip-sep">&bull;</span>
+    <span class="cg-strip-label cg-strip-muted">{{ uncorrelated | length }} uncorrelated</span>
     {% endif %}
   </div>
-  <button class="corr-refresh-btn" id="corr-refresh-trigger"
+  <button class="cg-refresh"
           hx-get="/partials/correlation?refresh=1&page=1" hx-target="#corr-region" hx-swap="innerHTML"
-          hx-indicator="#corr-loading"
-          title="Force refresh — bypass cache and re-run correlation">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+          hx-indicator="#cg-loader"
+          title="Force refresh — bypass cache">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
     Refresh
   </button>
 </div>
 
-<div id="corr-loading" class="corr-loading htmx-indicator">
-  <div class="corr-loading-bar"></div>
-</div>
+{# ===== Loading Indicator ===== #}
+<div id="cg-loader" class="cg-loader htmx-indicator"><div class="cg-loader-track"></div></div>
 
 {% if corr_error %}
-<div class="corr-error-banner">
-  <strong>Correlation engine error:</strong> <code>{{ corr_error }}</code>
-  <br><span style="opacity:.7; font-size:12px">Check the uvicorn console for the full traceback.</span>
+<div class="cg-banner cg-banner-err">
+  <strong>Engine error:</strong> <code>{{ corr_error }}</code>
 </div>
 {% endif %}
 
 {% if groups | length == 0 and uncorrelated | length == 0 and not corr_error %}
-<div class="corr-empty">
-  <div class="corr-empty-icon">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M8 15s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-  </div>
+<div class="cg-empty">
+  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".25"><circle cx="12" cy="12" r="10"/><path d="M8 15s1.5 2 4 2 4-2 4-2"/><circle cx="9" cy="9" r=".5" fill="currentColor"/><circle cx="15" cy="9" r=".5" fill="currentColor"/></svg>
   <p>No alerts match the current filters.</p>
 </div>
 {% endif %}
 
+{# ===== Card Grid ===== #}
+<div class="cg-grid">
 {% for g in groups %}
-<div class="corr-card sev-stripe-{{ g.severity_int }}" id="cg-{{ g.group_id }}">
-  {# === Card Header === #}
-  <div class="corr-header" onclick="toggleCorr(this)">
-    <div class="corr-header-main">
-      <div class="corr-header-top">
-        <span class="corr-sev-dot sev-bg-{{ g.severity_int }}"></span>
-        <span class="corr-gid">{{ g.group_id }}</span>
-        <h3 class="corr-title">{{ g.title | truncate(100) }}</h3>
+<article class="cg-card" id="cg-{{ g.group_id }}" data-sev="{{ g.severity_int }}">
+  {# severity top-bar #}
+  <div class="cg-sev-bar sev-bar-{{ g.severity_int }}"></div>
+
+  {# --- clickable header --- #}
+  <header class="cg-head" onclick="toggleCG(this)">
+    <div class="cg-head-row1">
+      <div class="cg-head-left">
+        <span class="cg-sev sev-bg-{{ g.severity_int }}">{{ g.severity_int }}</span>
+        <h3 class="cg-title">{{ g.title | truncate(110) }}</h3>
       </div>
-      <div class="corr-header-meta">
-        {% if g.issue_category %}
-        <span class="corr-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
-        {% endif %}
-        {% if g.impact_level %}
-        <span class="corr-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
-        {% endif %}
-        {% if g.incident_type %}
-        <span class="corr-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
-        {% endif %}
-        {% for p in g.platforms %}
-        <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}</span>
-        {% endfor %}
+      <div class="cg-head-right">
+        <span class="cg-count">{{ g.alert_ids | length }}<small> alert{{ '' if g.alert_ids | length == 1 else 's' }}</small></span>
+        <span class="cg-chevron">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+        </span>
       </div>
     </div>
-    <div class="corr-header-right">
-      {% if g.confidence_score is defined and g.confidence_score %}
-      <span class="corr-confidence confidence-{{ 'high' if g.confidence_score >= 0.8 else ('medium' if g.confidence_score >= 0.6 else 'low') }}">
-        {{ (g.confidence_score * 100) | int }}%
-      </span>
-      {% endif %}
-      {% if g.temporal_proximity is defined and g.temporal_proximity and g.temporal_proximity != 'single' %}
-      <span class="corr-temporal temporal-{{ g.temporal_proximity }}">
-        {% if g.temporal_proximity == 'tight' %}&#9201; &le;5m
-        {% elif g.temporal_proximity == 'moderate' %}&#9202; &le;15m
-        {% else %}&#128340; &le;30m{% endif %}
-      </span>
-      {% endif %}
-      <div class="corr-header-nums">
-        <span class="corr-alert-count">{{ g.alert_ids | length }}<small> alert{{ '' if g.alert_ids | length == 1 else 's' }}</small></span>
-        <span class="corr-status {{ 'is-open' if g.status == 'open' else 'is-resolved' }}"><span class="dot"></span>{{ g.status }}</span>
-      </div>
-      {% if g.started_at %}
-      <span class="corr-age mono">{{ g.started_at | relative_time }}</span>
-      {% endif %}
-      <span class="corr-chevron"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
-    </div>
-  </div>
 
-  {# === Card Body (collapsed by default) === #}
-  <div class="corr-body">
-
-    {# --- Quick Info Grid --- #}
-    <div class="corr-info-grid">
+    <div class="cg-head-row2">
+      {# badges row #}
       {% if g.issue_category %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Category</span>
-        <span class="corr-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
-      </div>
-      {% endif %}
-      {% if g.incident_type %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Type</span>
-        <span class="corr-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
-      </div>
+      <span class="cg-pill cg-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
       {% endif %}
       {% if g.impact_level %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Impact</span>
-        <span class="corr-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
-      </div>
+      <span class="cg-pill cg-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
+      {% endif %}
+      {% if g.incident_type %}
+      <span class="cg-pill cg-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
+      {% endif %}
+      {% for p in g.platforms %}
+      <span class="cg-pill cg-plat plat-{{ p }}"><span class="cg-plat-dot"></span>{{ p }}</span>
+      {% endfor %}
+
+      {# right-side meta #}
+      <span class="cg-meta-spacer"></span>
+      {% if g.confidence_score is defined and g.confidence_score %}
+      <span class="cg-conf conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}">{{ (g.confidence_score * 100) | int }}%</span>
+      {% endif %}
+      <span class="cg-status {{ 'st-open' if g.status == 'open' else 'st-resolved' }}"><span class="cg-status-dot"></span>{{ g.status }}</span>
+      {% if g.started_at %}
+      <span class="cg-age">{{ g.started_at | relative_time }}</span>
+      {% endif %}
+    </div>
+  </header>
+
+  {# --- Expandable Body --- #}
+  <div class="cg-body">
+
+    {# === Quick Facts Row === #}
+    <div class="cg-facts">
+      {% if g.issue_category %}
+      <div class="cg-fact"><span class="cg-fact-k">Category</span><span class="cg-pill cg-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span></div>
+      {% endif %}
+      {% if g.incident_type %}
+      <div class="cg-fact"><span class="cg-fact-k">Type</span><span class="cg-pill cg-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span></div>
+      {% endif %}
+      {% if g.impact_level %}
+      <div class="cg-fact"><span class="cg-fact-k">Impact</span><span class="cg-pill cg-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span></div>
       {% endif %}
       {% if g.suggested_team %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Team</span>
-        <span class="corr-team">{{ g.suggested_team }}</span>
-      </div>
+      <div class="cg-fact"><span class="cg-fact-k">Team</span><span class="cg-fact-v" style="color:var(--accent)">{{ g.suggested_team }}</span></div>
       {% endif %}
       {% if g.confidence_score is defined and g.confidence_score %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Confidence</span>
-        <div class="corr-confidence-bar">
-          <div class="corr-confidence-fill confidence-{{ 'high' if g.confidence_score >= 0.8 else ('medium' if g.confidence_score >= 0.6 else 'low') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div>
-        </div>
-        <span class="corr-confidence-val">{{ (g.confidence_score * 100) | int }}%</span>
-      </div>
-      {% endif %}
-      {% if g.temporal_proximity is defined and g.temporal_proximity and g.temporal_proximity != 'single' %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Temporal Proximity</span>
-        <span class="corr-temporal temporal-{{ g.temporal_proximity }}">{{ g.temporal_proximity }}</span>
+      <div class="cg-fact">
+        <span class="cg-fact-k">Confidence</span>
+        <div class="cg-conf-bar"><div class="cg-conf-fill conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div></div>
+        <span class="cg-fact-v" style="font-weight:700">{{ (g.confidence_score * 100) | int }}%</span>
       </div>
       {% endif %}
       {% if g.duration_seconds is not none and g.duration_seconds > 0 %}
-      <div class="corr-info-cell">
-        <span class="corr-info-label">Duration</span>
-        <span class="mono" style="font-size:13px; font-weight:600">
+      <div class="cg-fact">
+        <span class="cg-fact-k">Duration</span>
+        <span class="cg-fact-v mono" style="font-weight:700">
           {% if g.duration_seconds >= 3600 %}{{ (g.duration_seconds // 3600) }}h {{ ((g.duration_seconds % 3600) // 60) }}m
           {% elif g.duration_seconds >= 60 %}{{ (g.duration_seconds // 60) }}m
           {% else %}{{ g.duration_seconds }}s{% endif %}
@@ -148,251 +121,200 @@
       {% endif %}
     </div>
 
-    {# --- Root Cause --- #}
+    {# === Root Cause Card === #}
     {% if g.root_cause %}
-    <div class="corr-block corr-rootcause">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4"/></svg>
-        Root Cause Candidate
-      </div>
-      <div class="corr-rc-card">
-        <div class="corr-rc-main">
-          <span class="pill sev-pill sev-{{ g.root_cause.severity_int }}"><span class="dot"></span>{{ g.root_cause.severity_int }}</span>
-          <span class="badge badge-{{ g.root_cause.platform }}"><span class="dot"></span>{{ g.root_cause.platform }}</span>
+    <section class="cg-section cg-rc-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4"/></svg> Root Cause Candidate</h4>
+      <div class="cg-rc-inner">
+        <div class="cg-rc-top">
+          <span class="cg-sev sev-bg-{{ g.root_cause.severity_int }}">{{ g.root_cause.severity_int }}</span>
+          <span class="cg-pill cg-plat plat-{{ g.root_cause.platform }}"><span class="cg-plat-dot"></span>{{ g.root_cause.platform }}</span>
           <strong class="mono">{{ g.root_cause.host }}</strong>
-          <span class="corr-rc-title">{{ g.root_cause.title | truncate(100) }}</span>
+          <span class="cg-rc-desc">{{ g.root_cause.title | truncate(90) }}</span>
           {% if g.root_cause.started_at %}
-          <span class="mono corr-rc-time">{{ g.root_cause.started_at | relative_time }}</span>
+          <span class="cg-age" style="margin-left:auto">{{ g.root_cause.started_at | relative_time }}</span>
           {% endif %}
         </div>
-        <div class="corr-rc-tags">
+        {% if g.root_cause.reasons %}
+        <div class="cg-rc-reasons">
           {% for r in g.root_cause.reasons %}
-          <span class="corr-rc-tag">{{ r }}</span>
+          <span class="cg-rc-reason">{{ r }}</span>
           {% endfor %}
         </div>
+        {% endif %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- Affected Services --- #}
+    {# === Affected Services === #}
     {% if g.affected_services %}
-    <div class="corr-block">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-        Affected Services
-      </div>
-      <div class="corr-svc-list">
+    <section class="cg-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg> Affected Services</h4>
+      <div class="cg-chips">
         {% for svc in g.affected_services %}
-        <span class="corr-svc-chip">{{ svc }}</span>
+        <span class="cg-svc-chip">{{ svc }}</span>
         {% endfor %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- Correlation Reasons --- #}
+    {# === Correlation Reasons === #}
     {% if g.reasons %}
-    <div class="corr-block">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        Why These Are Correlated
-      </div>
-      <div class="corr-reasons-list">
+    <section class="cg-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg> Why Correlated</h4>
+      <div class="cg-reasons">
         {% for r in g.reasons %}
-        <div class="corr-reason-row">
-          <span class="corr-signal-badge corr-signal-{{ r.confidence }}">{{ r.signal | replace('_', ' ') }}</span>
-          <span class="corr-reason-detail">{{ r.detail }}</span>
-          <span class="corr-conf-tag conf-{{ r.confidence }}">{{ r.confidence }}</span>
+        <div class="cg-reason">
+          <span class="cg-signal sig-{{ r.confidence }}">{{ r.signal | replace('_', ' ') }}</span>
+          <span class="cg-reason-txt">{{ r.detail }}</span>
+          <span class="cg-reason-conf rc-{{ r.confidence }}">{{ r.confidence }}</span>
         </div>
         {% endfor %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- Timeline --- #}
+    {# === Alert Timeline === #}
     {% if g.alerts | length > 1 %}
-    <div class="corr-block">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Alert Timeline
-      </div>
-      <div class="corr-timeline">
+    <section class="cg-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeline</h4>
+      <div class="cg-tl">
         {% for a in g.alerts %}
-        <div class="corr-tl-row{{ ' corr-tl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
-          <div class="corr-tl-track">
-            <div class="corr-tl-dot sev-bg-{{ a.severity_int }}"></div>
-            {% if not loop.last %}<div class="corr-tl-line"></div>{% endif %}
+        <div class="cg-tl-item{{ ' cg-tl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
+          <div class="cg-tl-rail">
+            <span class="cg-tl-dot sev-bg-{{ a.severity_int }}"></span>
+            {% if not loop.last %}<span class="cg-tl-line"></span>{% endif %}
           </div>
-          <div class="corr-tl-content">
-            <span class="corr-tl-time mono">{{ a.started_at.strftime('%H:%M:%S') if a.started_at else '?' }}</span>
-            <span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span>
-            <span class="corr-tl-title">{{ (a.host + ': ') if a.host else '' }}{{ a.title | truncate(70) }}</span>
-            {% if a.resolved %}
-            <span class="corr-tl-resolved">resolved</span>
-            {% endif %}
+          <div class="cg-tl-body">
+            <span class="cg-tl-time mono">{{ a.started_at.strftime('%H:%M:%S') if a.started_at else '—' }}</span>
+            <span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span>
+            <span class="cg-tl-desc">{{ (a.host + ' — ') if a.host else '' }}{{ a.title | truncate(65) }}</span>
+            {% if a.resolved %}<span class="cg-resolved-tag">resolved</span>{% endif %}
           </div>
         </div>
         {% endfor %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- RFO Hints --- #}
+    {# === RFO Hints === #}
     {% if g.rfo_hints %}
-    <div class="corr-block corr-rfo">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 01-1 1h-6a1 1 0 01-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7z"/></svg>
-        RFO Quick Reference — {{ g.issue_category }}
-      </div>
-      <ul class="corr-rfo-list">
-        {% for hint in g.rfo_hints %}
-        <li>{{ hint }}</li>
-        {% endfor %}
+    <section class="cg-section cg-rfo-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 01-1 1h-6a1 1 0 01-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7z"/></svg> RFO — {{ g.issue_category }}</h4>
+      <ul class="cg-rfo-list">
+        {% for hint in g.rfo_hints %}<li>{{ hint }}</li>{% endfor %}
       </ul>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- Device Cross-Ref --- #}
+    {# === Device Cross-Ref === #}
     {% if g.device_names and g.device_names | length > 1 %}
-    <div class="corr-block">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        Device Cross-Reference
-      </div>
-      <div class="corr-xref-row">
+    <section class="cg-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Device Cross-Reference</h4>
+      <div class="cg-chips">
         {% for p, name in g.device_names.items() %}
-        <span class="badge badge-{{ p }}"><span class="dot"></span>{{ p }}: <span class="mono">{{ name }}</span></span>
+        <span class="cg-pill cg-plat plat-{{ p }}"><span class="cg-plat-dot"></span>{{ p }}: <span class="mono">{{ name }}</span></span>
         {% endfor %}
       </div>
-    </div>
+    </section>
     {% endif %}
 
-    {# --- Alert Table --- #}
-    <div class="corr-block">
-      <div class="corr-block-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        Alerts ({{ g.alerts | length }})
-      </div>
-      <div class="table-wrap">
-        <table class="corr-alert-table">
-          <thead>
-            <tr>
-              <th>Sev</th>
-              <th>Title</th>
-              <th>Platform</th>
-              <th>Host</th>
-              <th>Service</th>
-              <th>Started</th>
-              <th>State</th>
-            </tr>
-          </thead>
+    {# === Alert Table === #}
+    <section class="cg-section">
+      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> All Alerts ({{ g.alerts | length }})</h4>
+      <div class="cg-tbl-wrap">
+        <table class="cg-tbl">
+          <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th><th>State</th></tr></thead>
           <tbody>
             {% for a in g.alerts %}
-            <tr class="{{ 'corr-rc-row' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
-              <td><span class="pill sev-pill sev-{{ a.severity_int }}"><span class="dot"></span>{{ a.severity_label }}</span></td>
-              <td class="corr-cell-title">{{ a.title | truncate(80) }}</td>
-              <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
-              <td class="mono">{{ a.host or '-' }}</td>
-              <td class="corr-cell-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '-' }}</td>
-              <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
-              <td>
-                {% if a.resolved %}
-                <span class="corr-status is-resolved"><span class="dot"></span>resolved</span>
-                {% else %}
-                <span class="corr-status is-open"><span class="dot"></span>active</span>
-                {% endif %}
-              </td>
+            <tr class="{{ 'cg-tbl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
+              <td><span class="cg-sev-mini sev-bg-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
+              <td class="cg-td-title">{{ a.title | truncate(75) }}</td>
+              <td><span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span></td>
+              <td class="mono">{{ a.host or '—' }}</td>
+              <td class="cg-td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
+              <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
+              <td>{% if a.resolved %}<span class="cg-resolved-tag">resolved</span>{% else %}<span class="cg-active-tag">active</span>{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </div>
+    </section>
 
-    {# --- RCA Investigation --- #}
+    {# === Actions === #}
     {% set has_dt = 'dynatrace' in g.platforms %}
-    <div class="corr-block corr-actions-block">
-      <div class="corr-actions-row">
-        {% if has_dt %}
-        {% set dt_alert = namespace(id=None, problem=None) %}
-        {% for a in g.alerts %}
-          {% if a.platform == 'dynatrace' and not dt_alert.id %}
-            {% set dt_alert.id = a.id %}
-            {% set dt_alert.problem = a.external_id %}
-          {% endif %}
-        {% endfor %}
-        <button class="corr-action-btn corr-action-rca"
-                hx-post="/api/v1/rca/investigate/{{ dt_alert.problem or '' }}?instance=all"
-                hx-target="#rca-result-{{ g.group_id }}"
-                hx-swap="innerHTML"
-                hx-indicator="#rca-spin-{{ g.group_id }}">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Investigate RCA
-        </button>
-        <span id="rca-spin-{{ g.group_id }}" class="htmx-indicator corr-spin-label">Fetching from Dynatrace...</span>
+    <div class="cg-actions">
+      {% if has_dt %}
+      {% set dt_alert = namespace(id=None, problem=None) %}
+      {% for a in g.alerts %}
+        {% if a.platform == 'dynatrace' and not dt_alert.id %}
+          {% set dt_alert.id = a.id %}
+          {% set dt_alert.problem = a.external_id %}
         {% endif %}
-        <a class="corr-action-btn corr-action-ai"
-           href="/ai?q=Investigate%20root%20cause%20for%20correlation%20group%20{{ g.group_id }}%20-%20{{ g.title | urlencode }}"
-           title="Ask SAMIX AI to investigate">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M6 13v-2"/><path d="M18 13v-2"/><path d="M5 20a9 9 0 0114 0"/></svg>
-          Ask SAMIX AI
-        </a>
-      </div>
-      <div id="rca-result-{{ g.group_id }}" class="corr-rca-result"></div>
+      {% endfor %}
+      <button class="cg-btn cg-btn-rca"
+              hx-post="/api/v1/rca/investigate/{{ dt_alert.problem or '' }}?instance=all"
+              hx-target="#rca-out-{{ g.group_id }}" hx-swap="innerHTML"
+              hx-indicator="#rca-spin-{{ g.group_id }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Investigate RCA
+      </button>
+      <span id="rca-spin-{{ g.group_id }}" class="htmx-indicator cg-spin">Fetching...</span>
+      {% endif %}
+      <a class="cg-btn cg-btn-ai"
+         href="/ai?q=Investigate%20root%20cause%20for%20correlation%20group%20{{ g.group_id }}%20-%20{{ g.title | urlencode }}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M6 13v-2"/><path d="M18 13v-2"/><path d="M5 20a9 9 0 0114 0"/></svg>
+        Ask SAMIX AI
+      </a>
     </div>
+    <div id="rca-out-{{ g.group_id }}" class="cg-rca-out"></div>
 
   </div>
-</div>
+</article>
 {% endfor %}
+</div>
 
+{# ===== Pagination ===== #}
 {% if total_pages is defined and total_pages > 1 %}
-<div class="corr-pagination">
+<nav class="cg-pager">
   {% if page > 1 %}
-  <button class="corr-page-btn"
+  <button class="cg-pager-btn"
     hx-get="/partials/correlation?page={{ page - 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
     hx-target="#corr-region" hx-swap="innerHTML">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
-    Previous
+    &larr; Previous
   </button>
   {% endif %}
-  <span class="corr-page-info">Page {{ page }} / {{ total_pages }} &middot; {{ total_groups }} groups</span>
+  <span class="cg-pager-info">{{ page }} / {{ total_pages }}</span>
   {% if page < total_pages %}
-  <button class="corr-page-btn"
+  <button class="cg-pager-btn"
     hx-get="/partials/correlation?page={{ page + 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
     hx-target="#corr-region" hx-swap="innerHTML">
-    Next
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+    Next &rarr;
   </button>
   {% endif %}
-</div>
+</nav>
 {% endif %}
 
+{# ===== Uncorrelated ===== #}
 {% if uncorrelated | length > 0 %}
-<details class="corr-uncorrelated-section">
+<details class="cg-uncorr">
   <summary>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-    <b>{{ uncorrelated | length }}</b> uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}
+    {{ uncorrelated | length }} uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}
   </summary>
-  <div class="table-wrap" style="margin-top:8px">
-    <table class="corr-alert-table">
-      <thead>
-        <tr>
-          <th>Sev</th>
-          <th>Title</th>
-          <th>Platform</th>
-          <th>Host</th>
-          <th>Service</th>
-          <th>Started</th>
-        </tr>
-      </thead>
+  <div class="cg-tbl-wrap" style="padding:0 20px 16px">
+    <table class="cg-tbl">
+      <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th></tr></thead>
       <tbody>
         {% for a in uncorrelated %}
         <tr>
-          <td><span class="pill sev-pill sev-{{ a.severity_int }}"><span class="dot"></span>{{ a.severity_label }}</span></td>
-          <td class="corr-cell-title">{{ a.title | truncate(80) }}</td>
-          <td><span class="badge badge-{{ a.platform }}"><span class="dot"></span>{{ a.platform }}</span></td>
-          <td class="mono">{{ a.host or '-' }}</td>
-          <td class="corr-cell-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '-' }}</td>
-          <td class="mono">{{ a.started_at | relative_time if a.started_at else '-' }}</td>
+          <td><span class="cg-sev-mini sev-bg-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
+          <td class="cg-td-title">{{ a.title | truncate(75) }}</td>
+          <td><span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span></td>
+          <td class="mono">{{ a.host or '—' }}</td>
+          <td class="cg-td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
+          <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -402,8 +324,8 @@
 {% endif %}
 
 <script>
-function toggleCorr(header) {
-  var card = header.closest('.corr-card');
-  card.classList.toggle('is-expanded');
+function toggleCG(hdr){
+  var c=hdr.closest('.cg-card');
+  c.classList.toggle('open');
 }
 </script>
