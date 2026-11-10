@@ -5,33 +5,28 @@
 <div class="cg-strip">
   <div class="cg-strip-left">
     <span class="cg-strip-num">{{ total_groups }}</span>
-    <span class="cg-strip-label">Correlation Group{{ '' if total_groups == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
+    <span class="cg-strip-label">Group{{ '' if total_groups == 1 else 's' }}{{ ' (' + st_label + ')' if st_label }}</span>
     {% if uncorrelated | length > 0 %}
-    <span class="cg-strip-sep">&bull;</span>
-    <span class="cg-strip-label cg-strip-muted">{{ uncorrelated | length }} uncorrelated</span>
+    <span class="cg-strip-dot">&bull;</span>
+    <span class="cg-strip-label dim">{{ uncorrelated | length }} solo</span>
     {% endif %}
   </div>
-  <button class="cg-refresh"
+  <button class="cg-refresh-btn"
           hx-get="/partials/correlation?refresh=1&page=1" hx-target="#corr-region" hx-swap="innerHTML"
-          hx-indicator="#cg-loader"
-          title="Force refresh — bypass cache">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
-    Refresh
+          hx-indicator="#cg-loader" title="Force refresh">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 12a9 9 0 11-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
   </button>
 </div>
 
-{# ===== Loading Indicator ===== #}
-<div id="cg-loader" class="cg-loader htmx-indicator"><div class="cg-loader-track"></div></div>
+<div id="cg-loader" class="cg-loader htmx-indicator"><div class="cg-loader-bar"></div></div>
 
 {% if corr_error %}
-<div class="cg-banner cg-banner-err">
-  <strong>Engine error:</strong> <code>{{ corr_error }}</code>
-</div>
+<div class="cg-err"><strong>Error:</strong> <code>{{ corr_error }}</code></div>
 {% endif %}
 
 {% if groups | length == 0 and uncorrelated | length == 0 and not corr_error %}
 <div class="cg-empty">
-  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".25"><circle cx="12" cy="12" r="10"/><path d="M8 15s1.5 2 4 2 4-2 4-2"/><circle cx="9" cy="9" r=".5" fill="currentColor"/><circle cx="15" cy="9" r=".5" fill="currentColor"/></svg>
+  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".2"><circle cx="12" cy="12" r="10"/><path d="M8 15s1.5 2 4 2 4-2 4-2"/><circle cx="9" cy="9" r=".5" fill="currentColor"/><circle cx="15" cy="9" r=".5" fill="currentColor"/></svg>
   <p>No alerts match the current filters.</p>
 </div>
 {% endif %}
@@ -40,236 +35,183 @@
 <div class="cg-grid">
 {% for g in groups %}
 <article class="cg-card" id="cg-{{ g.group_id }}" data-sev="{{ g.severity_int }}">
-  {# severity top-bar #}
-  <div class="cg-sev-bar sev-bar-{{ g.severity_int }}"></div>
+  <div class="cg-sev-edge sev-{{ g.severity_int }}"></div>
 
-  {# --- clickable header --- #}
-  <header class="cg-head" onclick="toggleCG(this)">
-    <div class="cg-head-row1">
-      <div class="cg-head-left">
-        <span class="cg-sev sev-bg-{{ g.severity_int }}">{{ g.severity_int }}</span>
-        <h3 class="cg-title">{{ g.title | truncate(110) }}</h3>
-      </div>
-      <div class="cg-head-right">
-        <span class="cg-count">{{ g.alert_ids | length }}<small> alert{{ '' if g.alert_ids | length == 1 else 's' }}</small></span>
-        <span class="cg-chevron">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
-        </span>
-      </div>
+  {# --- Compact Card Face --- #}
+  <div class="cg-face" onclick="toggleCG(this)">
+    <div class="cg-face-top">
+      <span class="cg-sev-badge sev-{{ g.severity_int }}">S{{ g.severity_int }}</span>
+      <span class="cg-alert-count">{{ g.alert_ids | length }}</span>
     </div>
-
-    <div class="cg-head-row2">
-      {# badges row #}
-      {% if g.issue_category %}
-      <span class="cg-pill cg-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span>
-      {% endif %}
-      {% if g.impact_level %}
-      <span class="cg-pill cg-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span>
-      {% endif %}
-      {% if g.incident_type %}
-      <span class="cg-pill cg-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span>
-      {% endif %}
+    <h3 class="cg-face-title">{{ g.title | truncate(80) }}</h3>
+    <div class="cg-face-tags">
       {% for p in g.platforms %}
-      <span class="cg-pill cg-plat plat-{{ p }}"><span class="cg-plat-dot"></span>{{ p }}</span>
+      <span class="cg-tag cg-tag-plat plat-{{ p }}">{{ p }}</span>
       {% endfor %}
-
-      {# right-side meta #}
-      <span class="cg-meta-spacer"></span>
-      {% if g.confidence_score is defined and g.confidence_score %}
-      <span class="cg-conf conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}">{{ (g.confidence_score * 100) | int }}%</span>
+      {% if g.issue_category %}
+      <span class="cg-tag cg-tag-cat">{{ g.issue_category }}</span>
       {% endif %}
-      <span class="cg-status {{ 'st-open' if g.status == 'open' else 'st-resolved' }}"><span class="cg-status-dot"></span>{{ g.status }}</span>
+    </div>
+    <div class="cg-face-foot">
+      {% if g.confidence_score is defined and g.confidence_score %}
+      <div class="cg-minibar"><div class="cg-minibar-fill conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div></div>
+      <span class="cg-conf-pct conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}">{{ (g.confidence_score * 100) | int }}%</span>
+      {% endif %}
+      <span class="cg-face-spacer"></span>
+      <span class="cg-st {{ 'st-open' if g.status == 'open' else 'st-ok' }}"></span>
       {% if g.started_at %}
       <span class="cg-age">{{ g.started_at | relative_time }}</span>
       {% endif %}
     </div>
-  </header>
+  </div>
 
-  {# --- Expandable Body --- #}
-  <div class="cg-body">
+  {# --- Expanded Detail Panel --- #}
+  <div class="cg-detail">
+    <div class="cg-detail-inner">
 
-    {# === Quick Facts Row === #}
-    <div class="cg-facts">
-      {% if g.issue_category %}
-      <div class="cg-fact"><span class="cg-fact-k">Category</span><span class="cg-pill cg-cat cat-{{ g.issue_category | lower | replace('/', '-') | replace(' ', '-') }}">{{ g.issue_category }}</span></div>
-      {% endif %}
-      {% if g.incident_type %}
-      <div class="cg-fact"><span class="cg-fact-k">Type</span><span class="cg-pill cg-itype itype-{{ g.incident_type | lower | replace(' ', '-') }}">{{ g.incident_type }}</span></div>
-      {% endif %}
-      {% if g.impact_level %}
-      <div class="cg-fact"><span class="cg-fact-k">Impact</span><span class="cg-pill cg-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span></div>
-      {% endif %}
-      {% if g.suggested_team %}
-      <div class="cg-fact"><span class="cg-fact-k">Team</span><span class="cg-fact-v" style="color:var(--accent)">{{ g.suggested_team }}</span></div>
-      {% endif %}
-      {% if g.confidence_score is defined and g.confidence_score %}
-      <div class="cg-fact">
-        <span class="cg-fact-k">Confidence</span>
-        <div class="cg-conf-bar"><div class="cg-conf-fill conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div></div>
-        <span class="cg-fact-v" style="font-weight:700">{{ (g.confidence_score * 100) | int }}%</span>
+      {# info bar #}
+      <div class="cg-info-bar">
+        {% if g.impact_level %}
+        <div class="cg-info-item"><span class="cg-info-k">Impact</span><span class="cg-tag cg-tag-impact impact-{{ g.impact_level | lower | replace(' ', '-') }}">{{ g.impact_level }}</span></div>
+        {% endif %}
+        {% if g.incident_type %}
+        <div class="cg-info-item"><span class="cg-info-k">Type</span><span class="cg-tag">{{ g.incident_type }}</span></div>
+        {% endif %}
+        {% if g.suggested_team %}
+        <div class="cg-info-item"><span class="cg-info-k">Team</span><span class="cg-info-v accent">{{ g.suggested_team }}</span></div>
+        {% endif %}
+        {% if g.duration_seconds is not none and g.duration_seconds > 0 %}
+        <div class="cg-info-item"><span class="cg-info-k">Duration</span><span class="cg-info-v mono">{% if g.duration_seconds >= 3600 %}{{ (g.duration_seconds // 3600) }}h {{ ((g.duration_seconds % 3600) // 60) }}m{% elif g.duration_seconds >= 60 %}{{ (g.duration_seconds // 60) }}m{% else %}{{ g.duration_seconds }}s{% endif %}</span></div>
+        {% endif %}
+        {% if g.confidence_score is defined and g.confidence_score %}
+        <div class="cg-info-item"><span class="cg-info-k">Confidence</span><div class="cg-conf-wide"><div class="cg-conf-wide-fill conf-{{ 'hi' if g.confidence_score >= 0.8 else ('md' if g.confidence_score >= 0.6 else 'lo') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div></div><span class="cg-info-v bold">{{ (g.confidence_score * 100) | int }}%</span></div>
+        {% endif %}
       </div>
-      {% endif %}
-      {% if g.duration_seconds is not none and g.duration_seconds > 0 %}
-      <div class="cg-fact">
-        <span class="cg-fact-k">Duration</span>
-        <span class="cg-fact-v mono" style="font-weight:700">
-          {% if g.duration_seconds >= 3600 %}{{ (g.duration_seconds // 3600) }}h {{ ((g.duration_seconds % 3600) // 60) }}m
-          {% elif g.duration_seconds >= 60 %}{{ (g.duration_seconds // 60) }}m
-          {% else %}{{ g.duration_seconds }}s{% endif %}
-        </span>
-      </div>
-      {% endif %}
-    </div>
 
-    {# === Root Cause Card === #}
-    {% if g.root_cause %}
-    <section class="cg-section cg-rc-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4"/></svg> Root Cause Candidate</h4>
-      <div class="cg-rc-inner">
-        <div class="cg-rc-top">
-          <span class="cg-sev sev-bg-{{ g.root_cause.severity_int }}">{{ g.root_cause.severity_int }}</span>
-          <span class="cg-pill cg-plat plat-{{ g.root_cause.platform }}"><span class="cg-plat-dot"></span>{{ g.root_cause.platform }}</span>
-          <strong class="mono">{{ g.root_cause.host }}</strong>
-          <span class="cg-rc-desc">{{ g.root_cause.title | truncate(90) }}</span>
-          {% if g.root_cause.started_at %}
-          <span class="cg-age" style="margin-left:auto">{{ g.root_cause.started_at | relative_time }}</span>
+      <div class="cg-cols">
+        {# LEFT column #}
+        <div class="cg-col-main">
+
+          {# Root Cause #}
+          {% if g.root_cause %}
+          <section class="cg-sec cg-sec-rc">
+            <h4 class="cg-sec-h"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m-10-10h4m12 0h4"/></svg> Root Cause</h4>
+            <div class="cg-rc">
+              <span class="cg-sev-badge sev-{{ g.root_cause.severity_int }}" style="font-size:.6rem;width:22px;height:22px">S{{ g.root_cause.severity_int }}</span>
+              <span class="cg-tag cg-tag-plat plat-{{ g.root_cause.platform }}">{{ g.root_cause.platform }}</span>
+              <strong class="mono">{{ g.root_cause.host }}</strong>
+              <span class="cg-rc-title">{{ g.root_cause.title | truncate(70) }}</span>
+            </div>
+            {% if g.root_cause.reasons %}
+            <div class="cg-rc-why">{% for r in g.root_cause.reasons %}<span class="cg-rc-tag">{{ r }}</span>{% endfor %}</div>
+            {% endif %}
+          </section>
+          {% endif %}
+
+          {# Why Correlated #}
+          {% if g.reasons %}
+          <section class="cg-sec">
+            <h4 class="cg-sec-h"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg> Correlation Signals</h4>
+            <div class="cg-signals">
+              {% for r in g.reasons %}
+              <div class="cg-sig-row">
+                <span class="cg-sig-name sig-{{ r.confidence }}">{{ r.signal | replace('_', ' ') }}</span>
+                <span class="cg-sig-detail">{{ r.detail }}</span>
+                <span class="cg-sig-conf rc-{{ r.confidence }}">{{ r.confidence }}</span>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+          {% endif %}
+
+          {# RFO #}
+          {% if g.rfo_hints %}
+          <section class="cg-sec cg-sec-rfo">
+            <h4 class="cg-sec-h"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 01-1 1h-6a1 1 0 01-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7z"/></svg> RFO Hints</h4>
+            <ul class="cg-rfo">{% for h in g.rfo_hints %}<li>{{ h }}</li>{% endfor %}</ul>
+          </section>
           {% endif %}
         </div>
-        {% if g.root_cause.reasons %}
-        <div class="cg-rc-reasons">
-          {% for r in g.root_cause.reasons %}
-          <span class="cg-rc-reason">{{ r }}</span>
-          {% endfor %}
+
+        {# RIGHT column: timeline #}
+        {% if g.alerts | length > 1 %}
+        <div class="cg-col-side">
+          <section class="cg-sec">
+            <h4 class="cg-sec-h"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeline</h4>
+            <div class="cg-tl">
+              {% for a in g.alerts %}
+              <div class="cg-tl-row{{ ' cg-tl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
+                <div class="cg-tl-rail"><span class="cg-tl-dot sev-{{ a.severity_int }}"></span>{% if not loop.last %}<span class="cg-tl-line"></span>{% endif %}</div>
+                <div class="cg-tl-content">
+                  <span class="cg-tl-time mono">{{ a.started_at.strftime('%H:%M') if a.started_at else '--:--' }}</span>
+                  <span class="cg-tl-txt">{{ a.title | truncate(50) }}</span>
+                  {% if a.resolved %}<span class="cg-badge-ok">ok</span>{% endif %}
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+          </section>
+
+          {# Services #}
+          {% if g.affected_services %}
+          <section class="cg-sec">
+            <h4 class="cg-sec-h"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg> Services</h4>
+            <div class="cg-svc-wrap">{% for svc in g.affected_services %}<span class="cg-svc">{{ svc }}</span>{% endfor %}</div>
+          </section>
+          {% endif %}
         </div>
         {% endif %}
       </div>
-    </section>
-    {% endif %}
 
-    {# === Affected Services === #}
-    {% if g.affected_services %}
-    <section class="cg-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg> Affected Services</h4>
-      <div class="cg-chips">
-        {% for svc in g.affected_services %}
-        <span class="cg-svc-chip">{{ svc }}</span>
-        {% endfor %}
-      </div>
-    </section>
-    {% endif %}
-
-    {# === Correlation Reasons === #}
-    {% if g.reasons %}
-    <section class="cg-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg> Why Correlated</h4>
-      <div class="cg-reasons">
-        {% for r in g.reasons %}
-        <div class="cg-reason">
-          <span class="cg-signal sig-{{ r.confidence }}">{{ r.signal | replace('_', ' ') }}</span>
-          <span class="cg-reason-txt">{{ r.detail }}</span>
-          <span class="cg-reason-conf rc-{{ r.confidence }}">{{ r.confidence }}</span>
+      {# Alert Table #}
+      <details class="cg-alerts-toggle">
+        <summary class="cg-alerts-summary">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+          View all {{ g.alerts | length }} alerts
+        </summary>
+        <div class="cg-tbl-wrap">
+          <table class="cg-tbl">
+            <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th><th>State</th></tr></thead>
+            <tbody>
+              {% for a in g.alerts %}
+              <tr class="{{ 'cg-tbl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
+                <td><span class="cg-sev-sm sev-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
+                <td class="td-title">{{ a.title | truncate(65) }}</td>
+                <td><span class="cg-tag cg-tag-plat plat-{{ a.platform }}">{{ a.platform }}</span></td>
+                <td class="mono">{{ a.host or '—' }}</td>
+                <td class="td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
+                <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
+                <td>{% if a.resolved %}<span class="cg-badge-ok">resolved</span>{% else %}<span class="cg-badge-active">active</span>{% endif %}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        {% endfor %}
-      </div>
-    </section>
-    {% endif %}
+      </details>
 
-    {# === Alert Timeline === #}
-    {% if g.alerts | length > 1 %}
-    <section class="cg-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeline</h4>
-      <div class="cg-tl">
-        {% for a in g.alerts %}
-        <div class="cg-tl-item{{ ' cg-tl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
-          <div class="cg-tl-rail">
-            <span class="cg-tl-dot sev-bg-{{ a.severity_int }}"></span>
-            {% if not loop.last %}<span class="cg-tl-line"></span>{% endif %}
-          </div>
-          <div class="cg-tl-body">
-            <span class="cg-tl-time mono">{{ a.started_at.strftime('%H:%M:%S') if a.started_at else '—' }}</span>
-            <span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span>
-            <span class="cg-tl-desc">{{ (a.host + ' — ') if a.host else '' }}{{ a.title | truncate(65) }}</span>
-            {% if a.resolved %}<span class="cg-resolved-tag">resolved</span>{% endif %}
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </section>
-    {% endif %}
-
-    {# === RFO Hints === #}
-    {% if g.rfo_hints %}
-    <section class="cg-section cg-rfo-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 017 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 01-1 1h-6a1 1 0 01-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 017-7z"/></svg> RFO — {{ g.issue_category }}</h4>
-      <ul class="cg-rfo-list">
-        {% for hint in g.rfo_hints %}<li>{{ hint }}</li>{% endfor %}
-      </ul>
-    </section>
-    {% endif %}
-
-    {# === Device Cross-Ref === #}
-    {% if g.device_names and g.device_names | length > 1 %}
-    <section class="cg-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg> Device Cross-Reference</h4>
-      <div class="cg-chips">
-        {% for p, name in g.device_names.items() %}
-        <span class="cg-pill cg-plat plat-{{ p }}"><span class="cg-plat-dot"></span>{{ p }}: <span class="mono">{{ name }}</span></span>
-        {% endfor %}
-      </div>
-    </section>
-    {% endif %}
-
-    {# === Alert Table === #}
-    <section class="cg-section">
-      <h4 class="cg-sec-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> All Alerts ({{ g.alerts | length }})</h4>
-      <div class="cg-tbl-wrap">
-        <table class="cg-tbl">
-          <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th><th>State</th></tr></thead>
-          <tbody>
-            {% for a in g.alerts %}
-            <tr class="{{ 'cg-tbl-rc' if g.root_cause and a.id == g.root_cause.alert_id else '' }}">
-              <td><span class="cg-sev-mini sev-bg-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
-              <td class="cg-td-title">{{ a.title | truncate(75) }}</td>
-              <td><span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span></td>
-              <td class="mono">{{ a.host or '—' }}</td>
-              <td class="cg-td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
-              <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
-              <td>{% if a.resolved %}<span class="cg-resolved-tag">resolved</span>{% else %}<span class="cg-active-tag">active</span>{% endif %}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    {# === Actions === #}
-    {% set has_dt = 'dynatrace' in g.platforms %}
-    <div class="cg-actions">
-      {% if has_dt %}
-      {% set dt_alert = namespace(id=None, problem=None) %}
-      {% for a in g.alerts %}
-        {% if a.platform == 'dynatrace' and not dt_alert.id %}
-          {% set dt_alert.id = a.id %}
-          {% set dt_alert.problem = a.external_id %}
+      {# Actions #}
+      {% set has_dt = 'dynatrace' in g.platforms %}
+      <div class="cg-actions">
+        {% if has_dt %}
+        {% set dt_alert = namespace(id=None, problem=None) %}
+        {% for a in g.alerts %}{% if a.platform == 'dynatrace' and not dt_alert.id %}{% set dt_alert.id = a.id %}{% set dt_alert.problem = a.external_id %}{% endif %}{% endfor %}
+        <button class="cg-act cg-act-primary"
+                hx-post="/api/v1/rca/investigate/{{ dt_alert.problem or '' }}?instance=all"
+                hx-target="#rca-out-{{ g.group_id }}" hx-swap="innerHTML"
+                hx-indicator="#rca-spin-{{ g.group_id }}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Investigate
+        </button>
+        <span id="rca-spin-{{ g.group_id }}" class="htmx-indicator cg-spin-txt">Investigating...</span>
         {% endif %}
-      {% endfor %}
-      <button class="cg-btn cg-btn-rca"
-              hx-post="/api/v1/rca/investigate/{{ dt_alert.problem or '' }}?instance=all"
-              hx-target="#rca-out-{{ g.group_id }}" hx-swap="innerHTML"
-              hx-indicator="#rca-spin-{{ g.group_id }}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Investigate RCA
-      </button>
-      <span id="rca-spin-{{ g.group_id }}" class="htmx-indicator cg-spin">Fetching...</span>
-      {% endif %}
-      <a class="cg-btn cg-btn-ai"
-         href="/ai?q=Investigate%20root%20cause%20for%20correlation%20group%20{{ g.group_id }}%20-%20{{ g.title | urlencode }}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M6 13v-2"/><path d="M18 13v-2"/><path d="M5 20a9 9 0 0114 0"/></svg>
-        Ask SAMIX AI
-      </a>
+        <a class="cg-act cg-act-ghost" href="/ai?q=Investigate%20correlation%20group%20{{ g.group_id }}%20-%20{{ g.title | urlencode }}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2a4 4 0 014 4v1a4 4 0 01-8 0V6a4 4 0 014-4z"/><path d="M5 20a9 9 0 0114 0"/></svg>
+          Ask AI
+        </a>
+      </div>
+      <div id="rca-out-{{ g.group_id }}" class="cg-rca-out"></div>
+
     </div>
-    <div id="rca-out-{{ g.group_id }}" class="cg-rca-out"></div>
-
   </div>
 </article>
 {% endfor %}
@@ -279,19 +221,11 @@
 {% if total_pages is defined and total_pages > 1 %}
 <nav class="cg-pager">
   {% if page > 1 %}
-  <button class="cg-pager-btn"
-    hx-get="/partials/correlation?page={{ page - 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
-    hx-target="#corr-region" hx-swap="innerHTML">
-    &larr; Previous
-  </button>
+  <button class="cg-pager-btn" hx-get="/partials/correlation?page={{ page - 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}" hx-target="#corr-region" hx-swap="innerHTML">&larr; Prev</button>
   {% endif %}
-  <span class="cg-pager-info">{{ page }} / {{ total_pages }}</span>
+  <span class="cg-pager-pos">{{ page }}/{{ total_pages }}</span>
   {% if page < total_pages %}
-  <button class="cg-pager-btn"
-    hx-get="/partials/correlation?page={{ page + 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}"
-    hx-target="#corr-region" hx-swap="innerHTML">
-    Next &rarr;
-  </button>
+  <button class="cg-pager-btn" hx-get="/partials/correlation?page={{ page + 1 }}&state={{ current.state }}&platform={{ current.platform }}&instance={{ current.instance }}&severity={{ current.severity_min }}&q={{ current.q }}" hx-target="#corr-region" hx-swap="innerHTML">Next &rarr;</button>
   {% endif %}
 </nav>
 {% endif %}
@@ -299,21 +233,18 @@
 {# ===== Uncorrelated ===== #}
 {% if uncorrelated | length > 0 %}
 <details class="cg-uncorr">
-  <summary>
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-    {{ uncorrelated | length }} uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}
-  </summary>
-  <div class="cg-tbl-wrap" style="padding:0 20px 16px">
+  <summary>{{ uncorrelated | length }} uncorrelated alert{{ '' if uncorrelated | length == 1 else 's' }}</summary>
+  <div class="cg-tbl-wrap" style="padding:0 16px 12px">
     <table class="cg-tbl">
       <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th></tr></thead>
       <tbody>
         {% for a in uncorrelated %}
         <tr>
-          <td><span class="cg-sev-mini sev-bg-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
-          <td class="cg-td-title">{{ a.title | truncate(75) }}</td>
-          <td><span class="cg-pill cg-plat plat-{{ a.platform }}"><span class="cg-plat-dot"></span>{{ a.platform }}</span></td>
+          <td><span class="cg-sev-sm sev-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
+          <td class="td-title">{{ a.title | truncate(65) }}</td>
+          <td><span class="cg-tag cg-tag-plat plat-{{ a.platform }}">{{ a.platform }}</span></td>
           <td class="mono">{{ a.host or '—' }}</td>
-          <td class="cg-td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
+          <td class="td-svc">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
           <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
         </tr>
         {% endfor %}
@@ -324,8 +255,15 @@
 {% endif %}
 
 <script>
-function toggleCG(hdr){
-  var c=hdr.closest('.cg-card');
-  c.classList.toggle('open');
+function toggleCG(el){
+  var card = el.closest('.cg-card');
+  var wasOpen = card.classList.contains('open');
+  // close all others
+  document.querySelectorAll('.cg-card.open').forEach(function(c){ c.classList.remove('open'); });
+  if (!wasOpen) {
+    card.classList.add('open');
+    // scroll into view with a small delay for the animation
+    setTimeout(function(){ card.scrollIntoView({behavior:'smooth', block:'nearest'}); }, 50);
+  }
 }
 </script>
