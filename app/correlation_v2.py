@@ -600,7 +600,14 @@ def _group_reasons(
                     "high",
                 ))
 
-    return reasons
+    final: list[CorrelationReason] = []
+    seen_text: set[str] = set()
+    for r in reasons:
+        k = f"{r.signal}|{r.detail}"
+        if k not in seen_text:
+            seen_text.add(k)
+            final.append(r)
+    return final
 
 
 # ---------------------------------------------------------------------------
