@@ -850,5 +850,38 @@
   }
 }
 
+/* ============================================================
+   RCA Panel (after investigation)
+   ============================================================ */
+.corr-rca-panel { padding: 14px; background: color-mix(in srgb, var(--accent, #4f46e5) 4%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent, #4f46e5) 15%, var(--border)); border-radius: 8px; }
+.corr-rca-panel h4 { font-size: 14px; margin: 0 0 10px; color: var(--accent, #4f46e5); }
+.corr-rca-panel h5 { font-size: 12px; margin: 10px 0 6px; color: var(--text-muted); }
+.corr-rca-root { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.corr-rca-label { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+.corr-rca-entity { display: flex; align-items: center; gap: 6px; }
+.corr-rca-summary { font-size: 13px; padding: 10px 12px; background: var(--surface-2); border-radius: 6px; margin-bottom: 8px; }
+.corr-rca-etype { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--text-muted); text-transform: uppercase; }
+.corr-rca-etype.rca-relevant { background: color-mix(in srgb, var(--sev4) 15%, var(--surface)); color: var(--sev4); }
+.rca-root-dot { background: var(--sev4) !important; box-shadow: 0 0 6px var(--sev4); }
+.corr-rca-impact-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+.corr-rca-error { padding: 10px 14px; background: color-mix(in srgb, var(--sev5) 8%, var(--surface)); border: 1px solid color-mix(in srgb, var(--sev5) 25%, var(--border)); border-radius: 8px; font-size: 13px; color: var(--sev5); }
+.corr-rca-empty { font-size: 13px; color: var(--text-muted); }
+
+/* ============================================================
+   Temporal Proximity Badge
+   ============================================================ */
+.corr-temporal {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+.temporal-tight { background: color-mix(in srgb, var(--sev5) 10%, var(--surface)); color: var(--sev5); }
+.temporal-moderate { background: color-mix(in srgb, var(--sev3) 10%, var(--surface)); color: var(--sev3); }
+.temporal-loose { background: var(--surface-2); color: var(--text-muted); }
+
 /* Mono */
 .mono { font-family: var(--mono, 'SF Mono', 'Consolas', 'Liberation Mono', monospace); }
