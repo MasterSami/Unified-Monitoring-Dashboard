@@ -823,6 +823,7 @@ def _calc_confidence(
     hg_groups: dict[str, set[int]],
     db_links: list[tuple[int, int, str]],
     alert_map: dict[int, Alert],
+    problem_groups: dict[str, set[int]] | None = None,
 ) -> float:
     """Calculate a 0.0–1.0 confidence score for a correlation group."""
     score = 0.0
@@ -840,6 +841,8 @@ def _calc_confidence(
         score += 0.10
     if any(a in aids and b in aids for a, b, _ in db_links):
         score += 0.10
+    if problem_groups and any(len(p_aids & aids) >= 2 for p_aids in problem_groups.values()):
+        score += 0.30
     # Temporal tightness bonus.
     times = [_aware(alert_map[a].started_at) for a in aids if alert_map[a].started_at]
     if len(times) >= 2:
@@ -1069,7 +1072,7 @@ def correlate_alerts(
         # Confidence and temporal scoring.
         conf_score = _calc_confidence(
             aids, trace_groups, dep_links, device_map, svc_groups,
-            bsvc_groups, hg_groups, db_links, alert_map,
+            bsvc_groups, hg_groups, db_links, alert_map, problem_groups,
         )
         temporal = _calc_temporal_proximity(aids, alert_map)
 
