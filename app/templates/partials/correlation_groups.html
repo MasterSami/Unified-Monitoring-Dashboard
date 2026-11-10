@@ -74,6 +74,13 @@
         {{ (g.confidence_score * 100) | int }}%
       </span>
       {% endif %}
+      {% if g.temporal_proximity is defined and g.temporal_proximity and g.temporal_proximity != 'single' %}
+      <span class="corr-temporal temporal-{{ g.temporal_proximity }}">
+        {% if g.temporal_proximity == 'tight' %}&#9201; &le;5m
+        {% elif g.temporal_proximity == 'moderate' %}&#9202; &le;15m
+        {% else %}&#128340; &le;30m{% endif %}
+      </span>
+      {% endif %}
       <div class="corr-header-nums">
         <span class="corr-alert-count">{{ g.alert_ids | length }}<small> alert{{ '' if g.alert_ids | length == 1 else 's' }}</small></span>
         <span class="corr-status {{ 'is-open' if g.status == 'open' else 'is-resolved' }}"><span class="dot"></span>{{ g.status }}</span>
@@ -86,7 +93,7 @@
   </div>
 
   {# === Card Body (collapsed by default) === #}
-  <div class="corr-body" style="display:none">
+  <div class="corr-body">
 
     {# --- Quick Info Grid --- #}
     <div class="corr-info-grid">
@@ -121,6 +128,12 @@
           <div class="corr-confidence-fill confidence-{{ 'high' if g.confidence_score >= 0.8 else ('medium' if g.confidence_score >= 0.6 else 'low') }}" style="width:{{ (g.confidence_score * 100) | int }}%"></div>
         </div>
         <span class="corr-confidence-val">{{ (g.confidence_score * 100) | int }}%</span>
+      </div>
+      {% endif %}
+      {% if g.temporal_proximity is defined and g.temporal_proximity and g.temporal_proximity != 'single' %}
+      <div class="corr-info-cell">
+        <span class="corr-info-label">Temporal Proximity</span>
+        <span class="corr-temporal temporal-{{ g.temporal_proximity }}">{{ g.temporal_proximity }}</span>
       </div>
       {% endif %}
       {% if g.duration_seconds is not none and g.duration_seconds > 0 %}
@@ -391,9 +404,6 @@
 <script>
 function toggleCorr(header) {
   var card = header.closest('.corr-card');
-  var body = card.querySelector('.corr-body');
-  var isOpen = body.style.display !== 'none';
-  body.style.display = isOpen ? 'none' : 'block';
-  card.classList.toggle('is-expanded', !isOpen);
+  card.classList.toggle('is-expanded');
 }
 </script>

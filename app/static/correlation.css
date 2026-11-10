@@ -245,6 +245,10 @@
 .corr-body {
   padding: 0 16px 16px;
   border-top: 1px solid var(--border);
+  display: none;
+}
+.corr-card.is-expanded .corr-body {
+  display: block;
 }
 
 /* --- Info Grid --- */
