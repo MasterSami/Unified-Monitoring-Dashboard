@@ -1841,7 +1841,7 @@ def export_agents_xlsx(
     """
     _require_export(settings)
     from app.export_xlsx import build_workbook
-    from app.routers.pages import _annotate_agent_alerts, _hosts_stmt
+    from app.routers.pages import _annotate_agent_alerts, _annotate_sibling_ips, _hosts_stmt
 
     stmt = _hosts_stmt(q, platform, status, instance, group)
     stmt = stmt.order_by(Host.hostname.asc())
@@ -1851,11 +1851,26 @@ def export_agents_xlsx(
     # just run once over every matching host instead of one page of them.
     hosts = list(db.scalars(stmt))
     _annotate_agent_alerts(db, hosts)
+    _annotate_sibling_ips(db, hosts)
+
+    def _format_other_ips(h) -> str:
+        parts = []
+        for s in getattr(h, "sibling_ips", []):
+            parts.append(f"{s['ip']} ({s['instance']})")
+        if not parts and h.ip_all and "," in (h.ip_all or ""):
+            for extra in h.ip_all.split(","):
+                if extra != h.ip:
+                    parts.append(extra)
+        return ", ".join(parts)
 
     def rows():
         for h in hosts:
             yield [
-                h.hostname, h.ip or "", h.source_platform.value,
+                h.hostname,
+                h.ip or "",
+                f"{h.ip or ''} ({h.source_instance})",
+                _format_other_ips(h),
+                h.source_platform.value,
                 h.source_instance or "", h.group_name or "", h.status.value,
                 h.last_seen, h.alert_count,          # type: ignore[attr-defined]
                 _extract_tags(h),
@@ -1872,10 +1887,11 @@ def export_agents_xlsx(
         sheet_title="Agents",
         period="current snapshot",
         filters_summary=filters,
-        columns=["Agent", "IP", "Platform", "Instance", "Service / Group",
+        columns=["Agent", "IP", "Primary IP (Instance)", "Other IPs (Instance)",
+                 "Platform", "Instance", "Service / Group",
                  "Status", "Last Updated", "Alerts", "Tags"],
         rows=rows(),
-        severity_col=7,
+        severity_col=9,
     )
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     fname = f"SAMIX_agents_{stamp}.xlsx"

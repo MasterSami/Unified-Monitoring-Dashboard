@@ -462,6 +462,49 @@ def _annotate_agent_alerts(db: Session, hosts: list[Host]) -> None:
         h.max_sev = sev  # type: ignore[attr-defined]
 
 
+def _annotate_sibling_ips(db: Session, hosts: list[Host]) -> None:
+    """Attach ``sibling_ips`` to each host — other IPs for the same entity.
+
+    When the same physical server is monitored on two Zabbix instances (e.g.
+    Zabbix-34 and Zabbix-68), entity resolution gives them the same entity_id.
+    This function finds those siblings so the UI can show Primary IP vs
+    Secondary IP and which instance monitors each.
+    """
+    for h in hosts:
+        h.sibling_ips = []  # type: ignore[attr-defined]
+    if not hosts:
+        return
+    eids = {h.entity_id for h in hosts if h.entity_id is not None}
+    if not eids:
+        return
+    siblings = db.execute(
+        select(
+            Host.entity_id,
+            Host.ip,
+            Host.source_instance,
+            Host.source_platform,
+            Host.hostname,
+            Host.ip_all,
+        ).where(Host.entity_id.in_(eids))
+    ).all()
+    by_eid: dict[int, list[dict]] = {}
+    for eid, ip, inst, plat, hn, ip_all in siblings:
+        by_eid.setdefault(eid, []).append({
+            "ip": ip, "instance": inst,
+            "platform": plat.value if hasattr(plat, "value") else str(plat),
+            "hostname": hn, "ip_all": ip_all,
+        })
+    for h in hosts:
+        if h.entity_id is None:
+            continue
+        sibs = []
+        for s in by_eid.get(h.entity_id, []):
+            if s["ip"] == h.ip and s["instance"] == h.source_instance:
+                continue
+            sibs.append(s)
+        h.sibling_ips = sibs  # type: ignore[attr-defined]
+
+
 def _agent_alerts(db: Session, instance: str, hostname: str) -> list[Alert]:
     """Active alerts for one agent (host), most severe first."""
     stmt = (
@@ -1610,6 +1653,7 @@ def agents_page(
         db, None, "all", "all", "hostname", "asc", "all", 1
     )
     _annotate_agent_alerts(db, hosts)
+    _annotate_sibling_ips(db, hosts)
     return templates.TemplateResponse(
         request,
         "agents.html",
@@ -1655,6 +1699,7 @@ def agents_partial(
         db, q, platform, status, sort, order, instance, page, group
     )
     _annotate_agent_alerts(db, hosts)
+    _annotate_sibling_ips(db, hosts)
     return templates.TemplateResponse(
         request,
         "partials/agents_table.html",
@@ -1690,6 +1735,8 @@ def agent_detail_partial(
             Host.source_instance == instance, Host.hostname == hostname
         )
     )
+    if host:
+        _annotate_sibling_ips(db, [host])
     return templates.TemplateResponse(
         request,
         "partials/agent_detail.html",

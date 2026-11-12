@@ -212,11 +212,15 @@ class ZabbixCollector(BaseCollector):
         hosts: list[dict] = []
         for h in result:  # type: ignore[union-attr]
             ip = None
+            all_ips: list[str] = []
             iface_available: str | None = None
             for iface in h.get("interfaces", []):
+                iface_ip = iface.get("ip")
+                if iface_ip and iface_ip not in all_ips:
+                    all_ips.append(iface_ip)
                 is_main = iface.get("main") == "1"
                 if is_main or ip is None:
-                    ip = iface.get("ip") or ip
+                    ip = iface_ip or ip
                 if is_main or iface_available is None:
                     iface_available = iface.get("available", iface_available)
             # Host-level status: "1" means the host is unmonitored (disabled).
@@ -243,11 +247,13 @@ class ZabbixCollector(BaseCollector):
             owner, owner_email = resolve_owner(
                 h.get("tags"), inv if isinstance(inv, dict) else None
             )
+            ip_all = ",".join(all_ips) if len(all_ips) > 1 else None
             hosts.append(
                 {
                     "external_id": h["hostid"],
                     "hostname": h.get("name") or h.get("host"),
                     "ip": ip,
+                    "ip_all": ip_all,
                     "status": status,
                     "group_name": group_name,
                     "owner": owner,

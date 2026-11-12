@@ -17,7 +17,8 @@
     <thead>
       <tr>
         <th>{{ sort_link('Agent', 'hostname', current) }}</th>
-        <th>{{ sort_link('IP', 'ip', current) }}</th>
+        <th>{{ sort_link('Primary IP', 'ip', current) }}</th>
+        <th>Other IPs</th>
         <th>{{ sort_link('Platform', 'platform', current) }}</th>
         <th>{{ sort_link('Instance', 'instance', current) }}</th>
         <th>{{ sort_link('Service / group', 'group', current) }}</th>
@@ -34,7 +35,18 @@
         hx-target="#agent-detail" hx-swap="innerHTML"
         onclick="document.querySelectorAll('.agent-row').forEach(function(r){r.classList.remove('sel')}); this.classList.add('sel')">
         <td><strong>{{ h.hostname }}</strong></td>
-        <td class="mono">{{ h.ip or '-' }}</td>
+        <td class="mono">{{ h.ip or '-' }}<br><span style="font-size:10px;color:var(--text-faint)">{{ h.source_instance }}</span></td>
+        <td style="font-size:11px">
+          {% if h.sibling_ips %}
+            {% for s in h.sibling_ips %}
+            <span class="mono">{{ s.ip }}</span> <span style="color:var(--text-faint);font-size:10px">{{ s.instance }}</span>{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          {% elif h.ip_all and ',' in (h.ip_all or '') %}
+            {% for extra_ip in h.ip_all.split(',') if extra_ip != h.ip %}
+            <span class="mono">{{ extra_ip }}</span>{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          {% else %}-{% endif %}
+        </td>
         <td><span class="badge badge-{{ h.source_platform.value }}"><span class="dot"></span>{{ h.source_platform.value | platform_label }}</span></td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.source_instance or '-' }}</td>
         <td style="color: var(--text-muted); font-size: 12px;">{{ h.group_name or '-' }}</td>
@@ -49,7 +61,7 @@
         <td class="mono">{{ h.last_seen | relative_time }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="8"><div class="empty">No agents match your filters.</div></td></tr>
+      <tr><td colspan="9"><div class="empty">No agents match your filters.</div></td></tr>
       {% endfor %}
     </tbody>
   </table>
