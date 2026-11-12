@@ -1854,26 +1854,20 @@ def export_agents_xlsx(
     _annotate_sibling_ips(db, hosts)
 
     def _format_primary_ip(h) -> str:
-        coverage = getattr(h, "ip_coverage", [])
-        for c in coverage:
-            if c["is_primary"]:
-                tools = ", ".join(
-                    f"{m['platform']}{'-' + m['instance'] if m['instance'] else ''}"
-                    for m in c["monitors"]
-                )
-                return f"{c['ip']} ({tools})"
         return f"{h.ip or ''} ({h.source_instance})"
 
     def _format_other_ips(h) -> str:
         coverage = getattr(h, "ip_coverage", [])
         parts = []
         for c in coverage:
-            if not c["is_primary"]:
+            if c["monitors"]:
                 tools = ", ".join(
                     f"{m['platform']}{'-' + m['instance'] if m['instance'] else ''}"
                     for m in c["monitors"]
                 )
                 parts.append(f"{c['ip']} ({tools})")
+            else:
+                parts.append(f"{c['ip']} (not monitored)")
         return " | ".join(parts)
 
     def rows():

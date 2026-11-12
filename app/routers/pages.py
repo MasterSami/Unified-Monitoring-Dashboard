@@ -463,99 +463,108 @@ def _annotate_agent_alerts(db: Session, hosts: list[Host]) -> None:
 
 
 def _annotate_sibling_ips(db: Session, hosts: list[Host]) -> None:
-    """Attach ``ip_coverage`` to each host — per-IP monitoring coverage.
+    """Attach ``ip_coverage`` — the OTHER IPs of the same physical server.
 
-    A host (especially from Dynatrace) may report several IPs in ip_all.
-    Some of those IPs may also be monitored as separate hosts on Zabbix
-    instances, while others are not.  This function looks up every IP and
-    records which platforms/instances monitor it, so the UI can show:
+    For each host, we gather every IP that belongs to the same physical
+    server (from its own ip_all + entity_id siblings' ip/ip_all), exclude
+    the host's own primary IP, then look up which platforms/instances
+    monitor each of those other IPs.
 
-        Primary: 10.19.69.160 — Dynatrace only
-        Other:   10.190.0.238 — Dynatrace + Zabbix-68
+    Example result on a Zabbix-68 host whose primary is 10.190.0.238:
+        Other IPs: 10.19.69.160 (Dynatrace-IT)
+    meaning the same server also has 10.19.69.160, monitored on Dynatrace.
     """
     for h in hosts:
         h.ip_coverage = []  # type: ignore[attr-defined]
     if not hosts:
         return
 
-    # Collect every unique IP across all hosts on this page.
-    all_ips: set[str] = set()
+    # --- Step 1: collect ALL IPs for each host's physical server ----------
+    # From the host's own ip_all …
+    server_ips: dict[int, set[str]] = {}  # host.id -> set of all server IPs
+    eids: set[int] = set()
     for h in hosts:
+        ips: set[str] = set()
         if h.ip:
-            all_ips.add(h.ip)
+            ips.add(h.ip.strip())
         if h.ip_all:
-            for addr in h.ip_all.split(","):
-                addr = addr.strip()
-                if addr:
-                    all_ips.add(addr)
-    if not all_ips:
+            for a in h.ip_all.split(","):
+                a = a.strip()
+                if a:
+                    ips.add(a)
+        server_ips[h.id] = ips
+        if h.entity_id is not None:
+            eids.add(h.entity_id)
+
+    # … and from entity_id siblings (same physical server on other tools).
+    if eids:
+        siblings = db.execute(
+            select(Host.entity_id, Host.ip, Host.ip_all)
+            .where(Host.entity_id.in_(eids))
+        ).all()
+        eid_ips: dict[int, set[str]] = {}
+        for eid, sip, sip_all in siblings:
+            bag = eid_ips.setdefault(eid, set())
+            if sip:
+                bag.add(sip.strip())
+            if sip_all:
+                for a in sip_all.split(","):
+                    a = a.strip()
+                    if a:
+                        bag.add(a)
+        for h in hosts:
+            if h.entity_id is not None and h.entity_id in eid_ips:
+                server_ips[h.id] |= eid_ips[h.entity_id]
+
+    # --- Step 2: find who monitors each "other" IP -----------------------
+    other_ips: set[str] = set()
+    for h in hosts:
+        primary = (h.ip or "").strip()
+        for ip in server_ips.get(h.id, set()):
+            if ip != primary:
+                other_ips.add(ip)
+    if not other_ips:
         return
 
-    # One query: find every Host row whose primary ip is one of these.
+    # Query: which Host rows have one of these IPs as their primary?
     rows = db.execute(
-        select(
-            Host.ip,
-            Host.source_platform,
-            Host.source_instance,
-        ).where(Host.ip.in_(all_ips))
+        select(Host.ip, Host.source_platform, Host.source_instance)
+        .where(Host.ip.in_(other_ips))
     ).all()
-    # ip -> set of "platform:instance"
     ip_monitors: dict[str, list[dict]] = {}
     for ip, plat, inst in rows:
-        plat_val = plat.value if hasattr(plat, "value") else str(plat)
-        entry = {"platform": plat_val, "instance": inst or ""}
-        ip_monitors.setdefault(ip, []).append(entry)
-
-    # Also search ip_all columns for IPs that appear as secondary on other hosts.
-    # (A Zabbix host might have ip_all="10.1.1.1,10.2.2.2" where 10.2.2.2
-    #  is not the primary but is still monitored.)
-    if all_ips:
-        for ip_addr in list(all_ips):
-            like = f"%{ip_addr}%"
-            extra = db.execute(
-                select(
-                    Host.source_platform,
-                    Host.source_instance,
-                ).where(
-                    Host.ip_all.isnot(None),
-                    Host.ip_all.contains(ip_addr),
-                    Host.ip != ip_addr,  # skip if already found via primary
+        pv = plat.value if hasattr(plat, "value") else str(plat)
+        ip_monitors.setdefault(ip.strip(), []).append(
+            {"platform": pv, "instance": inst or ""}
+        )
+    # Also check ip_all for hosts that list these IPs as secondary.
+    for ip_addr in list(other_ips):
+        extra = db.execute(
+            select(Host.source_platform, Host.source_instance)
+            .where(
+                Host.ip_all.isnot(None),
+                Host.ip_all.contains(ip_addr),
+                Host.ip != ip_addr,
+            )
+        ).all()
+        for plat, inst in extra:
+            pv = plat.value if hasattr(plat, "value") else str(plat)
+            key = f"{pv}:{inst}"
+            existing = ip_monitors.get(ip_addr, [])
+            if not any(f"{e['platform']}:{e['instance']}" == key for e in existing):
+                ip_monitors.setdefault(ip_addr, []).append(
+                    {"platform": pv, "instance": inst or ""}
                 )
-            ).all()
-            for plat, inst in extra:
-                plat_val = plat.value if hasattr(plat, "value") else str(plat)
-                entry = {"platform": plat_val, "instance": inst or ""}
-                existing = ip_monitors.get(ip_addr, [])
-                key = f"{plat_val}:{inst}"
-                if not any(f"{e['platform']}:{e['instance']}" == key for e in existing):
-                    ip_monitors.setdefault(ip_addr, []).append(entry)
 
-    # Attach to each host.
+    # --- Step 3: attach to each host -------------------------------------
     for h in hosts:
-        host_ips: list[str] = []
-        if h.ip:
-            host_ips.append(h.ip)
-        if h.ip_all:
-            for addr in h.ip_all.split(","):
-                addr = addr.strip()
-                if addr and addr not in host_ips:
-                    host_ips.append(addr)
-
+        primary = (h.ip or "").strip()
         coverage = []
-        h_plat = h.source_platform.value if hasattr(h.source_platform, "value") else str(h.source_platform)
-        h_inst = h.source_instance or ""
-        for ip_addr in host_ips:
+        for ip_addr in sorted(server_ips.get(h.id, set())):
+            if ip_addr == primary:
+                continue
             monitors = ip_monitors.get(ip_addr, [])
-            # Add this host's own platform if not already present
-            own_key = f"{h_plat}:{h_inst}"
-            if not any(f"{m['platform']}:{m['instance']}" == own_key for m in monitors):
-                monitors = [{"platform": h_plat, "instance": h_inst}] + monitors
-            is_primary = (ip_addr == h.ip)
-            coverage.append({
-                "ip": ip_addr,
-                "is_primary": is_primary,
-                "monitors": monitors,
-            })
+            coverage.append({"ip": ip_addr, "monitors": monitors})
         h.ip_coverage = coverage  # type: ignore[attr-defined]
 
 

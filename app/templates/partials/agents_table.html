@@ -37,12 +37,17 @@
         <td><strong>{{ h.hostname }}</strong></td>
         <td class="mono">{{ h.ip or '-' }}<br><span style="font-size:10px;color:var(--text-faint)">{{ h.source_instance }}</span></td>
         <td style="font-size:11px">
-          {% if h.ip_coverage and h.ip_coverage|length > 1 %}
-            {% for c in h.ip_coverage if not c.is_primary %}
+          {% if h.ip_coverage %}
+            {% for c in h.ip_coverage %}
             <span class="mono">{{ c.ip }}</span>
+            {% if c.monitors %}
             <span style="color:var(--text-faint);font-size:10px">
               {% for m in c.monitors %}{{ m.platform }}{% if m.instance %}-{{ m.instance }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
-            </span>{% if not loop.last %}<br>{% endif %}
+            </span>
+            {% else %}
+            <span style="color:var(--danger);font-size:10px">not monitored</span>
+            {% endif %}
+            {% if not loop.last %}<br>{% endif %}
             {% endfor %}
           {% else %}-{% endif %}
         </td>
