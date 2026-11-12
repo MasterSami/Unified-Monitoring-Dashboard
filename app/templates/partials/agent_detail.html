@@ -10,14 +10,13 @@
 </div>
 
 <dl class="ad-fields">
-  <dt>Primary IP</dt><dd class="mono">{{ host.ip or '-' }} <span style="font-size:11px;color:var(--text-faint)">({{ host.source_instance }})</span></dd>
-  {% if host.sibling_ips %}
-  {% for s in host.sibling_ips %}
-  <dt>{{ 'Secondary IP' if loop.first else '' }}</dt><dd class="mono">{{ s.ip }} <span style="font-size:11px;color:var(--text-faint)">({{ s.instance }})</span></dd>
+  {% if host.ip_coverage %}
+  {% for c in host.ip_coverage %}
+  <dt>{{ 'Primary IP' if c.is_primary else ('Other IP' if loop.index == 2 else '') }}</dt>
+  <dd class="mono">{{ c.ip }} <span style="font-size:11px;color:var(--text-faint)">({% for m in c.monitors %}{{ m.platform }}{% if m.instance %}-{{ m.instance }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %})</span></dd>
   {% endfor %}
-  {% endif %}
-  {% if host.ip_all and ',' in (host.ip_all or '') %}
-  <dt>All IPs</dt><dd class="mono">{{ host.ip_all }}</dd>
+  {% else %}
+  <dt>Primary IP</dt><dd class="mono">{{ host.ip or '-' }}</dd>
   {% endif %}
   <dt>Instance</dt><dd>{{ host.source_instance or '-' }}</dd>
   <dt>Group</dt><dd>{{ host.group_name or '-' }}</dd>

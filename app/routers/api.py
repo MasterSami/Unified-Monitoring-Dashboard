@@ -1853,22 +1853,35 @@ def export_agents_xlsx(
     _annotate_agent_alerts(db, hosts)
     _annotate_sibling_ips(db, hosts)
 
+    def _format_primary_ip(h) -> str:
+        coverage = getattr(h, "ip_coverage", [])
+        for c in coverage:
+            if c["is_primary"]:
+                tools = ", ".join(
+                    f"{m['platform']}{'-' + m['instance'] if m['instance'] else ''}"
+                    for m in c["monitors"]
+                )
+                return f"{c['ip']} ({tools})"
+        return f"{h.ip or ''} ({h.source_instance})"
+
     def _format_other_ips(h) -> str:
+        coverage = getattr(h, "ip_coverage", [])
         parts = []
-        for s in getattr(h, "sibling_ips", []):
-            parts.append(f"{s['ip']} ({s['instance']})")
-        if not parts and h.ip_all and "," in (h.ip_all or ""):
-            for extra in h.ip_all.split(","):
-                if extra != h.ip:
-                    parts.append(extra)
-        return ", ".join(parts)
+        for c in coverage:
+            if not c["is_primary"]:
+                tools = ", ".join(
+                    f"{m['platform']}{'-' + m['instance'] if m['instance'] else ''}"
+                    for m in c["monitors"]
+                )
+                parts.append(f"{c['ip']} ({tools})")
+        return " | ".join(parts)
 
     def rows():
         for h in hosts:
             yield [
                 h.hostname,
                 h.ip or "",
-                f"{h.ip or ''} ({h.source_instance})",
+                _format_primary_ip(h),
                 _format_other_ips(h),
                 h.source_platform.value,
                 h.source_instance or "", h.group_name or "", h.status.value,
@@ -1887,7 +1900,7 @@ def export_agents_xlsx(
         sheet_title="Agents",
         period="current snapshot",
         filters_summary=filters,
-        columns=["Agent", "IP", "Primary IP (Instance)", "Other IPs (Instance)",
+        columns=["Agent", "IP", "Primary IP (Monitored On)", "Other IPs (Monitored On)",
                  "Platform", "Instance", "Service / Group",
                  "Status", "Last Updated", "Alerts", "Tags"],
         rows=rows(),
