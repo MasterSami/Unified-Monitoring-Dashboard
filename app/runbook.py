@@ -350,10 +350,19 @@ def _inventory_hosts(wanted: set[str]) -> list[list]:
     labels = dict(_INVENTORY_PLATFORMS)
     rows: list[list] = []
     for h in stored:
-        if not h.ip or h.ip not in wanted:
+        matched_ips: list[str] = []
+        if h.ip and h.ip in wanted:
+            matched_ips.append(h.ip)
+        if h.ip_all:
+            for addr in h.ip_all.split(","):
+                addr = addr.strip()
+                if addr and addr in wanted and addr not in matched_ips:
+                    matched_ips.append(addr)
+        if not matched_ips:
             continue
         rows.append([
-            h.ip, labels[h.source_platform], h.source_instance or "",
+            ", ".join(matched_ips), labels[h.source_platform],
+            h.source_instance or "",
             h.hostname, h.status.value.title(), h.group_name or "",
         ])
     return rows
@@ -436,6 +445,37 @@ def run_cross_platform_ip_lookup(collectors: list, params: dict[str, str]) -> li
                 r.get("name") or r.get("longName") or r.get("id", ""), status, group,
             ])
 
+    # Also search ALL Host table rows where ip_all contains a wanted IP
+    # (catches hosts whose secondary IP matches but primary doesn't).
+    db = SessionLocal()
+    try:
+        for ip_addr in ips:
+            db_hits = db.scalars(
+                select(Host).where(
+                    Host.ip_all.isnot(None),
+                    Host.ip_all.contains(ip_addr),
+                )
+            ).all()
+            for h in db_hits:
+                all_addrs = [a.strip() for a in (h.ip_all or "").split(",") if a.strip()]
+                if ip_addr not in all_addrs:
+                    continue
+                plat = h.source_platform.value if hasattr(h.source_platform, "value") else str(h.source_platform)
+                inst = h.source_instance or ""
+                key = f"{ip_addr}|{plat}|{inst}|{h.hostname}"
+                existing_keys = {
+                    f"{_split_list(r[0])[0] if _split_list(r[0]) else ''}|{r[1]}|{r[2]}|{r[3]}"
+                    for r in rows
+                }
+                if key not in existing_keys:
+                    status = h.status.value.title() if h.status else "Unknown"
+                    rows.append([
+                        ip_addr, plat.title(), inst,
+                        h.hostname or "", status, h.group_name or "",
+                    ])
+    finally:
+        db.close()
+
     found = {ip for r in rows for ip in _split_list(r[0])}
     for ip in ips:
         if ip not in found:
@@ -469,11 +509,22 @@ def run_common_hosts(collectors: list, params: dict[str, str]) -> list[list]:
     placeholders = {"", "127.0.0.1", "0.0.0.0", "::1", "localhost"}
     groups: dict[str, list[Host]] = {}
     for host in hosts:
-        identity = (host.ip or "").strip().lower()
-        if identity in placeholders:
+        all_ips: list[str] = []
+        primary = (host.ip or "").strip().lower()
+        if primary and primary not in placeholders:
+            all_ips.append(primary)
+        if host.ip_all:
+            for addr in host.ip_all.split(","):
+                addr = addr.strip().lower()
+                if addr and addr not in placeholders and addr not in all_ips:
+                    all_ips.append(addr)
+        if all_ips:
+            for ip in all_ips:
+                groups.setdefault(ip, []).append(host)
+        else:
             identity = (host.hostname or "").strip().lower()
-        if identity:
-            groups.setdefault(identity, []).append(host)
+            if identity:
+                groups.setdefault(identity, []).append(host)
 
     rows: list[list] = []
     for identity, members in groups.items():
