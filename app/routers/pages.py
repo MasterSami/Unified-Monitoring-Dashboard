@@ -19,10 +19,13 @@ from app.models import (
     LIVE_PLATFORMS,
     PLATFORM_ORDER,
     Alert,
+    BusinessService,
     CanonicalEntity,
     CapacityForecast,
     Host,
     HostStatus,
+    ManualIncident,
+    ManualIncidentStatus,
     SourcePlatform,
     TopologyEdge,
     TopologyNode,
@@ -1997,6 +2000,15 @@ def correlation_page(
         instances = _instance_names(settings, db)
     except Exception:
         instances = []
+    manual_incidents = db.execute(
+        select(ManualIncident)
+        .where(ManualIncident.status == ManualIncidentStatus.open)
+        .order_by(ManualIncident.start_time.desc())
+    ).scalars().all()
+    business_services = db.execute(
+        select(BusinessService).where(BusinessService.enabled == True)
+        .order_by(BusinessService.name)
+    ).scalars().all()
     per_page = 50
     total_groups = len(all_groups)
     total_pages = max(1, math.ceil(total_groups / per_page))
@@ -2011,6 +2023,8 @@ def correlation_page(
             "uncorrelated": uncorrelated,
             "instances": instances,
             "corr_error": corr_error,
+            "manual_incidents": manual_incidents,
+            "business_services": business_services,
             "page": 1,
             "per_page": per_page,
             "total_groups": total_groups,
@@ -2186,6 +2200,17 @@ def correlation_partial(
             a for a in uncorrelated
             if ql in a["host"].lower() or ql in a["title"].lower() or ql in a["platform"].lower()
         ]
+    manual_incidents = db.execute(
+        select(ManualIncident)
+        .where(ManualIncident.status == ManualIncidentStatus.open)
+        .order_by(ManualIncident.start_time.desc())
+    ).scalars().all()
+    if q:
+        ql_lower = q.lower()
+        manual_incidents = [
+            mi for mi in manual_incidents
+            if ql_lower in mi.system_name.lower() or ql_lower in mi.problem.lower()
+        ]
     total_groups = len(all_groups)
     total_pages = max(1, math.ceil(total_groups / per_page))
     page = max(1, min(page, total_pages))
@@ -2199,6 +2224,7 @@ def correlation_partial(
             "request": request,
             "groups": groups,
             "uncorrelated": uncorrelated if show_uncorrelated else [],
+            "manual_incidents": manual_incidents if show_uncorrelated else [],
             "corr_error": corr_error,
             "page": page,
             "per_page": per_page,
@@ -2369,6 +2395,29 @@ def rca_investigate_html(
         logging.getLogger(__name__).exception("RCA investigation failed for %s", problem_id)
         return templates.TemplateResponse(request, "partials/rca_result.html",
                                           {"rca": None, "evidence": [], "impact": {}, "error": str(exc), "root_cause_count": 0})
+
+
+@router.get("/service-catalog", response_class=HTMLResponse)
+def service_catalog_page(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Business Service Catalog management page."""
+    services = db.execute(
+        select(BusinessService).order_by(BusinessService.name)
+    ).scalars().all()
+    incidents = db.execute(
+        select(ManualIncident).order_by(ManualIncident.created_at.desc())
+    ).scalars().all()
+    return templates.TemplateResponse(
+        request, "service_catalog.html",
+        {
+            "request": request,
+            "active_page": "service_catalog",
+            "services": services,
+            "incidents": incidents,
+        },
+    )
 
 
 @router.get("/partials/health", response_class=HTMLResponse)

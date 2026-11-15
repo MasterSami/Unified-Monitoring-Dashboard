@@ -1465,6 +1465,85 @@ class AICorrection(Base):
 # --- Dynatrace Root Cause Analysis -------------------------------------------
 
 
+class ManualIncidentSeverity(str, enum.Enum):
+    critical = "critical"
+    major = "major"
+    minor = "minor"
+    info = "info"
+
+
+class ManualIncidentStatus(str, enum.Enum):
+    open = "open"
+    resolved = "resolved"
+
+
+class BusinessService(Base):
+    """A business system/service not directly monitored by infrastructure tools.
+
+    Maps a business-reported service name (e.g. "Customer 360", "TE Email")
+    to patterns that link it to monitored infrastructure — host patterns, IPs,
+    group names, or free-text keywords.  The correlation page uses this to
+    show which business services are affected when infrastructure alerts fire,
+    and to display manual incidents from the business team alongside
+    auto-detected correlation groups.
+    """
+
+    __tablename__ = "business_services"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    host_patterns: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    ip_patterns: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    group_patterns: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    keywords: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    contact_team: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ManualIncident(Base):
+    """A business-reported outage that the monitoring tools don't see.
+
+    Entered by operators or the business team (via the UI form on the
+    correlation page) for systems like "Customer 360", "Avaya Outreach",
+    "TE Email" that only surface through human reports — not from Zabbix,
+    Dynatrace, NNMi, etc.  These appear on the correlation page alongside
+    auto-detected correlation groups so the NOC has one view of everything.
+    """
+
+    __tablename__ = "manual_incidents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("business_services.id"), nullable=True, index=True,
+    )
+    system_name: Mapped[str] = mapped_column(String(255), index=True)
+    severity: Mapped[ManualIncidentSeverity] = mapped_column(
+        Enum(ManualIncidentSeverity, native_enum=False, length=16),
+        default=ManualIncidentSeverity.major,
+    )
+    status: Mapped[ManualIncidentStatus] = mapped_column(
+        Enum(ManualIncidentStatus, native_enum=False, length=16),
+        default=ManualIncidentStatus.open,
+        index=True,
+    )
+    problem: Mapped[str] = mapped_column(String(2000), default="")
+    impact: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    stop_troubleshooting: Mapped[bool] = mapped_column(Boolean, default=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reported_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class RootCauseAnalysis(Base):
     """One RCA investigation for a Dynatrace problem (Davis AI evidence chain)."""
 

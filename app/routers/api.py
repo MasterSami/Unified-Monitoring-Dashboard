@@ -12,8 +12,8 @@ import secrets
 from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, defer
 
@@ -32,6 +32,7 @@ from app import mock_incidents
 from app.models import (
     PLATFORM_ORDER,
     Alert,
+    BusinessService,
     CanonicalEntity,
     CollectorRun,
     Correlation,
@@ -50,6 +51,9 @@ from app.models import (
     IncidentResolution,
     LogicalEvent,
     LogicalEventStatus,
+    ManualIncident,
+    ManualIncidentSeverity,
+    ManualIncidentStatus,
     RelationshipType,
     RunStatus,
     SourcePlatform,
@@ -2688,4 +2692,108 @@ def test_mail(
         )
     result = collector.send_test_mail(recipient)  # type: ignore[attr-defined]
     return {"instance": instance, "to": recipient, **result}
+
+
+# ---------- Business Service Catalog ------------------------------------------
+
+@router.post("/api/v1/business-services")
+def create_business_service(
+    request: Request,
+    name: str = Form(...),
+    description: str = Form(""),
+    host_patterns: str = Form(""),
+    ip_patterns: str = Form(""),
+    group_patterns: str = Form(""),
+    keywords: str = Form(""),
+    contact_team: str = Form(""),
+    contact_email: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    svc = BusinessService(
+        name=name.strip(),
+        description=description.strip() or None,
+        host_patterns=host_patterns.strip() or None,
+        ip_patterns=ip_patterns.strip() or None,
+        group_patterns=group_patterns.strip() or None,
+        keywords=keywords.strip() or None,
+        contact_team=contact_team.strip() or None,
+        contact_email=contact_email.strip() or None,
+    )
+    db.add(svc)
+    db.commit()
+    return RedirectResponse("/service-catalog", status_code=303)
+
+
+@router.delete("/api/v1/business-services/{svc_id}")
+def delete_business_service(
+    svc_id: int,
+    db: Session = Depends(get_db),
+):
+    svc = db.get(BusinessService, svc_id)
+    if svc:
+        db.delete(svc)
+        db.commit()
+    return RedirectResponse("/service-catalog", status_code=303)
+
+
+# ---------- Manual Incidents --------------------------------------------------
+
+@router.post("/api/v1/manual-incidents")
+def create_manual_incident(
+    request: Request,
+    system_name: str = Form(""),
+    custom_system_name: str = Form(""),
+    severity: str = Form("major"),
+    problem: str = Form(...),
+    impact: str = Form(""),
+    stop_troubleshooting: str = Form("false"),
+    reported_by: str = Form(""),
+    redirect: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    name = (custom_system_name.strip() or system_name.strip())
+    if not name:
+        raise HTTPException(400, "System name is required")
+    svc = db.execute(
+        select(BusinessService).where(BusinessService.name == name)
+    ).scalar_one_or_none()
+    mi = ManualIncident(
+        system_name=name,
+        service_id=svc.id if svc else None,
+        severity=ManualIncidentSeverity(severity),
+        problem=problem.strip(),
+        impact=impact.strip() or None,
+        stop_troubleshooting=(stop_troubleshooting == "true"),
+        reported_by=reported_by.strip() or None,
+    )
+    db.add(mi)
+    db.commit()
+    target = redirect.strip() if redirect.strip() else "/service-catalog"
+    return RedirectResponse(target, status_code=303)
+
+
+@router.patch("/api/v1/manual-incidents/{mi_id}/resolve")
+def resolve_manual_incident(
+    mi_id: int,
+    db: Session = Depends(get_db),
+):
+    from datetime import datetime, timezone
+    mi = db.get(ManualIncident, mi_id)
+    if mi:
+        mi.status = ManualIncidentStatus.resolved
+        mi.end_time = datetime.now(timezone.utc)
+        db.commit()
+    return RedirectResponse("/service-catalog", status_code=303)
+
+
+@router.delete("/api/v1/manual-incidents/{mi_id}")
+def delete_manual_incident(
+    mi_id: int,
+    db: Session = Depends(get_db),
+):
+    mi = db.get(ManualIncident, mi_id)
+    if mi:
+        db.delete(mi)
+        db.commit()
+    return RedirectResponse("/service-catalog", status_code=303)
 

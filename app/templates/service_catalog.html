@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% block title %}Service Catalog · Unified Monitoring{% endblock %}
+{% block page_title %}Business Service Catalog{% endblock %}
+{% block page_sub %}Map business services to monitored infrastructure · manage manual incidents{% endblock %}
+
+{% block head_extra %}
+<style>
+  .sc-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:16px}
+  @media(max-width:900px){.sc-grid{grid-template-columns:1fr}}
+  .sc-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px}
+  .sc-card h3{margin:0 0 12px;font-size:15px;font-weight:600}
+  .sc-table{width:100%;border-collapse:collapse;font-size:13px}
+  .sc-table th,.sc-table td{padding:6px 10px;text-align:left;border-bottom:1px solid var(--border)}
+  .sc-table th{font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.3px;color:var(--fg-muted)}
+  .sc-table tr:last-child td{border-bottom:none}
+  .sc-table .mono{font-family:var(--font-mono,'JetBrains Mono',monospace);font-size:12px}
+  .sc-actions{display:flex;gap:6px}
+  .sc-actions button,.sc-actions a{background:none;border:none;cursor:pointer;font-size:12px;padding:2px 6px;border-radius:4px;color:var(--accent)}
+  .sc-actions button:hover,.sc-actions a:hover{background:var(--border)}
+  .sc-empty{padding:24px;text-align:center;color:var(--fg-muted);font-size:13px}
+  .sc-form{display:grid;gap:10px}
+  .sc-form label{font-size:12px;font-weight:600;color:var(--fg-muted)}
+  .sc-form input,.sc-form textarea,.sc-form select{
+    width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;
+    background:var(--bg);color:var(--fg);font-size:13px;font-family:inherit;
+  }
+  .sc-form textarea{resize:vertical;min-height:50px}
+  .sc-form .hint{font-size:11px;color:var(--fg-muted);margin-top:2px}
+  .sc-btn{padding:8px 18px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500}
+  .sc-btn-primary{background:var(--accent);color:#fff}
+  .sc-btn-primary:hover{opacity:.9}
+  .sc-btn-ghost{background:var(--border);color:var(--fg)}
+  .sc-btn-danger{background:#ef4444;color:#fff;font-size:12px;padding:4px 10px}
+  .sc-row-form{display:none;background:var(--bg);padding:12px;border-radius:8px;margin-top:8px}
+  .sc-row-form.open{display:block}
+  .mi-sev{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+  .mi-sev-critical{background:#dc2626;color:#fff}
+  .mi-sev-major{background:#f59e0b;color:#000}
+  .mi-sev-minor{background:#3b82f6;color:#fff}
+  .mi-sev-info{background:var(--border);color:var(--fg)}
+  .mi-status{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+  .mi-status-open{background:#dc2626;color:#fff}
+  .mi-status-resolved{background:#22c55e;color:#fff}
+  .sc-tab-bar{display:flex;gap:4px;margin-bottom:16px}
+  .sc-tab{padding:8px 16px;border-radius:6px 6px 0 0;border:1px solid var(--border);border-bottom:none;
+    cursor:pointer;font-size:13px;font-weight:500;background:var(--bg);color:var(--fg-muted)}
+  .sc-tab.active{background:var(--surface);color:var(--fg);font-weight:600}
+  .sc-tab-content{display:none}
+  .sc-tab-content.active{display:block}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="sc-tab-bar">
+  <button class="sc-tab active" onclick="switchScTab(this,'tab-catalog')">Service Catalog</button>
+  <button class="sc-tab" onclick="switchScTab(this,'tab-incidents')">Manual Incidents</button>
+</div>
+
+{# ========== TAB 1: SERVICE CATALOG ========== #}
+<div class="sc-tab-content active" id="tab-catalog">
+<div class="sc-grid">
+  <div class="sc-card">
+    <h3>Business Services ({{ services | length }})</h3>
+    {% if services %}
+    <div style="overflow-x:auto">
+      <table class="sc-table">
+        <thead><tr><th>Name</th><th>Team</th><th>Patterns</th><th>Status</th><th></th></tr></thead>
+        <tbody id="svc-list">
+          {% for svc in services %}
+          <tr>
+            <td><strong>{{ svc.name }}</strong>{% if svc.description %}<br><span style="font-size:11px;color:var(--fg-muted)">{{ svc.description | truncate(50) }}</span>{% endif %}</td>
+            <td style="font-size:12px">{{ svc.contact_team or '—' }}</td>
+            <td class="mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Hosts: {{ svc.host_patterns or '-' }} | IPs: {{ svc.ip_patterns or '-' }} | Groups: {{ svc.group_patterns or '-' }}">
+              {% if svc.host_patterns %}H:{{ svc.host_patterns | truncate(30) }}{% endif %}
+              {% if svc.group_patterns %}{% if svc.host_patterns %} · {% endif %}G:{{ svc.group_patterns | truncate(30) }}{% endif %}
+              {% if not svc.host_patterns and not svc.group_patterns %}—{% endif %}
+            </td>
+            <td>{% if svc.enabled %}<span style="color:#22c55e">●</span>{% else %}<span style="color:var(--fg-muted)">○</span>{% endif %}</td>
+            <td class="sc-actions">
+              <button hx-delete="/api/v1/business-services/{{ svc.id }}" hx-confirm="Delete '{{ svc.name }}'?" hx-target="#svc-list" hx-swap="innerHTML" hx-select="#svc-list">✕</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="sc-empty">No business services defined yet. Add one below.</div>
+    {% endif %}
+  </div>
+
+  <div class="sc-card">
+    <h3>Add Business Service</h3>
+    <form class="sc-form" hx-post="/api/v1/business-services" hx-target="body" hx-swap="outerHTML">
+      <div>
+        <label>Service Name *</label>
+        <input name="name" required placeholder="e.g. Customer 360, TE Email, Avaya Outreach" />
+      </div>
+      <div>
+        <label>Description</label>
+        <input name="description" placeholder="Brief description of the business service" />
+      </div>
+      <div>
+        <label>Host Patterns</label>
+        <input name="host_patterns" placeholder="e.g. crm*, bss-app*, email-gw*" />
+        <div class="hint">Comma-separated host name patterns (wildcards allowed)</div>
+      </div>
+      <div>
+        <label>IP Patterns</label>
+        <input name="ip_patterns" placeholder="e.g. 10.190.0.*, 10.19.69.*" />
+        <div class="hint">Comma-separated IP patterns</div>
+      </div>
+      <div>
+        <label>Group Patterns</label>
+        <input name="group_patterns" placeholder="e.g. BSS Production, CRM Servers" />
+        <div class="hint">Comma-separated monitoring group name patterns</div>
+      </div>
+      <div>
+        <label>Keywords</label>
+        <input name="keywords" placeholder="e.g. customer360, bss, outreach" />
+        <div class="hint">Comma-separated keywords matched against alert titles</div>
+      </div>
+      <div>
+        <label>Contact Team</label>
+        <input name="contact_team" placeholder="e.g. BSS Team, Network Ops" />
+      </div>
+      <div>
+        <label>Contact Email</label>
+        <input name="contact_email" placeholder="e.g. bss-team@company.com" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button type="submit" class="sc-btn sc-btn-primary">Add Service</button>
+      </div>
+    </form>
+  </div>
+</div>
+</div>
+
+{# ========== TAB 2: MANUAL INCIDENTS ========== #}
+<div class="sc-tab-content" id="tab-incidents">
+<div class="sc-grid">
+  <div class="sc-card">
+    <h3>Active Manual Incidents ({{ incidents | selectattr('status.value', 'equalto', 'open') | list | length }})</h3>
+    {% set open_incidents = incidents | selectattr('status.value', 'equalto', 'open') | list %}
+    {% set resolved_incidents = incidents | selectattr('status.value', 'equalto', 'resolved') | list %}
+    {% if open_incidents %}
+    <div style="overflow-x:auto">
+      <table class="sc-table">
+        <thead><tr><th>System</th><th>Problem</th><th>Sev</th><th>Started</th><th>By</th><th></th></tr></thead>
+        <tbody>
+          {% for mi in open_incidents %}
+          <tr>
+            <td><strong>{{ mi.system_name }}</strong></td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ mi.problem }}">{{ mi.problem | truncate(40) }}</td>
+            <td><span class="mi-sev mi-sev-{{ mi.severity.value }}">{{ mi.severity.value }}</span></td>
+            <td class="mono">{{ mi.start_time | relative_time }}</td>
+            <td style="font-size:12px">{{ mi.reported_by or '—' }}</td>
+            <td class="sc-actions">
+              <button hx-patch="/api/v1/manual-incidents/{{ mi.id }}/resolve" hx-target="body" hx-swap="outerHTML" title="Resolve">✓</button>
+              <button hx-delete="/api/v1/manual-incidents/{{ mi.id }}" hx-confirm="Delete this incident?" hx-target="body" hx-swap="outerHTML" title="Delete">✕</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="sc-empty">No open manual incidents.</div>
+    {% endif %}
+
+    {% if resolved_incidents %}
+    <details style="margin-top:12px">
+      <summary style="font-size:13px;cursor:pointer;color:var(--fg-muted)">{{ resolved_incidents | length }} resolved incident{{ '' if resolved_incidents | length == 1 else 's' }}</summary>
+      <div style="overflow-x:auto;margin-top:8px">
+        <table class="sc-table">
+          <thead><tr><th>System</th><th>Problem</th><th>Sev</th><th>Started</th><th>By</th><th></th></tr></thead>
+          <tbody>
+            {% for mi in resolved_incidents %}
+            <tr style="opacity:.6">
+              <td>{{ mi.system_name }}</td>
+              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ mi.problem | truncate(40) }}</td>
+              <td><span class="mi-sev mi-sev-{{ mi.severity.value }}">{{ mi.severity.value }}</span></td>
+              <td class="mono">{{ mi.start_time | relative_time }}</td>
+              <td style="font-size:12px">{{ mi.reported_by or '—' }}</td>
+              <td class="sc-actions">
+                <button hx-delete="/api/v1/manual-incidents/{{ mi.id }}" hx-confirm="Delete?" hx-target="body" hx-swap="outerHTML">✕</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+
+  <div class="sc-card">
+    <h3>Report Manual Incident</h3>
+    <form class="sc-form" hx-post="/api/v1/manual-incidents" hx-target="body" hx-swap="outerHTML">
+      <div>
+        <label>System / Service Name *</label>
+        <select name="system_name" required>
+          <option value="">— select or type below —</option>
+          {% for svc in services %}<option value="{{ svc.name }}">{{ svc.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Or enter custom name</label>
+        <input name="custom_system_name" placeholder="e.g. Avaya Outreach System" />
+        <div class="hint">If the service is not in the catalog, type its name here</div>
+      </div>
+      <div>
+        <label>Severity *</label>
+        <select name="severity" required>
+          <option value="critical">Critical</option>
+          <option value="major" selected>Major</option>
+          <option value="minor">Minor</option>
+          <option value="info">Info</option>
+        </select>
+      </div>
+      <div>
+        <label>Problem Description *</label>
+        <textarea name="problem" required placeholder="Describe the outage / problem..."></textarea>
+      </div>
+      <div>
+        <label>Impact</label>
+        <textarea name="impact" placeholder="What is affected? e.g. All customers unable to access portal"></textarea>
+      </div>
+      <div>
+        <label>Stop Troubleshooting?</label>
+        <select name="stop_troubleshooting">
+          <option value="false">No — continue investigating</option>
+          <option value="true">Yes — root cause identified, stop troubleshooting</option>
+        </select>
+        <div class="hint">If the business team has identified the root cause</div>
+      </div>
+      <div>
+        <label>Reported By</label>
+        <input name="reported_by" placeholder="e.g. NOC team, Business Ops" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button type="submit" class="sc-btn sc-btn-primary">Report Incident</button>
+      </div>
+    </form>
+  </div>
+</div>
+</div>
+
+<script>
+function switchScTab(btn, tabId) {
+  document.querySelectorAll('.sc-tab').forEach(function(t){t.classList.remove('active')});
+  document.querySelectorAll('.sc-tab-content').forEach(function(t){t.classList.remove('active')});
+  btn.classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+}
+</script>
+{% endblock %}

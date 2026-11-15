@@ -228,6 +228,44 @@
 </nav>
 {% endif %}
 
+{# ===== Manual Incidents (Business-Reported) ===== #}
+{% if manual_incidents is defined and manual_incidents | length > 0 %}
+<div class="cg-manual-section">
+  <div class="cg-manual-header">
+    <span class="cg-manual-icon">⚡</span>
+    <span class="cg-manual-title">Business-Reported Incidents ({{ manual_incidents | length }})</span>
+    <a href="/service-catalog" class="cg-manual-manage">Manage</a>
+  </div>
+  <div class="cg-grid" style="margin-top:8px">
+    {% for mi in manual_incidents %}
+    <div class="cg-card cg-card-manual" id="mi-{{ mi.id }}">
+      <div class="cg-face">
+        <div class="cg-face-sev mi-sev-face mi-sev-face-{{ mi.severity.value }}">
+          {% if mi.severity.value == 'critical' %}!{% elif mi.severity.value == 'major' %}▲{% elif mi.severity.value == 'minor' %}–{% else %}i{% endif %}
+        </div>
+        <div class="cg-face-body">
+          <div class="cg-face-title">{{ mi.system_name }} — {{ mi.problem | truncate(50) }}</div>
+          <div class="cg-face-meta">
+            <span class="cg-chip cg-chip-manual">manual</span>
+            <span class="cg-chip mi-sev-chip mi-sev-chip-{{ mi.severity.value }}">{{ mi.severity.value }}</span>
+            {% if mi.stop_troubleshooting %}<span class="cg-chip cg-chip-stop">stop troubleshooting</span>{% endif %}
+            <span style="flex:1"></span>
+            {% if mi.reported_by %}<span style="font-size:11px;color:var(--fg-muted)">by {{ mi.reported_by }}</span>{% endif %}
+            <span class="cg-face-age">{{ mi.start_time | relative_time }}</span>
+          </div>
+        </div>
+      </div>
+      {% if mi.impact %}
+      <div class="cg-manual-impact">
+        <strong>Impact:</strong> {{ mi.impact }}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {# ===== Uncorrelated ===== #}
 {% if uncorrelated | length > 0 %}
 <details class="cg-uncorr" onclick="event.stopPropagation()">
