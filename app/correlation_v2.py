@@ -39,6 +39,8 @@ from app.models import (
     Host,
     RelationshipType,
     SourcePlatform,
+    TopologyEdge,
+    TopologyNode,
 )
 from app.sitescope import dedup_key
 
@@ -102,6 +104,7 @@ class CorrelationGroup:
     rfo_hints: list[str] = field(default_factory=list)
     confidence_score: float = 0.0
     temporal_proximity: str = ""
+    network_trace: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +131,7 @@ def _alert_dict(a: Alert) -> dict[str, Any]:
         "business_service": a.business_service,
         "host_group": a.host_group,
         "database_name": a.database_name,
+        "network_device_name": a.network_device_name,
         "db_calls": a.db_calls or [],
         "external_calls": a.external_calls or [],
     }
@@ -380,6 +384,194 @@ def _build_db_impact_links(alerts: list[Alert]) -> list[tuple[int, int, str]]:
 
 
 # ---------------------------------------------------------------------------
+# Step 4b: Network impact tracing (NNMi → host → service chain)
+# ---------------------------------------------------------------------------
+
+def _build_network_impact_links(
+    alerts: list[Alert], db: Session,
+) -> tuple[list[tuple[int, int, str]], dict[int, list[dict]]]:
+    """Trace NNMi network device alerts to affected host/service alerts.
+
+    Uses NNMi L2 topology to find which network devices are connected, then
+    matches connected device names to alert hostnames from other platforms.
+
+    Returns:
+        links: (nnmi_alert_id, affected_alert_id, description)
+        chains: alert_id → chain of [{"layer": ..., "name": ..., "alerts": ...}]
+    """
+    nnmi_alerts = [
+        a for a in alerts
+        if (a.source_platform.value if isinstance(a.source_platform, SourcePlatform)
+            else str(a.source_platform)) == "nnmi"
+    ]
+    if not nnmi_alerts:
+        return [], {}
+
+    non_nnmi = [
+        a for a in alerts
+        if (a.source_platform.value if isinstance(a.source_platform, SourcePlatform)
+            else str(a.source_platform)) != "nnmi"
+    ]
+    if not non_nnmi:
+        return [], {}
+
+    # Load NNMi topology nodes and L2 edges.
+    topo_nodes = db.scalars(
+        select(TopologyNode).where(
+            TopologyNode.source_platform == SourcePlatform.nnmi,
+        )
+    ).all()
+    topo_edges = db.scalars(
+        select(TopologyEdge).where(
+            TopologyEdge.source_platform == SourcePlatform.nnmi,
+            TopologyEdge.kind == "l2",
+        )
+    ).all()
+
+    if not topo_nodes:
+        return [], {}
+
+    # Build lookup: normalised device name → topology node external_id.
+    name_to_ext: dict[str, str] = {}
+    ext_to_name: dict[str, str] = {}
+    node_mgmt_ip: dict[str, str] = {}
+    for n in topo_nodes:
+        nk = _normalize_hostname(n.name)
+        if nk:
+            name_to_ext[nk] = n.external_id
+            ext_to_name[n.external_id] = n.name
+        attrs = n.attributes or {}
+        if isinstance(attrs, dict):
+            mgmt = attrs.get("managementAddress", "")
+            if mgmt:
+                node_mgmt_ip[n.external_id] = mgmt
+
+    # Build adjacency from L2 edges: ext_id → set of connected ext_ids.
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for e in topo_edges:
+        adjacency[e.from_external_id].add(e.to_external_id)
+        adjacency[e.to_external_id].add(e.from_external_id)
+
+    # Map NNMi alert → topology node.
+    nnmi_alert_to_node: dict[int, str] = {}
+    for a in nnmi_alerts:
+        dk = _normalize_hostname(a.host_hostname)
+        if dk and dk in name_to_ext:
+            nnmi_alert_to_node[a.id] = name_to_ext[dk]
+            continue
+        # Try network_device_name fallback.
+        ndk = _normalize_hostname(a.network_device_name)
+        if ndk and ndk in name_to_ext:
+            nnmi_alert_to_node[a.id] = name_to_ext[ndk]
+
+    if not nnmi_alert_to_node:
+        return [], {}
+
+    # For each NNMi alert's device, collect connected devices (1-hop and 2-hop).
+    def _connected_devices(ext_id: str, max_hops: int = 2) -> set[str]:
+        visited: set[str] = {ext_id}
+        frontier = [ext_id]
+        for _ in range(max_hops):
+            next_frontier: list[str] = []
+            for nid in frontier:
+                for neighbor in adjacency.get(nid, set()):
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        next_frontier.append(neighbor)
+            frontier = next_frontier
+        return visited - {ext_id}
+
+    # Build lookup for non-NNMi alerts: normalised hostname → alert IDs.
+    host_to_alerts: dict[str, list[int]] = defaultdict(list)
+    ip_to_alerts: dict[str, list[int]] = defaultdict(list)
+    for a in non_nnmi:
+        dk = _normalize_hostname(a.host_hostname)
+        if dk:
+            host_to_alerts[dk].append(a.id)
+        ip = (a.host_ip or "").strip()
+        if ip:
+            ip_to_alerts[ip].append(a.id)
+
+    # Also load Host table to map network device management IPs to host IPs.
+    all_mgmt_ips = [ip for ip in node_mgmt_ip.values() if ip]
+    host_ip_overlap: dict[str, set[str]] = defaultdict(set)
+    if all_mgmt_ips:
+        for h in db.scalars(
+            select(Host).options(load_only(Host.hostname, Host.ip, Host.ip_all))
+            .where(Host.ip.in_(all_mgmt_ips) | Host.hostname.isnot(None))
+        ).all():
+            dk = _normalize_hostname(h.hostname)
+            if dk:
+                for ext_id, mgmt_ip in node_mgmt_ip.items():
+                    if h.ip == mgmt_ip or (h.ip_all and mgmt_ip in h.ip_all):
+                        host_ip_overlap[ext_id].add(dk)
+
+    links: list[tuple[int, int, str]] = []
+    chains: dict[int, list[dict]] = {}
+
+    for nnmi_aid, device_ext in nnmi_alert_to_node.items():
+        device_name = ext_to_name.get(device_ext, "?")
+        connected = _connected_devices(device_ext)
+        affected_alert_ids: set[int] = set()
+        affected_hosts: set[str] = set()
+
+        # Match connected topology devices to alert hosts by name.
+        for conn_ext in connected:
+            conn_name = ext_to_name.get(conn_ext, "")
+            conn_dk = _normalize_hostname(conn_name)
+            if conn_dk:
+                for aid in host_to_alerts.get(conn_dk, []):
+                    affected_alert_ids.add(aid)
+                    affected_hosts.add(conn_name)
+
+            # Match by management IP → host IP.
+            for host_dk in host_ip_overlap.get(conn_ext, set()):
+                for aid in host_to_alerts.get(host_dk, []):
+                    affected_alert_ids.add(aid)
+                    affected_hosts.add(host_dk)
+
+            conn_mgmt = node_mgmt_ip.get(conn_ext, "")
+            if conn_mgmt:
+                for aid in ip_to_alerts.get(conn_mgmt, []):
+                    affected_alert_ids.add(aid)
+
+        # Also match the alerting device itself to non-NNMi alerts on same host.
+        device_dk = _normalize_hostname(device_name)
+        if device_dk:
+            for aid in host_to_alerts.get(device_dk, []):
+                affected_alert_ids.add(aid)
+        device_mgmt = node_mgmt_ip.get(device_ext, "")
+        if device_mgmt:
+            for aid in ip_to_alerts.get(device_mgmt, []):
+                affected_alert_ids.add(aid)
+
+        for aff_aid in affected_alert_ids:
+            desc = f"network_impact:{device_name}"
+            links.append((nnmi_aid, aff_aid, desc))
+
+        # Build chain data for this NNMi alert.
+        if affected_alert_ids:
+            alert_map_local = {a.id: a for a in alerts}
+            svcs: set[str] = set()
+            for aff_aid in affected_alert_ids:
+                aa = alert_map_local.get(aff_aid)
+                if aa:
+                    for v in (aa.service_name, aa.application_name, aa.business_service):
+                        if v:
+                            svcs.add(v)
+            chains[nnmi_aid] = [
+                {"layer": "network", "name": device_name,
+                 "alerts": [nnmi_aid]},
+                {"layer": "host", "names": sorted(affected_hosts)[:10],
+                 "alerts": sorted(affected_alert_ids)[:20]},
+                {"layer": "service", "names": sorted(svcs)[:10],
+                 "alerts": []},
+            ]
+
+    return links, chains
+
+
+# ---------------------------------------------------------------------------
 # Step 5: Union-find to merge all signals into final groups
 # ---------------------------------------------------------------------------
 
@@ -415,6 +607,7 @@ def _merge_groups(
     bsvc_groups: dict[str, set[int]] | None = None,
     hg_groups: dict[str, set[int]] | None = None,
     problem_groups: dict[str, set[int]] | None = None,
+    net_links: list[tuple[int, int, str]] | None = None,
 ) -> dict[int, set[int]]:
     """Union-find over all signal sources → root_id → set of alert IDs."""
     uf = _UnionFind(alert_ids)
@@ -465,6 +658,11 @@ def _merge_groups(
         for i in range(1, len(aids_list)):
             uf.union(aids_list[0], aids_list[i])
 
+    # Network impact (NNMi → host/service).
+    for a_id, b_id, _ in (net_links or []):
+        if a_id in alert_ids and b_id in alert_ids:
+            uf.union(a_id, b_id)
+
     # Collect.
     groups: dict[int, set[int]] = defaultdict(set)
     for aid in alert_ids:
@@ -487,6 +685,7 @@ def _group_reasons(
     bsvc_groups: dict[str, set[int]] | None = None,
     hg_groups: dict[str, set[int]] | None = None,
     problem_groups: dict[str, set[int]] | None = None,
+    net_links: list[tuple[int, int, str]] | None = None,
 ) -> list[CorrelationReason]:
     reasons: list[CorrelationReason] = []
     seen: set[str] = set()
@@ -600,6 +799,21 @@ def _group_reasons(
                     "high",
                 ))
 
+    # Network impact.
+    for a_id, b_id, detail in (net_links or []):
+        if a_id in aids and b_id in aids:
+            device = detail.replace("network_impact:", "")
+            key = f"net:{device}"
+            if key not in seen:
+                seen.add(key)
+                b_alert = alert_map.get(b_id)
+                b_host = b_alert.host_hostname if b_alert else "?"
+                reasons.append(CorrelationReason(
+                    "network_impact",
+                    f"Network device {device} → affected host {b_host}",
+                    "high",
+                ))
+
     final: list[CorrelationReason] = []
     seen_text: set[str] = set()
     for r in reasons:
@@ -618,6 +832,7 @@ def _pick_root_cause(
     aids: set[int],
     alert_map: dict[int, Alert],
     dep_links: list[tuple[int, int, str]],
+    net_links: list[tuple[int, int, str]] | None = None,
 ) -> RootCauseCandidate | None:
     if not aids:
         return None
@@ -630,10 +845,18 @@ def _pick_root_cause(
         if a_id in aids and b_id in aids:
             upstream_score[b_id] += 1  # b_id is upstream (depended upon)
 
-    # Sort: upstream score desc, then earliest started_at, then highest severity.
+    # Network impact: NNMi alerts that caused downstream host/service alerts
+    # get a strong upstream boost — they're at the bottom of the stack.
+    net_source_score: dict[int, int] = defaultdict(int)
+    for a_id, b_id, _ in (net_links or []):
+        if a_id in aids and b_id in aids:
+            net_source_score[a_id] += 1
+
+    # Sort: network source first, then upstream score, then earliest, then severity.
     ranked = sorted(
         group_alerts,
         key=lambda a: (
+            -net_source_score.get(a.id, 0),
             -upstream_score.get(a.id, 0),
             _aware(a.started_at),
             -a.severity_int,
@@ -641,6 +864,8 @@ def _pick_root_cause(
     )
     best = ranked[0]
     reasons: list[str] = []
+    if net_source_score.get(best.id, 0) > 0:
+        reasons.append("network layer root cause (NNMi device affecting downstream hosts)")
     if upstream_score.get(best.id, 0) > 0:
         reasons.append("upstream dependency (other alerts depend on this)")
     if best.started_at and all(
@@ -831,6 +1056,7 @@ def _calc_confidence(
     db_links: list[tuple[int, int, str]],
     alert_map: dict[int, Alert],
     problem_groups: dict[str, set[int]] | None = None,
+    net_links: list[tuple[int, int, str]] | None = None,
 ) -> float:
     """Calculate a 0.0–1.0 confidence score for a correlation group."""
     score = 0.0
@@ -850,6 +1076,8 @@ def _calc_confidence(
         score += 0.10
     if problem_groups and any(len(p_aids & aids) >= 2 for p_aids in problem_groups.values()):
         score += 0.30
+    if any(a in aids and b in aids for a, b, _ in (net_links or [])):
+        score += 0.25
     # Temporal tightness bonus.
     times = [_aware(alert_map[a].started_at) for a in aids if alert_map[a].started_at]
     if len(times) >= 2:
@@ -968,7 +1196,7 @@ def correlate_alerts(
         Alert.trace_id, Alert.service_name, Alert.application_name,
         Alert.business_service, Alert.host_group,
         Alert.database_name, Alert.db_calls, Alert.external_calls,
-        Alert.entity_id,
+        Alert.entity_id, Alert.network_device_name,
     )
     stmt = select(Alert).options(_ALERT_COLS)
     if state == "active":
@@ -1013,9 +1241,14 @@ def correlate_alerts(
     except Exception:
         _log.exception("db_links failed")
         db_links = []
+    try:
+        net_links, net_chains = _build_network_impact_links(alerts, db)
+    except Exception:
+        _log.exception("net_links failed")
+        net_links, net_chains = [], {}
 
     # --- Merge into groups ---
-    raw_groups = _merge_groups(all_ids, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups)
+    raw_groups = _merge_groups(all_ids, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups, net_links)
 
     # --- Build output ---
     correlated_ids: set[int] = set()
@@ -1073,13 +1306,13 @@ def correlate_alerts(
                     _seen_svc.add(val)
                     aff_svcs.append(val)
 
-        reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups)
-        root_cause = _pick_root_cause(aids, alert_map, dep_links)
+        reasons = _group_reasons(aids, alert_map, device_map, trace_groups, dep_links, svc_groups, db_links, bsvc_groups, hg_groups, problem_groups, net_links)
+        root_cause = _pick_root_cause(aids, alert_map, dep_links, net_links)
 
         # Confidence and temporal scoring.
         conf_score = _calc_confidence(
             aids, trace_groups, dep_links, device_map, svc_groups,
-            bsvc_groups, hg_groups, db_links, alert_map, problem_groups,
+            bsvc_groups, hg_groups, db_links, alert_map, problem_groups, net_links,
         )
         temporal = _calc_temporal_proximity(aids, alert_map)
 
@@ -1089,6 +1322,13 @@ def correlate_alerts(
         )
         impact = _assess_impact(group_alerts_sorted, platforms_in)
         inc_type = _detect_incident_type(group_alerts_sorted)
+
+        # Network trace chain: collect from any NNMi alert in this group.
+        ntrace: list[dict] = []
+        for nnmi_aid, chain in net_chains.items():
+            if nnmi_aid in aids:
+                ntrace = chain
+                break
 
         # Title: prefer affected service name over raw hostname.
         title_label = aff_svcs[0] if aff_svcs else (root_cause.host if root_cause else (first.host_hostname or ""))
@@ -1116,6 +1356,7 @@ def correlate_alerts(
             rfo_hints=rfo_hints,
             confidence_score=conf_score,
             temporal_proximity=temporal,
+            network_trace=ntrace,
         ))
 
     # Uncorrelated.

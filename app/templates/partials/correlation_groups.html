@@ -151,6 +151,41 @@
         </div>
         {% endif %}
 
+        {% if g.network_trace is defined and g.network_trace | length > 0 %}
+        <div class="cg-panel cg-panel-nettrace">
+          <div class="cg-panel-h">Network Trace</div>
+          <div class="nt-chain">
+            {% for step in g.network_trace %}
+            <div class="nt-step nt-{{ step.layer }}">
+              <div class="nt-icon">
+                {% if step.layer == 'network' %}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
+                {% elif step.layer == 'host' %}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><circle cx="12" cy="17" r="1.5"/></svg>
+                {% else %}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                {% endif %}
+              </div>
+              <div class="nt-label">{{ step.layer | upper }}</div>
+              {% if step.name is defined %}
+                <div class="nt-name mono">{{ step.name }}</div>
+              {% endif %}
+              {% if step.names is defined %}
+                <div class="nt-names">
+                  {% for n in step.names[:5] %}<span class="cg-chip nt-chip-{{ step.layer }}">{{ n }}</span>{% endfor %}
+                  {% if step.names | length > 5 %}<span class="nt-more">+{{ step.names | length - 5 }}</span>{% endif %}
+                </div>
+              {% endif %}
+              {% if step.alerts is defined and step.alerts | length > 0 %}
+                <div class="nt-count">{{ step.alerts | length }} alert{{ '' if step.alerts | length == 1 else 's' }}</div>
+              {% endif %}
+            </div>
+            {% if not loop.last %}<div class="nt-arrow">→</div>{% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         {% if g.affected_services %}
         <div class="cg-panel">
           <div class="cg-panel-h">Affected Services</div>
