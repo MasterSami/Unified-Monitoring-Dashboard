@@ -1142,6 +1142,16 @@ td.mono {
   color: var(--text-faint);
   font-size: 11px;
 }
+.h-inv-tag {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+}
 .h-item[data-tip]:hover::after {
   content: attr(data-tip);
   position: absolute;

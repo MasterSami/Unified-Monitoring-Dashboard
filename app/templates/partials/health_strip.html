@@ -15,6 +15,7 @@
       <summary class="cg-head {{ cls }}">
         <span class="dot"></span>
         <span class="cg-name">{{ pf | capitalize }}</span>
+        {% if pf == 'digitalview' %}<span class="h-inv-tag">inventory</span>{% endif %}
         <span class="cg-count">{{ ok }}/{{ n }}</span>
       </summary>
       <div class="cg-body">
