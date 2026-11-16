@@ -37,12 +37,24 @@ TOOL_ROUND_HINT = """You MUST call at least one tool before answering any questi
 
 Quick guide:
 - Greetings (hi, hello, اهلا): answer directly, no tool needed.
-- "alerts on host X", "incident on X", "X is down": call get_host_alerts(hostname="X")
+- "alerts on host X": call get_host_alerts(hostname="X")
+- "Dynatrace alerts on X": call get_host_alerts(hostname="X", platform="dynatrace")
+- "Zabbix alerts on X": call get_host_alerts(hostname="X", platform="zabbix")
+- "NNMi alerts on X": call get_host_alerts(hostname="X", platform="nnmi")
 - "top N alerts" or "أخطر N alerts": call get_active_alerts_summary(top_n=N)
+- "top Dynatrace alerts": call get_active_alerts_summary(platform="dynatrace")
 - "status of host X" or "حالة X": call get_host_status(hostname="X")
 - "capacity" or disk/cpu forecast: call get_capacity_risk(hostname="X")
 - "why is X down", "root cause", "investigate", "RCA": call investigate_rca(hostname="X") or investigate_rca(problem_id="P-123")
 - "connection down between A and B": call get_host_alerts(hostname="A") AND get_host_alerts(hostname="B")
+
+CRITICAL RULE — Platform filtering:
+When the user mentions a platform name (Zabbix, Dynatrace, NNMi, SiteScope, Digital View),
+you MUST pass the platform parameter. Examples:
+- "ايه alerts على MW10 في Dynatrace" → get_host_alerts(hostname="MW10", platform="dynatrace")
+- "show me zabbix alerts" → get_active_alerts_summary(platform="zabbix")
+- "ايه المشاكل في dynatrace" → get_active_alerts_summary(platform="dynatrace")
+Do NOT return alerts from other platforms when the user asked about a specific one.
 
 IMPORTANT: If the question mentions a host, service, or incident, you MUST call a tool.
 If a Dynatrace problem needs investigation, use investigate_rca to get the Davis AI evidence chain.
@@ -63,9 +75,12 @@ Write the answer in the user's language (technical terms in English):
    with its source and time, e.g. "(Zabbix, Zabbix-DC1, as of 12:05)".
 3. If the facts are empty, say clearly that SAMIX has no matching data.
 4. Mention every relevant UNKNOWN.
+5. NEVER repeat the same alert/fact twice. Each evidence item appears once only.
+6. If the user asked about a specific platform (e.g. "Dynatrace alerts"), only
+   cite facts from that platform. Ignore facts from other platforms.
 Do not invent hostnames, numbers, times or platforms that are not in the pack.
 Do not suggest any action that changes a system.
-
+{platform_hint}
 Evidence Pack (JSON):
 {pack}
 

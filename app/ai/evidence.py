@@ -109,10 +109,44 @@ class EvidencePack:
         """Compact JSON for the answer prompt (no indentation: tokens matter)."""
         return json.dumps(self.to_dict(), ensure_ascii=False, separators=(",", ":"), default=str)
 
+    def filter_platform(self, platform: str) -> None:
+        """Keep only facts from *platform*, moving the rest to a note."""
+        platform = platform.strip().lower()
+        kept: list[dict[str, Any]] = []
+        removed = 0
+        for f in self.facts:
+            if (f.get("source_platform") or "").lower() == platform:
+                kept.append(f)
+            else:
+                removed += 1
+        if removed:
+            self.facts = kept
+            self.unknowns.append(
+                f"{removed} row(s) from other platforms were excluded "
+                f"because the question is about {platform}."
+            )
+
+
+def _content_key(row: dict[str, Any]) -> str:
+    """A key that identifies the same logical alert regardless of record_id.
+
+    Two alert rows that share (platform, host, title, severity, state) are
+    the same alert matched through different resolution paths.
+    """
+    parts = [
+        str(row.get("source_platform") or ""),
+        dedup_key(str(row.get("host") or row.get("hostname") or "")),
+        str(row.get("title") or row.get("display_name") or ""),
+        str(row.get("severity") or row.get("severity_label") or ""),
+        str(row.get("state") or row.get("status") or ""),
+    ]
+    return "|".join(parts).lower()
+
 
 def build_pack(question: str, results: list[ToolResult], freshness: dict[str, dict[str, Any]]) -> EvidencePack:
     pack = EvidencePack(question=question, freshness=freshness)
     seen_ids: set[str] = set()
+    seen_content: set[str] = set()
     platforms_seen: set[str] = set()
 
     for r in results:
@@ -135,6 +169,10 @@ def build_pack(question: str, results: list[ToolResult], freshness: dict[str, di
             if rid in seen_ids:
                 continue
             seen_ids.add(rid)
+            ck = _content_key(row)
+            if ck in seen_content and ck != "||||":
+                continue
+            seen_content.add(ck)
             platform = row.get("source_platform")
             instance = row.get("source_instance") or ""
             platforms_seen.add(platform or "")

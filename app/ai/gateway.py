@@ -36,6 +36,25 @@ from app.runbook_auth import COOKIE_NAME, read_token
 import re
 
 from . import prompts
+
+# --- Platform detection from question text ------------------------------------
+
+_PLATFORM_PATTERNS: dict[str, re.Pattern[str]] = {
+    "zabbix": re.compile(r"\bzabbix\b", re.I),
+    "dynatrace": re.compile(r"\bdynatrace\b", re.I),
+    "nnmi": re.compile(r"\bnnmi\b", re.I),
+    "sitescope": re.compile(r"\bsitescope\b", re.I),
+    "digitalview": re.compile(r"\b(?:digital\s*view|digitalview)\b", re.I),
+}
+
+
+def detect_platform(question: str) -> str | None:
+    """Return the single platform the user explicitly mentioned, or None."""
+    found: list[str] = []
+    for name, pat in _PLATFORM_PATTERNS.items():
+        if pat.search(question):
+            found.append(name)
+    return found[0] if len(found) == 1 else None
 from .audit import find_corrections, record_audit
 from .evidence import EvidencePack, Validation, build_pack, freshness_by_instance, freshness_line, validate_answer
 from .llm import ChatModel, LLMError, OllamaClient, tool_calls
@@ -259,6 +278,8 @@ class Gateway:
         ]
         tool_defs = ollama_tool_definitions()
 
+        asked_platform = detect_platform(question)
+
         try:
             while rounds < self.max_rounds:
                 rounds += 1
@@ -270,6 +291,9 @@ class Gateway:
                 messages.append({"role": "assistant", "content": message.get("content") or "",
                                  "tool_calls": message.get("tool_calls")})
                 for name, args in calls:
+                    if asked_platform and name in ("get_host_alerts", "get_active_alerts_summary"):
+                        if not args.get("platform"):
+                            args["platform"] = asked_platform
                     shown = ", ".join(f"{k}={v}" for k, v in args.items() if k != "_raw") or "no arguments"
                     step(f"Calling {name}({shown})")
                     result = self._run_tool(name, args, trace_id)
@@ -296,10 +320,18 @@ class Gateway:
                 )
                 step("No tools called — returning guidance")
             else:
+                if asked_platform:
+                    pack.filter_platform(asked_platform)
+                platform_hint = (
+                    f"\nIMPORTANT: The user is asking specifically about {asked_platform.upper()}. "
+                    f"Only discuss {asked_platform} evidence. Ignore any other platform.\n"
+                ) if asked_platform else ""
                 step("Composing the answer")
                 final = self.llm.chat([
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompts.ANSWER_PROMPT.format(pack=pack.prompt_json(), question=question)},
+                    {"role": "user", "content": prompts.ANSWER_PROMPT.format(
+                        pack=pack.prompt_json(), question=question,
+                        platform_hint=platform_hint)},
                 ])
                 answer = _deloop((final.get("content") or "").strip())
         except LLMError as exc:
