@@ -64,10 +64,6 @@
     🔍 Investigate
   </button>
 
-  <button type="button" class="btn" onclick="document.getElementById('mi-form-box').classList.toggle('open')" title="Report a business incident">
-    + Report Incident
-  </button>
-
   <select
     name="instance"
     class="cfilter select"
@@ -88,55 +84,6 @@
     class="cfilter" id="c-state" />
   <input type="hidden" name="platform" value="{{ current.platform if current and current.platform else 'all' }}"
     class="cfilter" id="c-platform" />
-</div>
-
-{# -- Quick-Add Manual Incident Form -- #}
-<div id="mi-form-box" class="mi-inline-form">
-  <form action="/api/v1/manual-incidents" method="post" class="mi-inline-grid">
-    <input type="hidden" name="redirect" value="/correlation" />
-    <div>
-      <label>System</label>
-      <select name="system_name">
-        <option value="">— select —</option>
-        {% for svc in business_services %}<option value="{{ svc.name }}">{{ svc.name }}</option>{% endfor %}
-      </select>
-    </div>
-    <div>
-      <label>Or custom name</label>
-      <input name="custom_system_name" placeholder="e.g. Avaya Outreach" />
-    </div>
-    <div>
-      <label>Severity</label>
-      <select name="severity">
-        <option value="critical">Critical</option>
-        <option value="major" selected>Major</option>
-        <option value="minor">Minor</option>
-        <option value="info">Info</option>
-      </select>
-    </div>
-    <div style="grid-column:span 2">
-      <label>Problem</label>
-      <input name="problem" required placeholder="Describe the outage..." />
-    </div>
-    <div>
-      <label>Impact</label>
-      <input name="impact" placeholder="What is affected?" />
-    </div>
-    <div>
-      <label>Reported By</label>
-      <input name="reported_by" placeholder="Team / person" />
-    </div>
-    <div>
-      <label>Stop Troubleshooting?</label>
-      <select name="stop_troubleshooting">
-        <option value="false">No</option>
-        <option value="true">Yes</option>
-      </select>
-    </div>
-    <div style="display:flex;align-items:flex-end">
-      <button type="submit" class="btn" style="background:var(--accent);color:#fff;width:100%">Report</button>
-    </div>
-  </form>
 </div>
 
 <script>
@@ -174,6 +121,7 @@
   <div class="inv-search-row">
     <input
       type="search"
+      name="q"
       id="inv-q"
       class="inv-input"
       placeholder="Enter system name: Remedy, SAP, Oracle, any hostname or service…"
