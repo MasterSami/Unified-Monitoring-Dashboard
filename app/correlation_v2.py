@@ -1367,3 +1367,182 @@ def correlate_alerts(
     result = (groups, uncorrelated)
     _corr_cache[ckey] = (_time.time() + _CORR_CACHE_TTL, result)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Investigate System — search all alerts for a keyword and build root cause
+# ---------------------------------------------------------------------------
+
+@dataclass
+class InvestigationResult:
+    query: str
+    matched_alerts: list[dict[str, Any]]
+    total_matched: int
+    platforms_involved: list[str]
+    root_cause: RootCauseCandidate | None
+    reasons: list[CorrelationReason]
+    issue_category: str
+    suggested_team: str
+    impact_level: str
+    rfo_hints: list[str]
+    confidence_score: float
+    network_trace: list[dict]
+    affected_services: list[str]
+    related_groups: list[CorrelationGroup]
+
+
+def investigate_system(
+    db: Session,
+    query: str,
+    *,
+    state: str = "all",
+    min_severity: int = 1,
+) -> InvestigationResult:
+    """Search all alerts for a system keyword and perform root cause analysis.
+
+    Searches across: title, host_hostname, service_name, application_name,
+    business_service, host_group, database_name, network_device_name,
+    external_calls (JSON text), db_calls (JSON text).
+    """
+    q = query.strip()
+    ql = q.lower()
+    if not q:
+        return InvestigationResult(
+            query=q, matched_alerts=[], total_matched=0,
+            platforms_involved=[], root_cause=None, reasons=[],
+            issue_category="", suggested_team="", impact_level="",
+            rfo_hints=[], confidence_score=0.0, network_trace=[],
+            affected_services=[], related_groups=[],
+        )
+
+    _ALERT_COLS = load_only(
+        Alert.id, Alert.external_id, Alert.title,
+        Alert.host_hostname, Alert.host_ip,
+        Alert.source_platform, Alert.source_instance,
+        Alert.severity_int, Alert.severity_label,
+        Alert.started_at, Alert.resolved, Alert.resolved_at,
+        Alert.trace_id, Alert.service_name, Alert.application_name,
+        Alert.business_service, Alert.host_group,
+        Alert.database_name, Alert.db_calls, Alert.external_calls,
+        Alert.entity_id, Alert.network_device_name,
+    )
+    stmt = select(Alert).options(_ALERT_COLS)
+    if state == "active":
+        stmt = stmt.where(Alert.resolved.is_(False))
+    elif state == "resolved":
+        stmt = stmt.where(Alert.resolved.is_(True))
+    if min_severity > 1:
+        stmt = stmt.where(Alert.severity_int >= min_severity)
+    stmt = stmt.order_by(Alert.severity_int.desc(), Alert.started_at.desc()).limit(5000)
+    all_alerts = list(db.scalars(stmt).all())
+
+    def _matches(a: Alert) -> bool:
+        for field_val in (
+            a.title, a.host_hostname, a.host_ip,
+            a.service_name, a.application_name,
+            a.business_service, a.host_group,
+            a.database_name, a.network_device_name,
+            a.source_instance,
+        ):
+            if field_val and ql in field_val.lower():
+                return True
+        for json_field in (a.db_calls, a.external_calls):
+            if json_field:
+                blob = str(json_field).lower()
+                if ql in blob:
+                    return True
+        return False
+
+    matched = [a for a in all_alerts if _matches(a)]
+    if not matched:
+        return InvestigationResult(
+            query=q, matched_alerts=[], total_matched=0,
+            platforms_involved=[], root_cause=None, reasons=[],
+            issue_category="", suggested_team="", impact_level="",
+            rfo_hints=[], confidence_score=0.0, network_trace=[],
+            affected_services=[], related_groups=[],
+        )
+
+    alert_map: dict[int, Alert] = {a.id: a for a in matched}
+    matched_ids = set(alert_map.keys())
+
+    # Run correlation signals on matched set.
+    try:
+        device_map = _build_device_map(matched, db)
+    except Exception:
+        device_map = {}
+    trace_groups = _build_trace_groups(matched)
+    try:
+        dep_links = _build_dependency_links(matched, db)
+    except Exception:
+        dep_links = []
+    svc_groups = _build_service_groups(matched)
+    bsvc_groups = _build_business_service_groups(matched)
+    hg_groups = _build_host_group_groups(matched)
+    problem_groups = _build_problem_groups(matched)
+    try:
+        db_links = _build_db_impact_links(matched)
+    except Exception:
+        db_links = []
+    try:
+        net_links, net_chains = _build_network_impact_links(matched, db)
+    except Exception:
+        net_links, net_chains = [], {}
+
+    reasons = _group_reasons(
+        matched_ids, alert_map, device_map, trace_groups,
+        dep_links, svc_groups, db_links, bsvc_groups, hg_groups,
+        problem_groups, net_links,
+    )
+    root_cause = _pick_root_cause(matched_ids, alert_map, dep_links, net_links)
+
+    platforms = sorted({
+        a.source_platform.value if isinstance(a.source_platform, SourcePlatform) else str(a.source_platform)
+        for a in matched
+    })
+    issue_cat, team, rfo = _classify_issue(matched, platforms)
+    impact = _assess_impact(matched, platforms)
+    conf = _calc_confidence(
+        matched_ids, trace_groups, dep_links, device_map, svc_groups,
+        bsvc_groups, hg_groups, db_links, alert_map, problem_groups, net_links,
+    )
+
+    ntrace: list[dict] = []
+    for chain in net_chains.values():
+        ntrace = chain
+        break
+
+    aff_svcs: list[str] = []
+    _seen: set[str] = set()
+    for a in matched:
+        for v in (a.business_service, a.service_name, a.application_name, a.host_group):
+            if v and v not in _seen:
+                _seen.add(v)
+                aff_svcs.append(v)
+
+    # Find existing correlation groups that contain any matched alert.
+    related_groups: list[CorrelationGroup] = []
+    try:
+        all_groups, _ = correlate_alerts(db, state=state, min_severity=min_severity)
+        for g in all_groups:
+            if matched_ids & set(g.alert_ids):
+                related_groups.append(g)
+    except Exception:
+        pass
+
+    return InvestigationResult(
+        query=q,
+        matched_alerts=[_alert_dict(a) for a in matched],
+        total_matched=len(matched),
+        platforms_involved=platforms,
+        root_cause=root_cause,
+        reasons=reasons,
+        issue_category=issue_cat,
+        suggested_team=team,
+        impact_level=impact,
+        rfo_hints=rfo,
+        confidence_score=conf,
+        network_trace=ntrace,
+        affected_services=aff_svcs,
+        related_groups=related_groups,
+    )

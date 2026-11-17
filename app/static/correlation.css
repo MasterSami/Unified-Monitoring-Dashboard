@@ -909,6 +909,255 @@
 
 
 /* ============================================================
+   Investigate Panel
+   ============================================================ */
+
+.inv-trigger-btn {
+  background: rgba(99, 102, 241, 0.12) !important;
+  color: var(--accent, #818cf8) !important;
+  border: 1px solid rgba(99, 102, 241, 0.25) !important;
+  font-weight: 600;
+}
+.inv-trigger-btn:hover {
+  background: rgba(99, 102, 241, 0.2) !important;
+}
+
+.inv-panel {
+  display: none;
+  margin: 10px 0;
+  background: var(--surface, #1e293b);
+  border: 2px solid var(--accent, #6366f1);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(99, 102, 241, 0.15);
+}
+.inv-panel.open { display: block; }
+
+.inv-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(99, 102, 241, 0.08);
+  border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+}
+.inv-panel-icon { font-size: 18px; }
+.inv-panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fg, #e2e8f0);
+  flex: 1;
+}
+.inv-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: transparent;
+  color: var(--fg-muted, #94a3b8);
+  font-size: 18px;
+  cursor: pointer;
+}
+.inv-close:hover { color: #ef4444; border-color: #ef4444; }
+
+.inv-search-row {
+  padding: 12px 16px 0;
+  position: relative;
+}
+.inv-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  background: var(--bg, #0f172a);
+  color: var(--fg, #e2e8f0);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.inv-input:focus {
+  border-color: var(--accent, #6366f1);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+.inv-input::placeholder { color: var(--fg-muted, #64748b); }
+
+.inv-loader {
+  height: 2px;
+  background: var(--border, #334155);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.inv-loader.htmx-request { opacity: 1; }
+
+.inv-results {
+  padding: 12px 16px 16px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.inv-empty {
+  text-align: center;
+  padding: 30px 16px;
+  color: var(--fg-muted, #94a3b8);
+}
+.inv-empty-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.5;
+}
+.inv-empty p {
+  font-size: 13px;
+  margin: 4px 0;
+}
+.inv-empty-hint {
+  font-size: 12px !important;
+  opacity: 0.6;
+}
+
+.inv-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.inv-summary-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.inv-summary-q {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg, #e2e8f0);
+}
+.inv-summary-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent, #818cf8);
+  background: rgba(99, 102, 241, 0.12);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.inv-summary-plats {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.inv-body {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+@media (max-width: 900px) {
+  .inv-body { grid-template-columns: 1fr; }
+}
+.inv-col-l, .inv-col-r { min-width: 0; }
+
+.inv-meta-row {
+  display: flex;
+  gap: 16px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.inv-meta-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inv-related-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inv-rg-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border, #334155);
+  text-decoration: none;
+  font-size: 12px;
+  color: var(--fg, #e2e8f0);
+  cursor: pointer;
+  transition: 0.15s;
+}
+.inv-rg-link:hover {
+  border-color: var(--accent, #818cf8);
+  background: rgba(99, 102, 241, 0.06);
+}
+.inv-rg-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-rg-count {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--accent, #818cf8);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* Light theme */
+[data-theme="light"] .inv-trigger-btn {
+  background: rgba(99, 102, 241, 0.08) !important;
+  color: #4f46e5 !important;
+  border-color: rgba(99, 102, 241, 0.2) !important;
+}
+[data-theme="light"] .inv-panel {
+  background: #fff;
+  border-color: #6366f1;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .inv-panel-head {
+  background: rgba(99, 102, 241, 0.05);
+}
+[data-theme="light"] .inv-panel-title { color: #1e293b; }
+[data-theme="light"] .inv-input {
+  background: #f8fafc;
+  border-color: #e2e5ea;
+  color: #1e293b;
+}
+[data-theme="light"] .inv-input::placeholder { color: #94a3b8; }
+[data-theme="light"] .inv-summary {
+  background: rgba(99, 102, 241, 0.04);
+  border-color: rgba(99, 102, 241, 0.12);
+}
+[data-theme="light"] .inv-summary-q { color: #1e293b; }
+[data-theme="light"] .inv-summary-count { color: #4f46e5; background: rgba(99, 102, 241, 0.08); }
+[data-theme="light"] .inv-meta-row { background: #f8fafc; border-color: #e2e5ea; }
+[data-theme="light"] .inv-rg-link { background: #f8fafc; border-color: #e2e5ea; color: #1e293b; }
+[data-theme="light"] .inv-rg-link:hover { border-color: #6366f1; background: rgba(99, 102, 241, 0.04); }
+[data-theme="light"] .inv-rg-count { color: #4f46e5; background: rgba(99, 102, 241, 0.08); }
+
+/* ============================================================
    Network Trace Chain
    ============================================================ */
 

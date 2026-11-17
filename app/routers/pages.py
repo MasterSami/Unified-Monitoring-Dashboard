@@ -30,7 +30,7 @@ from app.models import (
     TopologyEdge,
     TopologyNode,
 )
-from app.correlation_v2 import correlate_alerts
+from app.correlation_v2 import correlate_alerts, investigate_system
 from app.normalizer import severity_label
 from app.runbook_auth import COOKIE_NAME as RUNBOOK_COOKIE_NAME
 from app.runbook_auth import read_token
@@ -2417,6 +2417,30 @@ def service_catalog_page(
             "services": services,
             "incidents": incidents,
         },
+    )
+
+
+@router.get("/partials/investigate", response_class=HTMLResponse)
+def investigate_partial(
+    request: Request,
+    q: str = "",
+    state: str = "all",
+    db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Investigate a system: search all alerts and show root cause analysis."""
+    import logging
+    result = None
+    inv_error = None
+    if q.strip():
+        try:
+            result = investigate_system(db, q, state=state)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("investigate failed")
+            inv_error = f"{type(exc).__name__}: {exc}"
+    return templates.TemplateResponse(
+        request,
+        "partials/investigate_results.html",
+        {"request": request, "result": result, "inv_error": inv_error, "inv_query": q},
     )
 
 

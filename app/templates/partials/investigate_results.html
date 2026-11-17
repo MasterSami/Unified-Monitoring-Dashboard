@@ -1,0 +1,190 @@
+{# Investigation results partial — loaded via HTMX into the correlation page #}
+
+{% if inv_error %}
+<div class="cg-err"><strong>Investigation Error:</strong> <code>{{ inv_error }}</code></div>
+{% endif %}
+
+{% if not result or not result.matched_alerts %}
+  {% if inv_query %}
+  <div class="inv-empty">
+    <div class="inv-empty-icon">⌕</div>
+    <p>No alerts found matching <strong>"{{ inv_query }}"</strong> across any platform.</p>
+    <p class="inv-empty-hint">Try a different keyword — hostname, IP, service name, application name, or error text.</p>
+  </div>
+  {% else %}
+  <div class="inv-empty">
+    <div class="inv-empty-icon">🔍</div>
+    <p>Enter a system name to investigate across all alerts and platforms.</p>
+    <p class="inv-empty-hint">Examples: Remedy, SAP, Oracle, CRM, any hostname or service name</p>
+  </div>
+  {% endif %}
+{% else %}
+{% set r = result %}
+
+{# === Summary strip === #}
+<div class="inv-summary">
+  <div class="inv-summary-main">
+    <span class="inv-summary-q">{{ r.query }}</span>
+    <span class="inv-summary-count">{{ r.total_matched }} alert{{ '' if r.total_matched == 1 else 's' }} found</span>
+    <span class="inv-summary-plats">
+      {% for p in r.platforms_involved %}<span class="cg-chip plat-{{ p }}">{{ p }}</span>{% endfor %}
+    </span>
+  </div>
+  {% if r.impact_level %}
+  <span class="cg-chip impact-{{ r.impact_level | lower | replace(' ', '-') }}">{{ r.impact_level }}</span>
+  {% endif %}
+  {% if r.confidence_score %}
+  <span class="cg-face-conf conf-{{ 'hi' if r.confidence_score >= 0.8 else ('md' if r.confidence_score >= 0.6 else 'lo') }}">{{ (r.confidence_score * 100) | int }}% confidence</span>
+  {% endif %}
+</div>
+
+{# === Root Cause + Analysis === #}
+<div class="inv-body">
+
+  {# Left column: Root cause + Signals + RFO #}
+  <div class="inv-col-l">
+
+    {% if r.root_cause %}
+    <div class="cg-panel cg-panel-rc">
+      <div class="cg-panel-h">🎯 Probable Root Cause</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px">
+        <span class="cg-face-sev sev-{{ r.root_cause.severity_int }}" style="width:22px;height:22px;font-size:10px;border-radius:5px">{{ r.root_cause.severity_int }}</span>
+        <span class="cg-chip plat-{{ r.root_cause.platform }}">{{ r.root_cause.platform }}</span>
+        <strong class="mono">{{ r.root_cause.host }}</strong>
+      </div>
+      <div style="margin-top:5px;font-size:13px;color:var(--fg,#e2e8f0);font-weight:500">{{ r.root_cause.title }}</div>
+      {% if r.root_cause.reasons %}
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+        {% for reason in r.root_cause.reasons %}<span class="cg-rc-tag">{{ reason }}</span>{% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if r.reasons %}
+    <div class="cg-panel">
+      <div class="cg-panel-h">Correlation Signals</div>
+      <div class="cg-signals">
+        {% for reason in r.reasons %}
+        <div class="cg-sig">
+          <span class="cg-sig-type sig-{{ reason.confidence }}">{{ reason.signal | replace('_', ' ') }}</span>
+          <span class="cg-sig-text">{{ reason.detail }}</span>
+          <span class="cg-sig-lvl rc-{{ reason.confidence }}">{{ reason.confidence }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if r.issue_category %}
+    <div class="inv-meta-row">
+      <div class="inv-meta-cell">
+        <div class="cg-info-label">Category</div>
+        <div class="cg-info-val"><span class="cg-chip cg-chip-cat">{{ r.issue_category }}</span></div>
+      </div>
+      {% if r.suggested_team %}
+      <div class="inv-meta-cell">
+        <div class="cg-info-label">Suggested Team</div>
+        <div class="cg-info-val" style="color:var(--accent,#818cf8)">{{ r.suggested_team }}</div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if r.rfo_hints %}
+    <div class="cg-panel cg-panel-rfo">
+      <div class="cg-panel-h">RFO Investigation Hints</div>
+      <ul class="cg-rfo">{% for h in r.rfo_hints %}<li>{{ h }}</li>{% endfor %}</ul>
+    </div>
+    {% endif %}
+  </div>
+
+  {# Right column: Network trace + Services + Related groups #}
+  <div class="inv-col-r">
+
+    {% if r.network_trace | length > 0 %}
+    <div class="cg-panel cg-panel-nettrace">
+      <div class="cg-panel-h">Network Trace</div>
+      <div class="nt-chain">
+        {% for step in r.network_trace %}
+        <div class="nt-step nt-{{ step.layer }}">
+          <div class="nt-icon">
+            {% if step.layer == 'network' %}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>
+            {% elif step.layer == 'host' %}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="16" y2="10"/><circle cx="12" cy="17" r="1.5"/></svg>
+            {% else %}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            {% endif %}
+          </div>
+          <div class="nt-label">{{ step.layer | upper }}</div>
+          {% if step.name is defined %}<div class="nt-name mono">{{ step.name }}</div>{% endif %}
+          {% if step.names is defined %}
+            <div class="nt-names">
+              {% for n in step.names[:5] %}<span class="cg-chip nt-chip-{{ step.layer }}">{{ n }}</span>{% endfor %}
+              {% if step.names | length > 5 %}<span class="nt-more">+{{ step.names | length - 5 }}</span>{% endif %}
+            </div>
+          {% endif %}
+          {% if step.alerts is defined and step.alerts | length > 0 %}
+            <div class="nt-count">{{ step.alerts | length }} alert{{ '' if step.alerts | length == 1 else 's' }}</div>
+          {% endif %}
+        </div>
+        {% if not loop.last %}<div class="nt-arrow">→</div>{% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if r.affected_services %}
+    <div class="cg-panel">
+      <div class="cg-panel-h">Related Services</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        {% for svc in r.affected_services %}<span class="cg-chip cg-chip-svc">{{ svc }}</span>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if r.related_groups %}
+    <div class="cg-panel">
+      <div class="cg-panel-h">Related Correlation Groups ({{ r.related_groups | length }})</div>
+      <div class="inv-related-groups">
+        {% for g in r.related_groups %}
+        <a href="#cg-{{ g.group_id }}" class="inv-rg-link" onclick="closeInvestigate();setTimeout(function(){var el=document.getElementById('cg-{{g.group_id}}');if(el){el.classList.add('open');el.scrollIntoView({behavior:'smooth',block:'nearest'})}},200)">
+          <span class="cg-face-sev sev-{{ g.severity_int }}" style="width:18px;height:18px;font-size:9px;border-radius:4px">{{ g.severity_int }}</span>
+          <span class="inv-rg-title">{{ g.title | truncate(50) }}</span>
+          <span class="inv-rg-count">{{ g.alert_ids | length }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# === Matched Alerts Table === #}
+<details class="cg-alerts-box" style="margin-top:10px">
+  <summary>All {{ r.total_matched }} matched alerts</summary>
+  <div style="overflow-x:auto">
+    <table class="cg-tbl">
+      <thead><tr><th>Sev</th><th>Title</th><th>Platform</th><th>Host</th><th>Service</th><th>Started</th><th>State</th></tr></thead>
+      <tbody>
+        {% for a in r.matched_alerts[:50] %}
+        <tr class="{{ 'cg-tbl-rc' if r.root_cause and a.id == r.root_cause.alert_id else '' }}">
+          <td><span class="cg-sev-sm sev-{{ a.severity_int }}">{{ a.severity_label }}</span></td>
+          <td style="max-width:220px;word-break:break-word">{{ a.title | truncate(60) }}</td>
+          <td><span class="cg-chip plat-{{ a.platform }}">{{ a.platform }}</span></td>
+          <td class="mono">{{ a.host or '—' }}</td>
+          <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ a.business_service or a.service_name or a.application_name or a.host_group or '—' }}</td>
+          <td class="mono">{{ a.started_at | relative_time if a.started_at else '—' }}</td>
+          <td>{% if a.resolved %}<span class="cg-badge-ok">resolved</span>{% else %}<span class="cg-badge-active">active</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if r.total_matched > 50 %}
+    <div style="font-size:11px;color:var(--fg-muted);padding:8px 12px">Showing first 50 of {{ r.total_matched }} alerts</div>
+    {% endif %}
+  </div>
+</details>
+
+{% endif %}

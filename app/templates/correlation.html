@@ -60,6 +60,10 @@
     {% endfor %}
   </div>
 
+  <button type="button" class="btn inv-trigger-btn" onclick="toggleInvestigate()" title="Investigate a system across all alerts">
+    🔍 Investigate
+  </button>
+
   <button type="button" class="btn" onclick="document.getElementById('mi-form-box').classList.toggle('open')" title="Report a business incident">
     + Report Incident
   </button>
@@ -157,6 +161,50 @@
     if (window.htmx) {
       window.htmx.trigger(document.getElementById("corr-region"), "refresh");
     }
+  }
+</script>
+
+{# -- Investigate Panel -- #}
+<div id="inv-panel" class="inv-panel">
+  <div class="inv-panel-head">
+    <span class="inv-panel-icon">🔍</span>
+    <span class="inv-panel-title">Investigate System</span>
+    <button type="button" class="inv-close" onclick="closeInvestigate()" title="Close">&times;</button>
+  </div>
+  <div class="inv-search-row">
+    <input
+      type="search"
+      id="inv-q"
+      class="inv-input"
+      placeholder="Enter system name: Remedy, SAP, Oracle, any hostname or service…"
+      hx-get="/partials/investigate"
+      hx-trigger="input changed delay:400ms, search"
+      hx-target="#inv-results"
+      hx-swap="innerHTML"
+      hx-indicator="#inv-loader"
+      autocomplete="off"
+    />
+    <div id="inv-loader" class="inv-loader htmx-indicator"><div class="cg-loader-bar"></div></div>
+  </div>
+  <div id="inv-results" class="inv-results">
+    <div class="inv-empty">
+      <div class="inv-empty-icon">🔍</div>
+      <p>Enter a system name to investigate across all alerts and platforms.</p>
+      <p class="inv-empty-hint">Examples: Remedy, SAP, Oracle, CRM, any hostname or service name</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleInvestigate() {
+    var panel = document.getElementById('inv-panel');
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      setTimeout(function() { document.getElementById('inv-q').focus(); }, 100);
+    }
+  }
+  function closeInvestigate() {
+    document.getElementById('inv-panel').classList.remove('open');
   }
 </script>
 
