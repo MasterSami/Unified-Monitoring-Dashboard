@@ -2204,8 +2204,9 @@ def export_capacity_report_xlsx(
         # capacity data.  The live report can omit such a host when an API
         # query is incomplete; preserve a usable row from the last collected
         # Host snapshot instead of producing an empty Excel sheet.
-        live_hostnames = {str(row[0]).casefold() for row in live_rows if row}
-        rows.extend(_db_report_rows(db, "zabbix", inst, live_hostnames))
+        if not (q and q.strip()):
+            live_hostnames = {str(row[0]).casefold() for row in live_rows if row}
+            rows.extend(_db_report_rows(db, "zabbix", inst, live_hostnames))
 
     # --- Dynatrace: snapshot host-level + live per-partition disk ---
     if platform in (None, "all", "dynatrace") and (instance in (None, "all") or platform == "dynatrace"):
@@ -2217,12 +2218,14 @@ def export_capacity_report_xlsx(
             rows.extend(_db_report_rows(db, pf))
 
     if q and q.strip():
-        needle = q.strip().lower()
-        rows = [r for r in rows if r and (
-            needle in str(r[0]).lower()
-            or needle in str(r[1]).lower()
-            or needle in str(r[12]).lower()
-        )]
+        needles = [t.strip().lower() for t in q.split(",") if t.strip()]
+        if needles:
+            rows = [r for r in rows if r and any(
+                n in str(r[0]).lower()
+                or n in str(r[1]).lower()
+                or (len(r) > 12 and n in str(r[12]).lower())
+                for n in needles
+            )]
 
     period = _period_str(date_from, date_to) if (df or dt) else f"trend window: last {days} days"
     filters = ", ".join(
