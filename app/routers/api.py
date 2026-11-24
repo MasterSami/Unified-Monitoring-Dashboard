@@ -156,16 +156,13 @@ def debug_zabbix_items(
     ).scalars().first()
     if not host:
         return {"error": f"No Zabbix host with IP {host_ip}"}
-    from app.collectors.zabbix import ZabbixCollector
-    settings = get_settings()
-    instance = None
-    for inst in settings.collector_instances:
-        if inst.name == host.source_instance and inst.kind == "zabbix":
-            instance = inst
-            break
-    if not instance:
-        return {"error": f"No Zabbix instance '{host.source_instance}'"}
-    collector = ZabbixCollector(instance, settings)
+    from app.scheduler import get_service
+    service = get_service()
+    collector = service.get(host.source_instance) if service else None
+    if not collector:
+        return {"error": f"No live collector for instance '{host.source_instance}'"}
+    if not hasattr(collector, "_rpc"):
+        return {"error": f"Collector '{host.source_instance}' is not a Zabbix instance"}
     try:
         items = collector._rpc("item.get", {
             "hostids": [str(host.external_id)],
