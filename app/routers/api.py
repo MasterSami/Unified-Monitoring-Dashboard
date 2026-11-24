@@ -2140,6 +2140,7 @@ def _dynatrace_report_rows(
 def export_capacity_report_xlsx(
     platform: str | None = Query(default="all"),
     instance: str | None = Query(default="all"),
+    q: str | None = Query(default=None),
     days: int = Query(default=7),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
@@ -2199,9 +2200,17 @@ def export_capacity_report_xlsx(
         for pf in ("zabbix", "dynatrace"):
             rows.extend(_db_report_rows(db, pf))
 
+    if q and q.strip():
+        needle = q.strip().lower()
+        rows = [r for r in rows if r and (
+            needle in str(r[0]).lower()
+            or needle in str(r[1]).lower()
+            or needle in str(r[12]).lower()
+        )]
+
     period = _period_str(date_from, date_to) if (df or dt) else f"trend window: last {days} days"
     filters = ", ".join(
-        f"{k}={v}" for k, v in (("platform", platform), ("instance", instance)) if v and v != "all"
+        f"{k}={v}" for k, v in (("platform", platform), ("instance", instance), ("search", q)) if v and v not in ("all", None)
     ) or "none"
     data = build_workbook(
         sheet_title="Capacity Report",
