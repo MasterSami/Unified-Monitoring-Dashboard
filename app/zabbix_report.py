@@ -25,11 +25,14 @@ _KEY_SEARCH = [
     "system.cpu.num", "system.cpu.util",
     "vm.memory.size[", "vm.memory.utilization", "vm.memory.util",
     "vfs.fs.size[", "vfs.fs.dependent.size[",
+    "proc.mem",
 ]
 
 _METRIC_NAME_SEARCH = [
     "CPU cores", "CPU usage in percent", "CPU utilization", "CPU usage",
     "Total memory", "Used memory", "Memory utilization", "Memory usage",
+    "Memory size", "Host memory",
+    "Total disk space", "Space utilization",
 ]
 
 
@@ -116,7 +119,7 @@ def _classify(items: list[dict]) -> dict:
             rank = 3
         if rank is not None and rank < cpu_rank:
             cpu_rank, res["cpu_util"] = rank, it
-        if low == "vm.memory.size[total]" or name_low == "total memory":
+        if low == "vm.memory.size[total]" or name_low in ("total memory", "memory size"):
             res["mem_total"] = it
         if name_low == "used memory" and res["mem_used"] is None:
             res["mem_used"] = it
@@ -129,6 +132,8 @@ def _classify(items: list[dict]) -> dict:
             mrank, inv = 2, True
         elif name_low in ("memory utilization", "memory used in %", "memory usage"):
             mrank = 3
+        elif name_low.startswith("host memory consumption"):
+            mrank = 4
         if mrank is not None and mrank < mem_rank:
             mem_rank = mrank
             res["mem_util"], res["mem_util_inverted"] = it, inv
@@ -143,6 +148,26 @@ def _classify(items: list[dict]) -> dict:
             slot[mode] = it
             if slot["label"] is None or mode == "total":
                 slot["label"] = _fs_label(it)
+        elif not (low.startswith("vfs.fs.size[") or low.startswith("vfs.fs.dependent.size[")):
+            fs_m = re.match(
+                r"^(.+?):\s*(total disk space|used disk space|space utilization"
+                r"|total space|used space)$",
+                (it.get("name") or ""), re.I,
+            )
+            if fs_m:
+                fsname = fs_m.group(1).strip()
+                mode_str = fs_m.group(2).lower()
+                if "total" in mode_str:
+                    mode = "total"
+                elif "used" in mode_str:
+                    mode = "used"
+                else:
+                    mode = None
+                if mode:
+                    slot = res["fs"].setdefault(fsname, {"label": None, "total": None, "used": None})
+                    slot[mode] = it
+                    if slot["label"] is None or mode == "total":
+                        slot["label"] = fsname
     return res
 
 
