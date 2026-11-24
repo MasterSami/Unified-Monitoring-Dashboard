@@ -25,14 +25,16 @@ _KEY_SEARCH = [
     "system.cpu.num", "system.cpu.util",
     "vm.memory.size[", "vm.memory.utilization", "vm.memory.util",
     "vfs.fs.size[", "vfs.fs.dependent.size[",
+    "vmware.vm.cpu", "vmware.vm.memory", "vmware.vm.vfs.fs.size[",
     "proc.mem",
 ]
 
 _METRIC_NAME_SEARCH = [
     "CPU cores", "CPU usage in percent", "CPU utilization", "CPU usage",
+    "Number of virtual CPUs",
     "Total memory", "Used memory", "Memory utilization", "Memory usage",
     "Memory size", "Host memory",
-    "Total disk space", "Space utilization",
+    "Total disk space", "Used disk space", "Space utilization",
 ]
 
 
@@ -70,6 +72,13 @@ def key_params(key: str) -> list[str]:
 
 def _fs_label(item: dict) -> str:
     name = (item.get("name") or "").strip()
+    on_m = re.match(
+        r"^(?:total disk space|used disk space|space utilization"
+        r"|total space|used space)\s+on\s+\[(.+?)\]$",
+        name, re.I,
+    )
+    if on_m:
+        return on_m.group(1).strip()
     label = re.sub(
         r"\s*:\s*(total space|used space|space utilization|total|used|free space|pused).*$",
         "", name, flags=re.I,
@@ -79,7 +88,7 @@ def _fs_label(item: dict) -> str:
         label = m.group(1).strip()
     if not label:
         p = key_params(item["key_"])
-        label = p[0] if p else item["key_"]
+        label = p[-2] if len(p) >= 4 else (p[0] if p else item["key_"])
     return label
 
 
@@ -121,7 +130,7 @@ def _classify(items: list[dict]) -> dict:
             cpu_rank, res["cpu_util"] = rank, it
         if low == "vm.memory.size[total]" or name_low in ("total memory", "memory size"):
             res["mem_total"] = it
-        if name_low == "used memory" and res["mem_used"] is None:
+        if name_low in ("used memory", "host memory consumed") and res["mem_used"] is None:
             res["mem_used"] = it
         mrank, inv = None, False
         if low in ("vm.memory.utilization", "vm.memory.util"):
@@ -132,8 +141,11 @@ def _classify(items: list[dict]) -> dict:
             mrank, inv = 2, True
         elif name_low in ("memory utilization", "memory used in %", "memory usage"):
             mrank = 3
-        elif name_low.startswith("host memory consumption"):
+        elif name_low in ("host memory usage in percent",
+                          "host memory consumption in %"):
             mrank = 4
+        elif name_low.startswith("host memory consumption"):
+            mrank = 5
         if mrank is not None and mrank < mem_rank:
             mem_rank = mrank
             res["mem_util"], res["mem_util_inverted"] = it, inv
@@ -148,15 +160,39 @@ def _classify(items: list[dict]) -> dict:
             slot[mode] = it
             if slot["label"] is None or mode == "total":
                 slot["label"] = _fs_label(it)
-        elif not (low.startswith("vfs.fs.size[") or low.startswith("vfs.fs.dependent.size[")):
+        elif "vfs.fs.size[" in low:
+            p = key_params(it["key_"])
+            if len(p) >= 4:
+                fsname, mode = p[-2], p[-1].lower()
+            elif len(p) >= 2:
+                fsname, mode = p[0], p[1].lower()
+            else:
+                continue
+            if mode not in ("total", "used"):
+                continue
+            slot = res["fs"].setdefault(fsname, {"label": None, "total": None, "used": None})
+            slot[mode] = it
+            if slot["label"] is None or mode == "total":
+                slot["label"] = _fs_label(it)
+        else:
+            iname = it.get("name") or ""
+            fsname = mode_str = None
             fs_m = re.match(
                 r"^(.+?):\s*(total disk space|used disk space|space utilization"
                 r"|total space|used space)$",
-                (it.get("name") or ""), re.I,
+                iname, re.I,
             )
             if fs_m:
-                fsname = fs_m.group(1).strip()
-                mode_str = fs_m.group(2).lower()
+                fsname, mode_str = fs_m.group(1).strip(), fs_m.group(2).lower()
+            else:
+                fs_m2 = re.match(
+                    r"^(total disk space|used disk space|space utilization"
+                    r"|total space|used space)\s+on\s+\[(.+?)\]$",
+                    iname, re.I,
+                )
+                if fs_m2:
+                    fsname, mode_str = fs_m2.group(2).strip(), fs_m2.group(1).lower()
+            if fsname and mode_str:
                 if "total" in mode_str:
                     mode = "total"
                 elif "used" in mode_str:

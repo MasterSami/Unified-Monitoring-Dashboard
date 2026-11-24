@@ -450,8 +450,7 @@ class ZabbixCollector(BaseCollector):
                 worst = None
                 for it in items:
                     k = it.get("key_", "").lower()
-                    if not (k.startswith("vfs.fs.size[")
-                            or k.startswith("vfs.fs.dependent.size[")):
+                    if "vfs.fs.size[" not in k and "vfs.fs.dependent.size[" not in k:
                         continue
                     p = key_params(it.get("key_", ""))
                     mode = p[1].lower() if len(p) > 1 else ""
