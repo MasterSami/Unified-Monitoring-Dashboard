@@ -147,7 +147,7 @@ def debug_zabbix_items(
     host_ip: str = Query(...),
     db: Session = Depends(get_db),
 ):
-    """Return raw Zabbix items for a host so we can see exact names/keys."""
+    """Return raw Zabbix items + _classify result for a host."""
     host = db.execute(
         select(Host).where(
             Host.ip == host_ip,
@@ -163,16 +163,15 @@ def debug_zabbix_items(
         return {"error": f"No live collector for instance '{host.source_instance}'"}
     if not hasattr(collector, "_rpc"):
         return {"error": f"Collector '{host.source_instance}' is not a Zabbix instance"}
+    from app.zabbix_report import _classify, _KEY_SEARCH, _METRIC_NAME_SEARCH
     try:
         items = collector._rpc("item.get", {
             "hostids": [str(host.external_id)],
             "output": ["itemid", "hostid", "key_", "name", "units",
                         "value_type", "lastvalue"],
             "search": {
-                "key_": ["system.cpu", "vm.memory", "vfs.fs", "proc.mem"],
-                "name": ["CPU", "Memory", "memory", "Disk", "disk",
-                         "Filesystem", "filesystem", "Host memory",
-                         "Total disk", "Space util"],
+                "key_": list(_KEY_SEARCH),
+                "name": list(_METRIC_NAME_SEARCH),
             },
             "searchByAny": True,
             "startSearch": True,
@@ -190,8 +189,28 @@ def debug_zabbix_items(
             "lastvalue": it.get("lastvalue"),
         })
     result.sort(key=lambda x: x["name"])
-    return {"host": host.hostname, "ip": host_ip, "external_id": host.external_id,
-            "items_count": len(result), "items": result}
+    c = _classify(items or [])
+    def _item_summary(it):
+        if it is None:
+            return None
+        return {"name": it.get("name"), "key": it.get("key_"),
+                "lastvalue": it.get("lastvalue")}
+    classify_result = {
+        "cpu_num": _item_summary(c["cpu_num"]),
+        "cpu_util": _item_summary(c["cpu_util"]),
+        "mem_total": _item_summary(c["mem_total"]),
+        "mem_used": _item_summary(c["mem_used"]),
+        "mem_util": _item_summary(c["mem_util"]),
+        "mem_util_inverted": c["mem_util_inverted"],
+        "fs": {k: {"label": v["label"],
+                    "total": _item_summary(v["total"]),
+                    "used": _item_summary(v["used"])}
+               for k, v in c["fs"].items()},
+    }
+    return {"host": host.hostname, "ip": host_ip,
+            "external_id": host.external_id,
+            "items_count": len(result), "items": result,
+            "classify": classify_result}
 
 
 # --- SiteScope push ingest --------------------------------------------------
