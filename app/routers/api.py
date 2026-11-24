@@ -140,6 +140,63 @@ from app.schemas import (
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
 
+# --- Debug: dump Zabbix items for a host ------------------------------------
+
+@router.get("/debug/zabbix-items")
+def debug_zabbix_items(
+    host_ip: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """Return raw Zabbix items for a host so we can see exact names/keys."""
+    host = db.execute(
+        select(Host).where(
+            Host.ip == host_ip,
+            Host.source_platform == SourcePlatform.zabbix,
+        )
+    ).scalars().first()
+    if not host:
+        return {"error": f"No Zabbix host with IP {host_ip}"}
+    from app.collectors.zabbix import ZabbixCollector
+    settings = get_settings()
+    instance = None
+    for inst in settings.collector_instances:
+        if inst.name == host.source_instance and inst.kind == "zabbix":
+            instance = inst
+            break
+    if not instance:
+        return {"error": f"No Zabbix instance '{host.source_instance}'"}
+    collector = ZabbixCollector(instance, settings)
+    try:
+        items = collector._rpc("item.get", {
+            "hostids": [str(host.external_id)],
+            "output": ["itemid", "hostid", "key_", "name", "units",
+                        "value_type", "lastvalue"],
+            "search": {
+                "key_": ["system.cpu", "vm.memory", "vfs.fs", "proc.mem"],
+                "name": ["CPU", "Memory", "memory", "Disk", "disk",
+                         "Filesystem", "filesystem", "Host memory",
+                         "Total disk", "Space util"],
+            },
+            "searchByAny": True,
+            "startSearch": True,
+            "filter": {"status": 0},
+        })
+    except Exception as exc:
+        return {"error": str(exc)}
+    result = []
+    for it in (items or []):
+        result.append({
+            "itemid": it.get("itemid"),
+            "key": it.get("key_"),
+            "name": it.get("name"),
+            "units": it.get("units"),
+            "lastvalue": it.get("lastvalue"),
+        })
+    result.sort(key=lambda x: x["name"])
+    return {"host": host.hostname, "ip": host_ip, "external_id": host.external_id,
+            "items_count": len(result), "items": result}
+
+
 # --- SiteScope push ingest --------------------------------------------------
 
 
