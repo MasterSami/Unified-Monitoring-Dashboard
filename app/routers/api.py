@@ -2173,15 +2173,31 @@ def export_capacity_report_xlsx(
             zbx_instances = [instance]
         else:
             zbx_instances = [s.name for s in load_servers(settings) if s.platform == "zabbix"]
+
+    zbx_hostids_by_inst: dict[str, list[str] | None] = {}
+    if q and q.strip() and zbx_instances:
+        from app.routers.pages import _hosts_stmt
+        q_stmt = _hosts_stmt(q, "zabbix", None, None, None)
+        q_hosts = db.scalars(q_stmt).all()
+        for inst_name in zbx_instances:
+            ids = [str(h.external_id) for h in q_hosts
+                   if h.source_instance == inst_name and h.external_id]
+            zbx_hostids_by_inst[inst_name] = ids if ids else None
+
     for inst in zbx_instances:
-        collector = get_service().get(inst)
-        if collector is None or getattr(collector, "name", "") != "zabbix":
+        filter_ids = zbx_hostids_by_inst.get(inst)
+        if q and q.strip() and filter_ids is None:
             live_rows: list[list] = []
-        else:
-            try:
-                live_rows = weekly_report_rows(collector, days)
-            except Exception:  # noqa: BLE001 — one instance failing is non-fatal
+        elif collector := get_service().get(inst):
+            if getattr(collector, "name", "") != "zabbix":
                 live_rows = []
+            else:
+                try:
+                    live_rows = weekly_report_rows(collector, days, hostids=filter_ids)
+                except Exception:  # noqa: BLE001 — one instance failing is non-fatal
+                    live_rows = []
+        else:
+            live_rows = []
         rows.extend(live_rows)
 
         # ``unknown`` is an availability state, not proof that Zabbix has no

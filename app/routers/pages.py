@@ -885,16 +885,31 @@ def _hosts_stmt(
     elif status and status != "all":
         stmt = stmt.where(Host.status == status)
     if q:
-        like = f"%{q.lower()}%"
-        stmt = stmt.where(
-            func.lower(Host.hostname).like(like)
-            | func.lower(func.coalesce(Host.ip, "")).like(like)
-            # A multi-homed host (Dynatrace) can have a search-worthy address
-            # that isn't the one shown as its primary ip — see Host.ip_all.
-            | func.lower(func.coalesce(Host.ip_all, "")).like(like)
-            | func.lower(func.coalesce(Host.group_name, "")).like(like)
-            | func.lower(func.coalesce(Host.source_instance, "")).like(like)
-        )
+        terms = [t.strip().lower() for t in q.split(",") if t.strip()]
+        if not terms:
+            pass
+        elif len(terms) == 1:
+            like = f"%{terms[0]}%"
+            stmt = stmt.where(
+                func.lower(Host.hostname).like(like)
+                | func.lower(func.coalesce(Host.ip, "")).like(like)
+                | func.lower(func.coalesce(Host.ip_all, "")).like(like)
+                | func.lower(func.coalesce(Host.group_name, "")).like(like)
+                | func.lower(func.coalesce(Host.source_instance, "")).like(like)
+            )
+        else:
+            from sqlalchemy import or_
+            clauses = []
+            for t in terms:
+                like = f"%{t}%"
+                clauses.append(
+                    func.lower(Host.hostname).like(like)
+                    | func.lower(func.coalesce(Host.ip, "")).like(like)
+                    | func.lower(func.coalesce(Host.ip_all, "")).like(like)
+                    | func.lower(func.coalesce(Host.group_name, "")).like(like)
+                    | func.lower(func.coalesce(Host.source_instance, "")).like(like)
+                )
+            stmt = stmt.where(or_(*clauses))
     return stmt
 
 

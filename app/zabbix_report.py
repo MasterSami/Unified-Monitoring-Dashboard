@@ -436,7 +436,7 @@ def _resolve_owner(host: dict) -> str:
     return "N/A"
 
 
-def _report_hosts(collector) -> list[dict]:
+def _report_hosts(collector, hostids: list[str] | None = None) -> list[dict]:
     params = {
         "output": ["hostid", "host", "name", "status"],
         "selectInterfaces": ["ip", "main"],
@@ -445,6 +445,8 @@ def _report_hosts(collector) -> list[dict]:
         "selectMacros": ["macro", "value"],
         "filter": {"status": 0},
     }
+    if hostids:
+        params["hostids"] = hostids
     for sel in ("selectHostGroups", "selectGroups"):
         try:
             p = dict(params)
@@ -459,17 +461,17 @@ def _report_hosts(collector) -> list[dict]:
     return []
 
 
-def weekly_report_rows(collector, days: int = 7) -> list[list]:
+def weekly_report_rows(collector, days: int = 7, hostids: list[str] | None = None) -> list[list]:
     """Return the full weekly-report rows (one per filesystem) for a Zabbix
     instance — the exact columns of the standalone script, via the collector's
     authenticated _rpc. Heavy (live item/trend pulls); used only on export.
     """
-    hosts = _report_hosts(collector)
-    hostids = [h["hostid"] for h in hosts]
+    hosts = _report_hosts(collector, hostids=hostids)
+    all_hostids = [h["hostid"] for h in hosts]
 
     items_by_host: dict[str, list] = {}
     all_items: list[dict] = []
-    for batch in _chunks(hostids, _HOST_BATCH):
+    for batch in _chunks(all_hostids, _HOST_BATCH):
         res = collector._rpc("item.get", {
             "hostids": batch,
             "output": ["itemid", "hostid", "key_", "name", "value_type", "units", "lastvalue"],
